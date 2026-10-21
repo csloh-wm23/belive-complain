@@ -1,44 +1,78 @@
-# BeLive Complaint Operations Prototype
+# BeLive Tenant Support
 
-An independent local project inspired by the overall BeLive complaint flowchart and the existing phone-support project's separation of deterministic workflow, review and memory concepts. It does not import or modify the phone-support application.
+An independent prototype for **BeLive Ventures / BeLive CoLiving, Malaysia**, covering **new and existing tenants only**. It reuses the earlier project's workflow and UI concepts in a separate application, database and memory store. Owner, marketing and sales workflows are outside the current scope.
 
-## Run
+This version has a Python/SQLite backend, native Hermes integration, tenant-scoped portal access and configurable connectors. It starts with an empty database. Fictional records and fake AI are confined to automated tests.
 
-Double-click **Run BeLive Prototype.bat**, or run `python server.py`. Open http://127.0.0.1:8877. Python 3 is the only runtime requirement; no packages, credentials or model configuration are required. Stop the launcher with Ctrl+C.
+## Run locally
 
-This is an **interactive workflow prototype**, not a live AI integration. Four fictional sample cases and one fictional approved writing example are loaded into a new browser workspace. Sample records remain labelled. Operator-entered cases do not receive simulated AI results.
+Use Python 3.11 or newer. Double-click **Run BeLive Prototype.bat**, or run:
 
-## Demonstrate
+```sh
+python server.py
+```
 
-1. Open a high-priority sample from Overview and acknowledge it under a staff role.
-2. Save a local response draft. Record an action to move into follow-up.
-3. Either return the unresolved case to staff or record verification evidence.
-4. Close the verified case locally, then approve or correct its wording.
-5. Open Shared memory to see the reviewed example. Reject it to revoke reuse.
-6. Inspect Activity log, then export a JSON copy if needed.
+Open [the local dashboard](http://127.0.0.1:8877). Keep the terminal running for scheduled checks; stop it with Ctrl+C. The server listens only on `127.0.0.1`. No pip packages are needed for the dashboard or deterministic workflows. AI requires a separately installed native Hermes runtime and a configured model.
 
-Use New complaint for local intake. Exact duplicate title/details are rejected. New high/critical cases go to staff review. Category and severity are operator-selected, not AI judgments. Closing requires operator-recorded verification; this is not independent proof of resolution.
+## Tenant-support scope
 
-## Data and separation
+- Record verified tenant/unit references, condo move rules and PIC availability.
+- Schedule move-in/out within the recorded condo window; randomly assign an eligible available PIC. Record required inspection checks and evidence.
+- Receive tenant enquiries and complaints through operator intake, a local tenant portal or selected authorised public API resources.
+- Screen immediate risks before AI; obtain structured relevance, category, urgency, evidence, uncertainty and proposed assistance through grouped logical agents.
+- Use only the tenant's verified support records and condo rules for personal assistance. Unverified public reports receive a private-contact invitation draft.
+- Hand uncertain, risky or failed AI cases to staff; track ownership, work orders, acknowledgement escalation, follow-ups and evidence-based closure.
+- Review notifications before sending through a configured gateway. Store uncertain delivery as `UNKNOWN` without automatic retry.
+- Review response wording after closure. Latest rejection/reopening revokes future reuse. Examples are style guidance, never verified facts or model retraining.
+- Inspect activity, case-category counts and a JSON support snapshot.
 
-Cases, notes, feedback and activity live only in this browser origin's localStorage under `belive-complaints-prototype:v1`. Using another browser or port gives a different workspace. Export data before clearing browser storage or resetting the demo. Export is a backup for inspection; import is not implemented. Activity is local history, not immutable server audit storage.
+## First walkthrough
 
-There is no SQLite database, shared credential file, dependency on the Lowyat application, or connection to its Hermes memory. Marketing and sales remain separate, unconnected concepts. Complaint memory is a local collection of reviewed style examples; it is not training or automatic knowledge validation. Basic email and phone/number masking is implemented, not comprehensive PII detection.
+1. Under **Tenant & condo records**, enter rules from an authorised condo record, verify a tenant and record eligible PIC availability. Example weekdays in the form are hints, not BeLive policy.
+2. Create a tenant support case. Without model configuration it records an explicit staff handover; it does not invent an AI answer.
+3. Acknowledge the case, save a reviewed draft and queue it. Approve/deliver in **Notifications** only when a gateway is configured.
+4. Record a work order if needed, complete it with evidence, start follow-up, verify the outcome and close. Silence never automatically closes a case.
+5. Approve or correct reusable wording; reject it to revoke reuse.
+6. Schedule a tenant move after recording condo/PIC availability. Inspection completion requires the scheduled time to have passed and every required checklist item to be checked.
+7. Issue a tenant access key after identity verification and open [the local portal](http://127.0.0.1:8877/portal). The key exposes only that tenant's cases and moves.
 
-## Implemented
+## Configuration and actual connection status
 
-- Responsive overview, inbox, overall workflow, shared-memory view and activity log.
-- Local intake, exact duplicate protection, operator-assigned category and priority.
-- Ownership acknowledgement, response drafting, follow-up, reassessment and verified closure gates.
-- Append-in-application activity entries, reviewed examples, latest-rejection revocation and reopen revocation.
-- Browser persistence, JSON export and confirmed demo reset.
+Copy `.env.example` to `.env` in **this** project, fill only the required settings and restart. Never commit `.env`, tenant exports, database files or tokens. The original phone-support application's configuration is not read.
 
-## Not connected
+| Integration | Implemented | Still needed for live use |
+|---|---|---|
+| Native Hermes | Bounded `AIAgent` loop; triage and investigation/response stages; two read-only tools | Hermes on PATH, an OpenAI-compatible configured model through the supported OpenAI/Ollama options, provider credentials when required; live model validation |
+| MemoryStore | Isolated current-feedback projection; persistence and revocation tested against installed Hermes | Operator-reviewed, redacted examples |
+| Google reviews | Selected authorised Business Profile location; at most 25 recent text reviews | Company-authorised API access/token and live verification |
+| Facebook / Threads | Selected Page feed/post comments or selected Threads replies; bounded reads | Required platform access, supported API version/permissions and live verification; these Meta adapters have not been verified against company accounts |
+| Notification gateway | HTTPS, HMAC signature, explicit approval, idempotency key and confirmed receipt contract | A company-owned gateway that resolves internal recipients, sends through approved channels and implements the documented receipt contract |
+| Company records | Staff-entered verified records | Actual condo rules, tenancy evidence and PIC availability; no Spacify API connection is assumed |
 
-Live Hermes/LLM generation, public-site collection, customer portals/accounts, customer identity verification, staff notifications, external messages, refunds or business actions, scheduling, autonomous follow-up, model training and cross-module memory services. The screen labels these as integration concepts. No real posts, messages or customer-system actions can be submitted.
+`Native Hermes configured` checks local prerequisites; it does not prove a successful provider call. No live company messages, public posts, paid model calls or company API reads were made during validation.
 
-## Tests
+The tenant portal and operator dashboard are a **local prototype**, not a production Internet service. The localhost operator token is a CSRF boundary, not staff login. Production hosting needs authenticated staff roles, real tenant identity verification, TLS, access revocation, retention policy and service operations before real tenant use.
 
-`npm test` (Node.js; no npm install needed) runs workflow/guard tests. Browser verification is in `tests/browser_check.py`; it requires Playwright and an installed Chrome, and uses isolated browser contexts without external services.
+## Data
 
-See [docs/FORUM_SYSTEM.md](docs/FORUM_SYSTEM.md) for architecture and the reference mapping.
+State lives in `data/belive.db`; sources and audit rows have append-only SQLite guards. Native memory lives in `data/hermes_memory/support`. Database access by the machine owner is outside these application guards. Email/long-number masking is basic; staff must remove names, addresses, access codes and other sensitive material from reusable examples before sharing.
+
+The earlier browser-only demo is retained in Git history. This version does not read, overwrite or migrate its `belive-complaints-prototype:v1` localStorage. Export old demo data from that version if it is needed. The running application has no dependency on the older `core.mjs` model.
+
+## Verification
+
+```sh
+python -m unittest discover -s tests -p "test_*.py" -v
+# Equivalent: npm test
+```
+
+There are 16 backend/HTTP/native-memory checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
+
+```sh
+python -m pip install -r requirements-dev.txt
+python tests/browser_check.py
+```
+
+Browser QA covers tenant records, move assignment/checklists, AI draft integration with a test double, case closure, memory rejection, gateway configuration failure, tenant portal and eight responsive views. Screenshots go into ignored `artifacts/`.
+
+Read the [tenant-support proposal and methodology](docs/TENANT_SUPPORT_METHODOLOGY.md), [system behavior and diagram mapping](docs/FORUM_SYSTEM.md), [company research](docs/COMPANY_RESEARCH.md) and [integration contract](docs/INTEGRATIONS.md).

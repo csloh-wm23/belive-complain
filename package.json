@@ -1,7 +1,9 @@
 {
-  "name": "belive-complaint-prototype",
-  "version": "0.1.0",
+  "name": "belive-complain",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "scripts": {"test": "node --test tests/core.test.mjs"}
+  "scripts": {
+    "test": "python -m unittest discover -s tests -p \"test_*.py\" -v"
+  }
 }
