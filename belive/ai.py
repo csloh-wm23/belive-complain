@@ -6,10 +6,10 @@ from pathlib import Path
 from belive.hermes_native import native_request
 from belive.store import bounded, redact
 
-CATEGORIES = ['MAINTENANCE','CLEANING','WIFI','ACCESS','UTILITIES','BILLING','MOVE_IN_OUT','HOUSE_RULES','OTHER']
+CATEGORIES = ['MAINTENANCE','CLEANING','WIFI','ACCESS','UTILITIES','BILLING','HOUSE_RULES','OTHER']
 COMPANY = ('BeLive Ventures / BeLive CoLiving, Malaysia, serves tenants with furnished rooms, '
-           'Wi-Fi, cleaning, smart access, maintenance and move-in help. Public company information '
-           'is not a tenancy-specific promise. This system handles tenants only, not marketing, sales or owners.')
+           'Wi-Fi, cleaning, smart access, maintenance. Public company information '
+           'is not a tenancy-specific promise. This system handles existing-tenant enquiries and complaints. Move-in/out coordination, inspections, random PIC assignment, marketing, sales and owner support are outside scope.')
 TOOLS = [dict(name='read_case_context',description='Read this case and its operator-verified context only.',
               parameters={'type':'object','properties':{},'additionalProperties':False}),
          dict(name='read_reviewed_styles',description='Read current approved writing examples; never verified facts.',
@@ -60,6 +60,7 @@ class SupportAI:
           'Return exactly plan (string), response (string), requires_human (boolean), '
           'record_ids (array of IDs from verified_records actually used). Missing tenant-specific facts must become questions. '
           'Account, payment, security-access changes and physical repairs always require a human. '
+          'Requests to arrange move-in/out, inspections or PIC allocation must be handed to staff; do not plan or claim those arrangements. '
           'If there is no safe useful response, set requires_human true.',{**context,'assessment':a},examples)
         if set(p)!= {'plan','response','requires_human','record_ids'} or type(p['requires_human']) is not bool or not isinstance(p['record_ids'],list): raise ValueError('AI_INVALID_PLAN')
         allowed={r['id'] for r in context['verified_records']}

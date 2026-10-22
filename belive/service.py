@@ -8,7 +8,18 @@ from belive.store import Store, bounded, digest, now, redact
 from belive.settings import load_settings
 from belive.ai import SupportAI, CATEGORIES
 
-MY = timezone(timedelta(hours=8))
+COMMANDS = {'intake','tenant','condo','record','portal_issue','source','approve_message','reject_message','feedback','case_action'}
+NOTIFICATION_KINDS = {'STAFF_ALERT','TENANT_RESPONSE','STAFF_WORK_ORDER','ACK_TIMEOUT','TENANT_FOLLOWUP'}
+
+def support_notification(item):
+    return item.get('kind') in NOTIFICATION_KINDS and not str(item.get('entity','')).startswith('MOVE-')
+
+def support_condo(record):
+    # Preserve old scheduling data on disk without treating it as current support guidance.
+    legacy = any(key in record for key in ('days','start','end','checklist'))
+    return {'id':record['id'],'name':record['name'],'rules':'' if legacy else record['rules'],
+            'verified':record.get('verified',False),'needs_review':legacy}
+
 STATES = ['AI_PENDING','AWAITING_CONTACT','HUMAN_REVIEW','IN_PROGRESS','FOLLOW_UP','VERIFIED','CLOSED','SKIPPED']
 
 def uid(prefix): return prefix+'-'+secrets.token_hex(5).upper()
@@ -39,12 +50,16 @@ class Service:
         for f in reversed(self.store.all(db,'feedback')): latest[f['case_id']]=f
         cases={c['id']:c for c in self.store.all(db,'case')}
         return [f for f in latest.values() if f['verdict'] in {'APPROVED','CORRECTED'} and
-                cases.get(f['case_id'],{}).get('status')=='CLOSED' and (not shared or f.get('share'))]
+                cases.get(f['case_id'],{}).get('status')=='CLOSED' and cases[f['case_id']].get('category') in CATEGORIES and (not shared or f.get('share'))]
     def snapshot(self):
         with self.store.connect() as db:
-            keys={'cases':'case','condos':'condo','tenants':'tenant','staff':'staff','moves':'move',
+            keys={'cases':'case','condos':'condo','tenants':'tenant',
                   'outbox':'outbox','workorders':'workorder','sources':'source','jobs':'job','records':'record'}
             result={key:self.store.all(db,kind) for key,kind in keys.items()}
+            result['condos']=[support_condo(c) for c in result['condos']]
+            result['outbox']=[m for m in result['outbox'] if support_notification(m)]
+            for case in result['cases']:
+                if case['category'] not in CATEGORIES:case['category']='OTHER'
             result['examples']=self.styles(db);result['audit']=self.store.audit(db)
             result['readiness']={'ai':self.ai.readiness(),'scheduler':True}
             result['reports']={
@@ -54,6 +69,7 @@ class Service:
                 'verified_closures':sum(c['status']=='CLOSED' and bool(c.get('verification')) for c in result['cases'])}
             return result
     def enqueue(self,db,entity,kind,text,target=''):
+        require(support_notification({'kind':kind,'entity':entity}),'Notification is outside tenant complaint support')
         if kind=='TENANT_RESPONSE':
             for old in self.store.all(db,'outbox'):
                 if old['entity']==entity and old['kind']==kind and old['target']==target and old['text']==redact(text) and old['status']!='REJECTED':
@@ -100,6 +116,7 @@ class Service:
         self.store.put(db,'case',c);self.store.event(db,c['id'],'INTAKE_RECORDED','Source retained as an immutable redacted version')
         return c
     def command(self,name,p,key):
+        require(name in COMMANDS,'Unknown action: only tenant enquiry and complaint operations are supported')
         require(isinstance(key,str) and 8<=len(key)<=150,'A request idempotency key is required')
         fingerprint=digest(json.dumps([name,p],sort_keys=True))
         with self.lock,self.store.connect() as db:
@@ -121,56 +138,16 @@ class Service:
             require(not any(x['id']==t['id'] for x in self.store.all(db,'tenant')),'Tenant reference already exists')
             self.store.put(db,'tenant',t);self.store.event(db,t['id'],'TENANCY_VERIFIED',t['evidence']);return t
         if name=='condo':
-            days=p.get('days');checklist=p.get('checklist')
-            require(p.get('confirmed') is True,'Confirm these rules against the condo record')
-            require(isinstance(days,list) and days and all(type(d)is int and 0<=d<=6 for d in days),'Select permitted weekdays')
-            require(isinstance(checklist,list) and 1<=len(checklist)<=20,'Provide a required inspection checklist')
-            start=p.get('start','');end=p.get('end','')
-            require(bool(re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',start)) and bool(re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',end)) and start<end,'Enter a valid same-day move time window')
-            c={'id':ref(p.get('id')),'name':bounded(p.get('name'),2,120),'days':sorted(set(days)),
-               'start':start,'end':end,'checklist':[bounded(x,2,120) for x in checklist],
+            require(p.get('confirmed') is True,'Confirm this support guidance against the property record')
+            require(not any(k in p for k in ('days','start','end','checklist')), 'Only property support guidance is supported')
+            c={'id':ref(p.get('id')),'name':bounded(p.get('name'),2,120),
                'rules':bounded(p.get('rules'),8,3000),'verified':True,'verified_at':now()}
-            self.store.put(db,'condo',c);self.store.event(db,c['id'],'CONDO_RULES_RECORDED',c['rules']);return c
-        if name=='staff':
-            days=p.get('days');condos=p.get('condos')
-            require(isinstance(days,list) and days and all(type(d)is int and 0<=d<=6 for d in days),'Select staff availability weekdays')
-            require(isinstance(condos,list) and condos,'Select at least one condo')
-            for condo in condos:self.store.get(db,'condo',condo)
-            dates=[p.get('from_date'),p.get('until_date')]
-            for day in dates:datetime.strptime(day,'%Y-%m-%d')
-            require(dates[0]<=dates[1],'Availability date range is invalid')
-            s={'id':ref(p.get('id')),'name':bounded(p.get('name'),2,80),'days':days,'condos':condos,
-               'from_date':dates[0],'until_date':dates[1],'enabled':p.get('enabled',True) is True}
-            self.store.put(db,'staff',s);self.store.event(db,s['id'],'STAFF_AVAILABILITY_RECORDED','Operator-provided availability');return s
+            self.store.put(db,'condo',c);self.store.event(db,c['id'],'SUPPORT_GUIDANCE_RECORDED',c['rules']);return c
         if name=='record':
             t=self.store.get(db,'tenant',p.get('tenant_id'))
             require(p.get('confirmed') is True,'Verify the record before adding it to AI context')
             record={'id':uid('REC'),'tenant_id':t['id'],'text':bounded(p.get('text'),8,3000),'source':bounded(p.get('source'),3,250),'verified':True,'at':now()}
             self.store.put(db,'record',record);self.store.event(db,t['id'],'VERIFIED_RECORD_ADDED',record['id']);return record
-        if name=='move':
-            t=self.store.get(db,'tenant',p.get('tenant_id'));c=self.store.get(db,'condo',t['condo_id'])
-            require(p.get('type') in {'MOVE_IN','MOVE_OUT'},'Choose move-in or move-out')
-            date=datetime.fromisoformat(p.get('at'))
-            date=date.replace(tzinfo=MY) if date.tzinfo is None else date.astimezone(MY)
-            require(date>datetime.now(MY),'Choose a future move time (Malaysia time)')
-            require(date.weekday() in c['days'] and c['start']<=date.strftime('%H:%M')<=c['end'],'Move time violates the recorded condo rules')
-            moves=self.store.all(db,'move')
-            require(not any(m['tenant_id']==t['id'] and m['status']=='SCHEDULED' for m in moves),'This tenant already has a scheduled move')
-            day=date.strftime('%Y-%m-%d')
-            available=[s for s in self.store.all(db,'staff') if s['enabled'] and c['id'] in s['condos'] and date.weekday() in s['days'] and s['from_date']<=day<=s['until_date'] and not any(m['pic']==s['id'] and m['at'][:10]==day and m['status']=='SCHEDULED' for m in moves)]
-            require(available,'No available PIC for that date. Add confirmed availability or choose another date.')
-            pic=secrets.choice(available)
-            m={'id':uid('MOVE'),'tenant_id':t['id'],'condo_id':c['id'],'type':p['type'],'at':date.isoformat(),
-               'pic':pic['id'],'status':'SCHEDULED','checklist':{x:False for x in c['checklist']},'rule_snapshot':c,'evidence':''}
-            self.store.put(db,'move',m);self.store.event(db,m['id'],'PIC_ASSIGNED','Randomly selected from available eligible staff: '+pic['id'])
-            self.enqueue(db,m['id'],'TENANT_MOVE_NOTICE',f"{m['type']} arrangement recorded for {m['at']}; PIC reference {pic['id']}.",t['id']);return m
-        if name=='move_complete':
-            m=self.store.get(db,'move',p.get('id'));checks=p.get('checks')
-            require(m['status']=='SCHEDULED','Move already completed')
-            require(datetime.fromisoformat(m['at'])<=datetime.now(MY),'Cannot complete an inspection before the scheduled move time')
-            require(isinstance(checks,list) and set(checks)==set(m['checklist']),'All required inspection items must be checked')
-            m['evidence']=bounded(p.get('evidence'),8,2000);m['checklist']={k:True for k in m['checklist']};m['status']='COMPLETED'
-            self.store.put(db,'move',m);self.store.event(db,m['id'],'INSPECTION_COMPLETED',m['evidence']);return m
         if name=='portal_issue':
             t=self.store.get(db,'tenant',p.get('tenant_id'));token=secrets.token_urlsafe(32)
             item={'id':digest(token),'tenant_id':t['id'],'expires':due(10080)}
@@ -181,7 +158,7 @@ class Service:
             source=validate_source(p)
             self.store.put(db,'source',source);self.store.event(db,source['id'],'SOURCE_CONFIGURED','Explicit operator-selected API resource');return source
         if name in {'approve_message','reject_message'}:
-            m=self.store.get(db,'outbox',p.get('id'));require(m['status']=='PENDING_APPROVAL','Message already decided or attempted')
+            m=self.store.get(db,'outbox',p.get('id'));require(support_notification(m),'Notification is outside tenant complaint support');require(m['status']=='PENDING_APPROVAL','Message already decided or attempted')
             m['status']='APPROVED' if name=='approve_message' else 'REJECTED';self.store.put(db,'outbox',m)
             self.store.event(db,m['entity'],name.upper(),m['id']);return m
         if name=='feedback':
@@ -248,7 +225,7 @@ class Service:
             context={'case':{k:c[k] for k in ('title','description','category','severity')},'verified_records':[],'condo_rules':None,'tenant_verified':bool(c['tenant_id']),
                      'reported_updates':[row[0] for row in db.execute("SELECT detail FROM events WHERE entity=? AND action='TENANT_UPDATE' ORDER BY id DESC LIMIT 10",(c['id'],))]}
             if c['tenant_id']:
-                t=self.store.get(db,'tenant',c['tenant_id']);context['condo_rules']=self.store.get(db,'condo',t['condo_id'])['rules']
+                t=self.store.get(db,'tenant',c['tenant_id']);context['condo_rules']=support_condo(self.store.get(db,'condo',t['condo_id']))['rules'] or None
                 context['verified_records']=[r for r in self.store.all(db,'record') if r['tenant_id']==t['id'] and r['verified']]
             examples=self.styles(db);revision=c['revision'];job={'id':uid('AI'),'case_id':c['id'],'status':'RUNNING','at':now()}
             self.store.put(db,'job',job)
@@ -292,8 +269,7 @@ class Service:
             item=self.store.get(db,'portal',digest(token));require(item['expires']>now(),'Portal access expired')
             tenant=item['tenant_id']
             cases=[{k:c.get(k) for k in ('id','title','description','status','created_at')} for c in self.store.all(db,'case') if c['tenant_id']==tenant]
-            moves=[{k:m[k] for k in ('id','type','at','status','checklist')} for m in self.store.all(db,'move') if m['tenant_id']==tenant]
-            return {'tenant_id':tenant,'cases':cases,'moves':moves}
+            return {'tenant_id':tenant,'cases':cases}
     def portal_submit(self,token,p,key):
         tenant=self.portal(token)['tenant_id']
         return self.command('intake',{'title':p.get('title'),'description':p.get('description'),'tenant_id':tenant,'platform':'INTERNAL'},key)

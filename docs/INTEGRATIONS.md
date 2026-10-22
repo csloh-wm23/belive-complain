@@ -1,5 +1,7 @@
 # Integration setup and contracts
 
+The current module handles existing-tenant enquiries and complaints. Move-in/out arrangements, inspection checklists and random PIC assignment are outside scope. No notification adapter may send a legacy move notice.
+
 ## Native Hermes and model
 
 Install native Hermes separately and ensure `hermes` is on PATH. The adapter resolves the Python interpreter beside that executable and runs the project's worker there. Configure `BELIVE_AI_PROVIDER` as `openai` or `ollama`, `BELIVE_AI_MODEL`, and the matching key/URL settings in this project's `.env`. Restart after changes. The current OpenAI option uses `https://api.openai.com/v1`; Ollama uses its configured base URL plus `/v1`.
@@ -50,6 +52,6 @@ Queue acceptance alone must not be described as delivered. A timeout, invalid re
 
 ## Local tenant portal
 
-Staff issues a seven-day bearer key after verification. Only its hash is stored in the portal table; the raw key is returned once and is excluded from the idempotency cache. Do not place keys in URLs. Keys permit viewing that tenant's limited case/move fields and submitting reports/updates; they cannot access the operator snapshot.
+Staff issues a seven-day bearer key after verification. Only its hash is stored in the portal table; the raw key is returned once and is excluded from the idempotency cache. Do not place keys in URLs. Keys permit viewing that tenant's limited case fields and submitting reports/updates; they cannot access the operator snapshot.
 
 This is a local demonstration of scoped access, not deployable identity infrastructure. The operator dashboard is accessible to the local machine user. Production use needs staff authentication and roles, tenant authentication/revocation, TLS, protection against abuse and an agreed data lifecycle. A public GitHub repository does not host the running backend or tenant portal.

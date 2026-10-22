@@ -2,7 +2,6 @@
 import sys
 import tempfile
 import threading
-from datetime import datetime,timedelta
 from pathlib import Path
 from http.server import ThreadingHTTPServer
 from playwright.sync_api import sync_playwright,expect
@@ -10,7 +9,7 @@ from playwright.sync_api import sync_playwright,expect
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT));sys.path.insert(0,str(ROOT/'tests'))
 from server import make_handler
-from belive.service import Service,MY
+from belive.service import Service
 from test_backend import FakeAI
 
 def main():
@@ -28,7 +27,7 @@ def main():
                 page.on('pageerror',lambda e:errors.append(str(e)))
                 page.on('request',lambda r:external.append(r.url) if not r.url.startswith(url) else None)
                 page.goto(url);expect(page.locator('.metric')).to_have_count(4)
-                assert page.locator('[data-view="marketing"], [data-view="sales"], [data-view="owners"]').count()==0
+                assert page.locator('[data-view="marketing"], [data-view="sales"], [data-view="owners"], [data-view="moves"]').count()==0
                 page.locator('[data-view="settings"]').click()
                 def submit(form_id,values,checks=()):
                     form=page.locator('#'+form_id)
@@ -39,17 +38,12 @@ def main():
                     for name in checks:form.locator('[name="'+name+'"]').check()
                     with page.expect_response(lambda r:'/api/' in r.url and r.request.method=='POST') as result:form.locator('button').last.click()
                     assert result.value.ok,result.value.text()
-                    expect(form.locator('input').first).to_have_value('') if form_id not in ['moveForm'] else None
-                submit('condoForm',dict(id='C-QA',name='Fictional QA condo',days='0,1,2,3,4,5,6',start='08:00',end='18:00',rules='Fictional QA rules: reserve the lift during the recorded window.',checklist='Keys checked\nRoom condition recorded'),['confirmed'])
+                    expect(form.locator('input').first).to_have_value('')
+                submit('condoForm',dict(id='C-QA',name='Fictional QA property',rules='Fictional QA guidance: report shared Wi-Fi outages privately.'),['confirmed'])
                 submit('tenantForm',dict(id='T-QA',condo_id='C-QA',unit_ref='U-QA',verified_by='QA operator',evidence='Fictional test tenancy checked.'),['confirmed'])
-                day=(datetime.now(MY)+timedelta(days=2)).strftime('%Y-%m-%d')
-                submit('staffForm',dict(id='P-QA',name='QA PIC',condos='C-QA',days='0,1,2,3,4,5,6',from_date=day,until_date=day),['enabled'])
                 expect(page.locator('#resources')).to_contain_text('1 verified tenants')
-                page.locator('[data-view="moves"]').click()
-                form=page.locator('#moveForm');form.locator('[name="tenant_id"]').select_option('T-QA');form.locator('[name="at"]').fill(day+'T10:00')
-                form.locator('button').click();expect(page.locator('#movesList')).to_contain_text('P-QA')
-                assert len(service.snapshot()['moves'][0]['checklist'])==2
-                page.screenshot(path=str(output/'tenant-moves-desktop.png'),full_page=True)
+                assert page.locator('#moveForm,#staffForm,[name="checklist"],[name="days"]').count()==0
+                assert 'Move-in' not in page.locator('body').inner_text()
                 page.locator('#newCase').click();form=page.locator('#intakeForm')
                 form.locator('[name="title"]').fill('Fictional room Wi-Fi enquiry')
                 form.locator('[name="description"]').fill('My room Wi-Fi drops each evening. This is a QA fixture.')
@@ -79,12 +73,13 @@ def main():
                 portal=context.new_page();portal.on('pageerror',lambda e:errors.append(str(e)));portal.goto(url+'/portal')
                 portal.locator('#accessKey').fill(token);portal.locator('#connect').click()
                 expect(portal.locator('#tenantCases')).to_contain_text('Fictional room Wi-Fi enquiry')
-                expect(portal.locator('#tenantMoves')).to_contain_text('MOVE_IN')
+                assert portal.locator('#tenantMoves').count()==0
+                assert 'move arrangements' not in portal.locator('body').inner_text().lower()
                 portal.close()
                 page.locator('[data-view="overview"]').click();page.screenshot(path=str(output/'tenant-overview-desktop.png'),full_page=True)
                 for width in [1440,390]:
                     page.set_viewport_size({'width':width,'height':1000})
-                    for view in ['overview','cases','moves','notifications','sources','memory','settings','activity']:
+                    for view in ['overview','cases','notifications','sources','memory','settings','activity']:
                         page.locator('[data-view="'+view+'"]').click()
                         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth+1'),f'Overflow at {width}/{view}'
                     page.locator('[data-view="overview"]').click()
@@ -92,7 +87,7 @@ def main():
                 assert not errors,errors
                 assert not external,external
                 context.close();browser.close()
-                print('PASS: tenant records, moves, AI draft, closure, revoked memory, notifications, portal, 8 responsive views; no page errors or external requests.')
+                print('PASS: tenant support records, removed move/PIC forms, AI draft, closure, revoked memory, notifications, portal, 7 responsive views; no page errors or external requests.')
         finally:server.shutdown();server.server_close();thread.join()
 
 if __name__=='__main__':main()

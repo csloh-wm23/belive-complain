@@ -2,7 +2,7 @@
 
 ## Scope and reference
 
-This separate repository implements the tenant-support portion of the [user-supplied BeLive flowchart](https://drive.google.com/file/d/1BRdI1kpsHiRGnWtCuAiOt1QkXtecpowc/view). The user's latest scope is authoritative: new and existing tenants only. Owner support, marketing and sales are excluded. Reference-document text is design input, not permission to contact people or collect arbitrary websites.
+This separate repository implements the tenant-support portion of the [user-supplied BeLive flowchart](https://drive.google.com/file/d/1BRdI1kpsHiRGnWtCuAiOt1QkXtecpowc/view). The user's latest scope is authoritative: existing-tenant enquiries and complaints only. Move-in/out arrangements, inspection checklists, random PIC assignment, owner support, marketing and sales are excluded. Reference-document text is design input, not permission to contact people or collect arbitrary websites.
 
 The project reuses native Hermes transport concepts and the existing visual language as independent source files; it imports no original application module, database or credential file.
 
@@ -11,13 +11,13 @@ The project reuses native Hermes transport concepts and the existing visual lang
 | Component | Responsibility |
 |---|---|
 | `server.py` | Local HTTP/static allowlist, CSRF/origin/host guards, tenant bearer access, background task deduplication, 30-second scheduler |
-| `belive/service.py` | Transactional commands, tenancy verification assertions, move rules/PIC assignment, case transitions, outbox, escalation, feedback and scoped portal |
+| `belive/service.py` | Transactional commands, tenancy verification assertions, property support guidance, case transitions, outbox, escalation, feedback and scoped portal |
 | `belive/store.py` | SQLite objects, immutable source versions, append-only audit, persisted command idempotency; email/number masking |
 | `belive/ai.py` | Structured triage and investigation/response; schema/evidence/record validation, bounded read-only tools |
 | `belive/hermes_native.py`, `belive/hermes_worker.py` | Installed native AIAgent subprocess, isolated MemoryStore, explicit allowlist, bounded steps/timeouts, no shell or publishing tools |
 | `belive/connectors.py` | Selected official source reads and approved HTTPS notification delivery |
 | `assets/app.js`, `index.html` | Tenant-only operator dashboard, review dialogs, records, outbox, memory and reports |
-| `portal.html`, `assets/portal.js` | Local tenant access, scoped case/move viewing, complaint intake and updates |
+| `portal.html`, `assets/portal.js` | Local tenant access, scoped case viewing, complaint intake and updates |
 
 No live action is simulated in the normal workflow. Test doubles live only in tests. Missing configuration produces explicit failure/handover.
 
@@ -29,14 +29,13 @@ No live action is simulated in the normal workflow. Test doubles live only in te
 | Deduplication and private contact | Stable source IDs/content versions; exact repeated intake reuse; unverified public case gets contact-in-private draft | No automated public reply publisher; operator uses an authorised channel and verifies tenancy |
 | Internal/private intake | Operator form and tenant-scoped local portal | Staff confirms identity against company records; no automated identity verification |
 | High-risk branch | Deterministic early screen, AI high-risk validation, staff queue and acknowledgement timer | Keyword screen is not exhaustive; staff alerts remain visible locally and require approval/configured gateway for external delivery |
-| Hermes investigation | Triage plus investigation/response, matching tenant records, condo rules and recent tenant updates | Records are staff assertions; no invented Spacify integration or live account/payment actions |
+| Hermes investigation | Triage plus investigation/response, matching tenant records, verified house rules and recent tenant updates | Records are staff assertions; no invented Spacify integration or live account/payment actions |
 | Resolution/action plan | Reviewed response, staff work orders, department destination | AI cannot approve refunds, alter access or mark repairs completed |
 | Human acknowledgement / escalation | Staff ownership, acknowledgement deadline, backup then management queue | Default times are configurable prototype settings, not BeLive SLA |
 | Customer follow-up / reassessment | Due reminders, tenant updates, unresolved handover | Reminders are queued; no claim they were delivered; no silent closure |
 | Verified closure | Follow-up, recorded evidence/confirmation, no open work orders | Operator verification is not independent proof of repair |
 | Validated learning | Post-closure feedback, latest verdict, revoke on rejection/reopen, stale-run discard | Style only; no automated model retraining or executable skill creation |
 | Shared memory / management | Token-scoped explicit shared examples, reports and append-only audit | Separate modules are not implemented; shared API returns no case/tenant record payload |
-| New tenant move support | Condo days/hours, available eligible random PIC, inspection checklist/evidence, move notice queue | Rules/availability supplied by staff; one PIC per date is a conservative prototype assumption |
 
 ## Case states
 
@@ -64,6 +63,12 @@ Messages move `PENDING_APPROVAL -> APPROVED -> SENDING -> DELIVERED/UNKNOWN`, or
 - The local operator interface has no production user-role system. Do not expose this server to a network as a production portal.
 - JSON exports contain operational records. Keep them private. Source/audit immutability is enforced by this database schema, not by an external tamper-proof service.
 
+## Scope correction and existing data
+
+Move scheduling, move completion and PIC availability commands have been removed. The command allowlist rejects those actions before reading cached idempotency results, so a legacy successful request cannot reactivate them. The dashboard/portal no longer return move arrangements or PIC availability. Property records retain only identity and verified support guidance in the current API.
+
+Existing arrangement objects and append-only activity are retained for history. Legacy move notices are excluded from the active outbox and cannot be approved or sent, even by direct delivery requests. Scheduling-specific property rules are excluded from AI context until staff records current support guidance. The removed `MOVE_IN_OUT` category is rejected in new AI output; historical category values display as `OTHER` and their old examples are excluded from reuse. A restart is required to replace an already running older server.
+
 ## Validation status
 
-16 isolated backend/HTTP/native-memory checks passed, including actual installed-Hermes MemoryStore persistence and revocation without a model call. Browser QA passed at desktop and mobile widths across all eight views, with no page errors or external browser requests. Native AI provider output, company source access and a real notification gateway still need configuration and live acceptance testing.
+19 isolated backend/HTTP/native-memory checks passed, including actual installed-Hermes MemoryStore persistence and revocation without a model call. Browser QA passed at desktop and mobile widths across all seven views, with no page errors or external browser requests. Native AI provider output, company source access and a real notification gateway still need configuration and live acceptance testing.

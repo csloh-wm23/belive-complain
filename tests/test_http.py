@@ -38,6 +38,10 @@ class HttpTests(unittest.TestCase):
         for path in ['/data/belive.db','/.env','/belive/settings.py','/../server.py']:
             self.assertEqual(self.request(path)[0],404)
         self.assertEqual(self.request('/api/portal',headers={'Authorization':'Bearer invalid'})[0],401)
+    def test_removed_operation_routes_are_unavailable(self):
+        for name in ['move','move_complete','staff']:
+            code,body=self.request('/api/'+name,{},headers={'X-CSRF-Token':self.csrf,'Idempotency-Key':secrets.token_hex(16)})
+            self.assertEqual(code,400);self.assertIn('only tenant enquiry and complaint',json.loads(body)['error'])
     def test_shared_memory_never_exports_tenant_records(self):
         with patch.dict(os.environ,{'BELIVE_MEMORY_CLIENTS':json.dumps({'test':'isolated-test-token'})}):
             self.assertEqual(self.request('/api/shared-memory')[0],401)
@@ -45,7 +49,7 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(code,200);self.assertEqual(json.loads(body),{'examples':[]})
     def test_portal_cannot_choose_another_tenant_on_intake(self):
         def cmd(name,p):return self.s.command(name,p,secrets.token_hex(16))
-        cmd('condo',dict(id='C',name='Fixture condo',days=[5,6],start='08:00',end='18:00',checklist=['Room inspection'],rules='Fictional weekend move rules.',confirmed=True))
+        cmd('condo',dict(id='C',name='Fixture condo',rules='Fictional support guidance: report Wi-Fi issues privately.',confirmed=True))
         for tid in ['T-A','T-B']:cmd('tenant',dict(id=tid,condo_id='C',unit_ref='U',verified_by='Test staff',evidence='Fictional tenancy checked.',confirmed=True))
         token=cmd('portal_issue',dict(tenant_id='T-A'))['token']
         code,body=self.request('/api/portal/intake',dict(title='Tenant Wi-Fi issue',description='The room Wi-Fi drops during the evening.',tenant_id='T-B'),{'Authorization':'Bearer '+token,'Idempotency-Key':secrets.token_hex(16)})

@@ -72,8 +72,10 @@ def scan(service,source_id):
     return results
 
 def deliver(service,message_id):
+    from belive.service import support_notification
     with service.lock,service.store.connect() as db:
         item=service.store.get(db,'outbox',message_id)
+        if not support_notification(item):raise ValueError('Notification is outside tenant complaint support')
         if item['status']!='APPROVED':raise ValueError('Delivery requires an approved message that has not been attempted')
         url=os.getenv('BELIVE_NOTIFICATION_URL','');secret=os.getenv('BELIVE_NOTIFICATION_SECRET','')
         parsed=urlsplit(url)

@@ -5,11 +5,10 @@ import secrets
 import sqlite3
 import tempfile
 import unittest
-from datetime import datetime,timedelta,timezone
 from pathlib import Path
 from unittest.mock import patch
-from belive.service import Service,MY
-from belive.ai import SupportAI
+from belive.service import Service
+from belive.ai import SupportAI,CATEGORIES
 from belive.settings import Settings
 from belive.connectors import deliver,scan,validate_source
 
@@ -26,7 +25,7 @@ class FakeAI:
 class BackendTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.ai=FakeAI();self.s=Service(Path(self.tmp.name)/'test.db',self.ai)
-        self.command('condo',dict(id='C-A',name='Fictional test condo',days=list(range(7)),start='08:00',end='18:00',rules='Test fixture rules: use the reserved lift during the recorded time window.',checklist=['Keys checked','Room condition recorded'],confirmed=True))
+        self.command('condo',dict(id='C-A',name='Fictional test condo',rules='Test fixture guidance: report shared Wi-Fi outages to the support team.',confirmed=True))
         for tid in ['T-A','T-B']:
             self.command('tenant',dict(id=tid,condo_id='C-A',unit_ref='U-A',verified_by='Test staff',evidence='Fictional tenancy record checked.',confirmed=True))
     def tearDown(self):self.tmp.cleanup()
@@ -106,13 +105,43 @@ class BackendTests(unittest.TestCase):
             self.s.tick()
         self.assertEqual(self.case(c)['status'],'HUMAN_REVIEW')
         self.assertEqual(sum(m['kind']=='TENANT_FOLLOWUP' for m in self.s.snapshot()['outbox']),2)
-    def test_move_rules_availability_and_collision(self):
-        day=(datetime.now(MY)+timedelta(days=2)).strftime('%Y-%m-%d')
-        self.command('staff',dict(id='P-A',name='Test PIC',days=list(range(7)),condos=['C-A'],from_date=day,until_date=day,enabled=True))
-        with self.assertRaises(ValueError):self.command('move',dict(tenant_id='T-A',type='MOVE_IN',at=day+'T20:00'))
-        m=self.command('move',dict(tenant_id='T-A',type='MOVE_IN',at=day+'T10:00'));self.assertEqual(m['pic'],'P-A')
-        with self.assertRaises(ValueError):self.command('move',dict(tenant_id='T-B',type='MOVE_IN',at=day+'T11:00'))
-        with self.assertRaises(ValueError):self.command('move_complete',dict(id=m['id'],checks=list(m['checklist']),evidence='A test inspection note.'))
+    def test_removed_operations_are_rejected_even_with_cached_success(self):
+        for name in ['move','move_complete','staff']:
+            key=secrets.token_hex(16);payload={'tenant_id':'T-A'}
+            from belive.store import digest
+            fingerprint=digest(json.dumps([name,payload],sort_keys=True))
+            with self.s.store.connect() as db:
+                db.execute('INSERT INTO requests VALUES(?,?)',(key,json.dumps({'fingerprint':fingerprint,'result':{'id':'OLD-SUCCESS'}})))
+            with self.assertRaisesRegex(ValueError,'only tenant enquiry and complaint'):
+                self.command(name,payload,key)
+        self.assertNotIn('MOVE_IN_OUT',CATEGORIES)
+        with self.assertRaisesRegex(ValueError,'Only property support guidance'):
+            self.command('condo',dict(id='C-B',name='Old scheduling form',rules='Legacy rule text.',days=[5,6],confirmed=True))
+    def test_legacy_arrangements_are_preserved_but_inactive(self):
+        legacy={'id':'MOVE-OLD','tenant_id':'T-A','status':'SCHEDULED'}
+        message={'id':'MSG-OLD','entity':legacy['id'],'kind':'TENANT_MOVE_NOTICE','text':'Legacy arrangement notice.','target':'T-A','status':'APPROVED'}
+        with self.s.store.connect() as db:
+            self.s.store.put(db,'move',legacy);self.s.store.put(db,'outbox',message)
+            condo=self.s.store.get(db,'condo','C-A');condo.update(days=[5,6],start='08:00',end='18:00',checklist=['Keys checked'])
+            self.s.store.put(db,'condo',condo)
+        snapshot=self.s.snapshot()
+        self.assertNotIn('moves',snapshot);self.assertNotIn('staff',snapshot);self.assertEqual(snapshot['outbox'],[])
+        self.assertTrue(snapshot['condos'][0]['needs_review']);self.assertEqual(snapshot['condos'][0]['rules'],'')
+        with patch('belive.connectors.request_json') as send:
+            with self.assertRaisesRegex(ValueError,'outside tenant complaint support'):deliver(self.s,message['id'])
+            send.assert_not_called()
+        with self.assertRaisesRegex(ValueError,'outside tenant complaint support'):self.command('approve_message',{'id':message['id']})
+        token=self.command('portal_issue',{'tenant_id':'T-A'})['token'];self.assertNotIn('moves',self.s.portal(token))
+        c=self.intake();self.s.analyse(c['id']);self.assertIsNone(self.ai.calls[-1][0]['condo_rules'])
+        with self.s.store.connect() as db:
+            self.assertEqual(self.s.store.get(db,'move',legacy['id']),legacy)
+            self.assertEqual(self.s.store.get(db,'outbox',message['id'])['status'],'APPROVED')
+    def test_removed_category_is_not_accepted_from_ai(self):
+        ai=SupportAI(Settings(),Path(self.tmp.name)/'memory')
+        context={'case':{'description':'Please arrange a move.'},'verified_records':[]}
+        result=dict(relevance='SUPPORT',category='MOVE_IN_OUT',severity='LOW',summary='Request',uncertainty=False,evidence='arrange a move')
+        with patch.object(ai,'generate',return_value=result):
+            with self.assertRaisesRegex(ValueError,'AI_INVALID_VALUES'):ai.analyse(context,[])
     def test_portal_scope_and_key_not_in_cached_requests(self):
         c=self.intake();other=self.command('intake',dict(title='Other tenant request',description='The shared area needs a cleaning review.',tenant_id='T-B'))
         result=self.command('portal_issue',dict(tenant_id='T-A'));token=result['token']

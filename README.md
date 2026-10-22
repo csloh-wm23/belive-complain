@@ -1,6 +1,6 @@
 # BeLive Tenant Support
 
-An independent prototype for **BeLive Ventures / BeLive CoLiving, Malaysia**, covering **new and existing tenants only**. It reuses the earlier project's workflow and UI concepts in a separate application, database and memory store. Owner, marketing and sales workflows are outside the current scope.
+An independent prototype for **BeLive Ventures / BeLive CoLiving, Malaysia**, covering **existing-tenant enquiries and complaints only**. It reuses the earlier project's workflow and UI concepts in a separate application, database and memory store. Move-in/out arrangements, inspections, random PIC assignment, owner support, marketing and sales are outside the current scope.
 
 This version has a Python/SQLite backend, native Hermes integration, tenant-scoped portal access and configurable connectors. It starts with an empty database. Fictional records and fake AI are confined to automated tests.
 
@@ -16,11 +16,10 @@ Open [the local dashboard](http://127.0.0.1:8877). Keep the terminal running for
 
 ## Tenant-support scope
 
-- Record verified tenant/unit references, condo move rules and PIC availability.
-- Schedule move-in/out within the recorded condo window; randomly assign an eligible available PIC. Record required inspection checks and evidence.
+- Record verified tenant/unit references and relevant property support guidance.
 - Receive tenant enquiries and complaints through operator intake, a local tenant portal or selected authorised public API resources.
 - Screen immediate risks before AI; obtain structured relevance, category, urgency, evidence, uncertainty and proposed assistance through grouped logical agents.
-- Use only the tenant's verified support records and condo rules for personal assistance. Unverified public reports receive a private-contact invitation draft.
+- Use only the tenant's verified support records and verified house rules for personal assistance. Unverified public reports receive a private-contact invitation draft.
 - Hand uncertain, risky or failed AI cases to staff; track ownership, work orders, acknowledgement escalation, follow-ups and evidence-based closure.
 - Review notifications before sending through a configured gateway. Store uncertain delivery as `UNKNOWN` without automatic retry.
 - Review response wording after closure. Latest rejection/reopening revokes future reuse. Examples are style guidance, never verified facts or model retraining.
@@ -28,13 +27,12 @@ Open [the local dashboard](http://127.0.0.1:8877). Keep the terminal running for
 
 ## First walkthrough
 
-1. Under **Tenant & condo records**, enter rules from an authorised condo record, verify a tenant and record eligible PIC availability. Example weekdays in the form are hints, not BeLive policy.
+1. Under **Tenant & property records**, enter verified house rules/support guidance and verify the tenant/unit reference against an authorised record.
 2. Create a tenant support case. Without model configuration it records an explicit staff handover; it does not invent an AI answer.
 3. Acknowledge the case, save a reviewed draft and queue it. Approve/deliver in **Notifications** only when a gateway is configured.
 4. Record a work order if needed, complete it with evidence, start follow-up, verify the outcome and close. Silence never automatically closes a case.
 5. Approve or correct reusable wording; reject it to revoke reuse.
-6. Schedule a tenant move after recording condo/PIC availability. Inspection completion requires the scheduled time to have passed and every required checklist item to be checked.
-7. Issue a tenant access key after identity verification and open [the local portal](http://127.0.0.1:8877/portal). The key exposes only that tenant's cases and moves.
+6. Issue a tenant access key after identity verification and open [the local portal](http://127.0.0.1:8877/portal). The key exposes only that tenant's cases.
 
 ## Configuration and actual connection status
 
@@ -47,7 +45,7 @@ Copy `.env.example` to `.env` in **this** project, fill only the required settin
 | Google reviews | Selected authorised Business Profile location; at most 25 recent text reviews | Company-authorised API access/token and live verification |
 | Facebook / Threads | Selected Page feed/post comments or selected Threads replies; bounded reads | Required platform access, supported API version/permissions and live verification; these Meta adapters have not been verified against company accounts |
 | Notification gateway | HTTPS, HMAC signature, explicit approval, idempotency key and confirmed receipt contract | A company-owned gateway that resolves internal recipients, sends through approved channels and implements the documented receipt contract |
-| Company records | Staff-entered verified records | Actual condo rules, tenancy evidence and PIC availability; no Spacify API connection is assumed |
+| Company records | Staff-entered verified records | Actual property support guidance and tenancy evidence; no Spacify API connection is assumed |
 
 `Native Hermes configured` checks local prerequisites; it does not prove a successful provider call. No live company messages, public posts, paid model calls or company API reads were made during validation.
 
@@ -56,6 +54,8 @@ The tenant portal and operator dashboard are a **local prototype**, not a produc
 ## Data
 
 State lives in `data/belive.db`; sources and audit rows have append-only SQLite guards. Native memory lives in `data/hermes_memory/support`. Database access by the machine owner is outside these application guards. Email/long-number masking is basic; staff must remove names, addresses, access codes and other sensitive material from reusable examples before sharing.
+
+Move-in/out operations have been removed from the interface, portal, AI categories and service commands. Old arrangement data is preserved on disk but is excluded from operational snapshots; legacy move notices cannot be approved or delivered. Legacy scheduling rules must be replaced with verified support guidance before AI uses that property context. Restart any running server after updating.
 
 The earlier browser-only demo is retained in Git history. This version does not read, overwrite or migrate its `belive-complaints-prototype:v1` localStorage. Export old demo data from that version if it is needed. The running application has no dependency on the older `core.mjs` model.
 
@@ -66,13 +66,13 @@ python -m unittest discover -s tests -p "test_*.py" -v
 # Equivalent: npm test
 ```
 
-There are 16 backend/HTTP/native-memory checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
+There are 19 backend/HTTP/native-memory checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
 
 ```sh
 python -m pip install -r requirements-dev.txt
 python tests/browser_check.py
 ```
 
-Browser QA covers tenant records, move assignment/checklists, AI draft integration with a test double, case closure, memory rejection, gateway configuration failure, tenant portal and eight responsive views. Screenshots go into ignored `artifacts/`.
+Browser QA covers tenant records, absence of move/PIC forms, AI draft integration with a test double, case closure, memory rejection, gateway configuration failure, tenant portal and seven responsive views. Screenshots go into ignored `artifacts/`.
 
 Read the [tenant-support proposal and methodology](docs/TENANT_SUPPORT_METHODOLOGY.md), [system behavior and diagram mapping](docs/FORUM_SYSTEM.md), [company research](docs/COMPANY_RESEARCH.md) and [integration contract](docs/INTEGRATIONS.md).
