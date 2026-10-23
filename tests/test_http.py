@@ -22,12 +22,17 @@ class HttpTests(unittest.TestCase):
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
         self.url=f'http://127.0.0.1:{self.server.server_port}'
         page=urlopen(self.url).read().decode();self.csrf=re.search('name="csrf-token" content="([^"]+)"',page)[1]
+        self.cookie=''
+        code,_=self.request('/api/setup',dict(username='qa-admin',name='QA Administrator',password='Isolated-test-password-123'),{'X-CSRF-Token':self.csrf})
+        self.assertEqual(code,200)
     def tearDown(self):
         self.server.shutdown();self.server.server_close();self.thread.join();self.tmp.cleanup()
     def request(self,path,body=None,headers=None):
-        h={'Content-Type':'application/json',**(headers or {})}
+        h={'Content-Type':'application/json','Cookie':self.cookie,**(headers or {})}
         try:
-            with urlopen(Request(self.url+path,data=json.dumps(body).encode() if body is not None else None,headers=h)) as r:return r.status,r.read()
+            with urlopen(Request(self.url+path,data=json.dumps(body).encode() if body is not None else None,headers=h)) as r:
+                if r.headers.get('Set-Cookie') is not None:self.cookie=r.headers['Set-Cookie'].split(';',1)[0]
+                return r.status,r.read()
         except HTTPError as e:
             with e:return e.code,e.read()
     def test_operator_csrf_host_origin_and_private_files(self):
@@ -38,6 +43,25 @@ class HttpTests(unittest.TestCase):
         for path in ['/data/belive.db','/.env','/belive/settings.py','/../server.py']:
             self.assertEqual(self.request(path)[0],404)
         self.assertEqual(self.request('/api/portal',headers={'Authorization':'Bearer invalid'})[0],401)
+    def test_authentication_roles_and_session_revocation(self):
+        auth={'X-CSRF-Token':self.csrf,'Idempotency-Key':secrets.token_hex(16)}
+        self.assertEqual(self.request('/api/status',headers={**auth,'Cookie':''})[0],401)
+        self.assertEqual(self.request('/api/setup',dict(username='second',name='Second admin',password='Another-test-password-123'),auth)[0],400)
+        code,_=self.request('/api/users',dict(username='qa-support',name='QA Support',password='Support-test-password-123',role='SUPPORT'),auth)
+        self.assertEqual(code,200);admin_cookie=self.cookie
+        self.assertEqual(self.request('/api/logout',{},auth)[0],200)
+        code,_=self.request('/api/login',dict(username='qa-support',password='Support-test-password-123'),auth);self.assertEqual(code,200)
+        for route in ['backup','restore','users','source','record_update','select-database','ai-check']:
+            self.assertEqual(self.request('/api/'+route,{},auth)[0],403,route)
+        self.assertEqual(self.request('/api/users',headers=auth)[0],403)
+        with self.s.store.connect() as db:
+            stored=self.s.store.all(db,'user');self.assertNotIn('Support-test-password-123',str(stored))
+        support_cookie=self.cookie;self.cookie=admin_cookie
+        # The old admin session was explicitly logged out.
+        self.assertEqual(self.request('/api/status',headers=auth)[0],401)
+        self.request('/api/login',dict(username='qa-admin',password='Isolated-test-password-123'),auth)
+        self.assertEqual(self.request('/api/deactivate-user',{'id':'qa-support'},auth)[0],200)
+        self.assertEqual(self.request('/api/status',headers={**auth,'Cookie':support_cookie})[0],401)
     def test_removed_operation_routes_are_unavailable(self):
         for name in ['move','move_complete','staff']:
             code,body=self.request('/api/'+name,{},headers={'X-CSRF-Token':self.csrf,'Idempotency-Key':secrets.token_hex(16)})

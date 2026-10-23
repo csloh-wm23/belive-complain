@@ -2,7 +2,7 @@
 
 An independent prototype for **BeLive Ventures / BeLive CoLiving, Malaysia**, covering **existing-tenant enquiries and complaints only**. It reuses the earlier project's workflow and UI concepts in a separate application, database and memory store. Move-in/out arrangements, inspections, random PIC assignment, owner support, marketing and sales are outside the current scope.
 
-This version has a Python/SQLite backend, native Hermes integration, tenant-scoped portal access and configurable connectors. It starts with an empty database. Fictional records and fake AI are confined to automated tests.
+This version has a Python/SQLite backend, native Hermes integration, tenant-scoped portal access and configurable connectors. It starts with an empty database. Fictional records are confined to tests and the separate opt-in evaluation set; fake AI exists only in automated tests.
 
 ## Run locally
 
@@ -14,28 +14,54 @@ python server.py
 
 Open [the local dashboard](http://127.0.0.1:8877). The launcher starts the backend automatically in its own Python window. Keep that window open for scheduled checks; press Ctrl+C once to stop. The batch launcher exits after opening Python, so it does not show an additional “Terminate batch job” prompt. The server listens only on `127.0.0.1`. No pip packages are needed for the dashboard or deterministic workflows. AI requires a separately installed native Hermes runtime and a configured model.
 
+On the first launch for a database, create your own administrator account in the dashboard. There is no default password. Admins can create Support accounts under **Tenant & property records**. Operator accounts belong to that database, so selecting a new empty database starts a new setup.
+
 ## Tenant-support scope
 
+- Sign in as an Admin or Support operator; admin-only settings are enforced by the API.
 - Record verified tenant/unit references and relevant property support guidance.
 - Receive tenant enquiries and complaints through operator intake, a local tenant portal or selected authorised public API resources.
 - Screen immediate risks before AI; obtain structured relevance, category, urgency, evidence, uncertainty and proposed assistance through grouped logical agents.
 - Use only the tenant's verified support records and verified house rules for personal assistance. Unverified public reports receive a private-contact invitation draft.
-- Hand uncertain, risky or failed AI cases to staff; track ownership, work orders, acknowledgement escalation, follow-ups and evidence-based closure.
+- Hand uncertain, risky or failed AI cases to staff; show critical and overdue cases first, record the next action/deadline, maintain internal notes and require evidence for closure.
+- Publish reviewed responses to a tenant-scoped conversation. Tenants can reply and report resolved/unresolved outcomes; their confirmation never automatically closes a case.
+- Correct, expire or deactivate verified support context with immutable version history. AI citations show the exact record version used; changes during generation discard the result.
 - Review notifications before sending through a configured gateway. Store uncertain delivery as `UNKNOWN` without automatic retry.
 - Review response wording after closure. Latest rejection/reopening revokes future reuse. Examples are style guidance, never verified facts or model retraining.
 - Browse and search saved property, tenant and support-context records in **Database & records**; view activity and case-category counts.
 - See the active database file and choose another BeLive database for the next launch.
+- Create verified SQLite backups and recover into a separate workspace without overwriting the active database.
+- Run an actual AI connection probe and use a separate English/Malay/Chinese evaluation set.
 
 ## First walkthrough
 
-1. Under **Tenant & property records**, enter verified house rules/support guidance and verify the tenant/unit reference against an authorised record.
-2. Create a tenant support case. Without model configuration it records an explicit staff handover; it does not invent an AI answer.
-3. Acknowledge the case, save a reviewed draft and queue it. Approve/deliver in **Notifications** only when a gateway is configured.
-4. Record a work order if needed, complete it with evidence, start follow-up, verify the outcome and close. Silence never automatically closes a case.
-5. Approve or correct reusable wording; reject it to revoke reuse.
-6. Issue a tenant access key after identity verification and open [the local portal](http://127.0.0.1:8877/portal). The key exposes only that tenant's cases.
-7. Open **Database & records** to inspect the saved data, search by reference or evidence, and see its database location. **Choose database for next launch** opens a local file picker. The selected file opens after a restart; current records remain in the current file.
-8. Saving an authorised source starts its checks every 15 minutes while the app is open. **Pause checks** and **Resume checks** apply to that source; they do not start or stop the server.
+1. Create/sign in to the database's admin account. Add a Support account if another teammate will handle cases.
+2. Under **Tenant & property records**, save verified support guidance and verify a tenant/unit reference against an authorised record. Add relevant support context.
+3. Create a case. Without model configuration it explicitly hands over to staff. With configuration it proposes structured AI assistance; the normal workflow never substitutes a fictional response.
+4. Acknowledge the case under the signed-in operator. Review the urgency/category, save the next action/deadline and add any private notes.
+5. Review and save the response draft, check the confirmation box, then select **Publish saved response to tenant portal**. This creates an actual message in the local portal. External gateway delivery remains a separate reviewed action.
+6. As admin, issue a tenant access key after identity verification and open [the local portal](http://127.0.0.1:8877/portal). The tenant sees published messages and can reply. **Still unresolved** routes/reopens the case to staff; **Issue resolved** records feedback for staff verification.
+7. Complete work orders, follow up, verify the outcome and close. Close only with evidence and no open work orders. Review reusable wording after closure; latest rejection/reopening revokes reuse.
+8. Open **Database & records** to inspect data and record versions. Correct or deactivate outdated support context. Create a verified backup. Recovery opens a new paused copy on the next launch; current records stay in place.
+9. Saving an authorised public source starts its checks every 15 minutes while the app is open. **Pause checks** / **Resume checks** affect only that source.
+
+## Real AI connection and evaluation
+
+Configure this project's `.env`, restart and use **Test AI connection** under **Tenant & property records**. The test sends a neutral prompt with no tenant records and requires a genuine schema-valid provider response. Provider charges may apply. Its saved outcome distinguishes `RUNNING`, `PASSED` and `FAILED`; configuration presence alone is not a successful check.
+
+The separate evaluation set contains 24 fictional cases: eight each in English, Malay and Chinese. Inspect it without calling a provider:
+
+```sh
+python scripts/evaluate_ai.py
+```
+
+Opt in to actual model evaluation only after configuration:
+
+```sh
+python scripts/evaluate_ai.py --run-live --limit 24
+```
+
+The script uses an isolated temporary database, not the operator database, and writes an ignored report to `artifacts/ai-evaluation.json`. Automated scoring checks valid output, expected categories and required human handover. Human review is still needed for language quality, factual accuracy and usefulness. No live evaluation score is claimed in this repository: this checkout had no model/key configured during development.
 
 ## Configuration and actual connection status
 
@@ -52,7 +78,13 @@ Copy `.env.example` to `.env` in **this** project, fill only the required settin
 
 `Native Hermes configured` checks local prerequisites; it does not prove a successful provider call. No live company messages, public posts, paid model calls or company API reads were made during validation.
 
-The tenant portal and operator dashboard are a **local prototype**, not a production Internet service. The localhost operator token is a CSRF boundary, not staff login. Production hosting needs authenticated staff roles, real tenant identity verification, TLS, access revocation, retention policy and service operations before real tenant use.
+The application remains a local prototype listening only on loopback. It now has Admin/Support login, hashed passwords, expiring operator sessions, account deactivation and tenant-key revocation. Production hosting still requires a deployment design, TLS, stronger tenant identity verification, operational monitoring and agreed retention rules. A public GitHub repository does not host the running portal.
+
+## Backup and recovery
+
+Admin **Create verified backup** uses SQLite's online backup API and an integrity check, then records a SHA-256 checksum. Backups are saved beside the active database under `backups/`; they contain sensitive database content, including account password hashes, and are not served as public downloads.
+
+**Recover into a separate workspace** checks that checksum, creates a new copy under `recovered/` and selects it for the next launch. It does not overwrite the active database or the backup. In the recovered copy, old sessions and tenant keys are revoked, sources are paused, outstanding gateway messages are held, active cases require staff review, and support guidance/style examples require fresh review before AI reuse. Sign in with an admin account present in the backup and revalidate records before resuming work. `--database` still overrides the selected file for an explicit CLI launch.
 
 ## Data
 
@@ -69,13 +101,13 @@ python -m unittest discover -s tests -p "test_*.py" -v
 # Equivalent: npm test
 ```
 
-There are 23 backend/HTTP/native-memory/database checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
+There are 35 backend/HTTP/native-memory/database checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
 
 ```sh
 python -m pip install -r requirements-dev.txt
 python tests/browser_check.py
 ```
 
-Browser QA covers tenant records, absence of move/PIC forms, AI draft integration with a test double, case closure, memory rejection, gateway configuration failure, tenant portal, saved-record search, database selection/cancellation and persistence, source pause/resume, and eight responsive views. The native file-picker result is substituted during browser QA so tests do not open a dialog or change the real workspace. Screenshots go into ignored `artifacts/`.
+Browser QA covers first-admin setup and Support login, role-restricted controls, reviewed portal replies, private-note isolation, tenant unresolved/resolved feedback, verified closure, versioned-record correction, backups, a test-double connection check, database selection/persistence, source controls and eight responsive views. The native file-picker result is substituted during browser QA so tests do not open a dialog or change the real workspace. Screenshots go into ignored `artifacts/`.
 
 Read the [tenant-support proposal and methodology](docs/TENANT_SUPPORT_METHODOLOGY.md), [system behavior and diagram mapping](docs/FORUM_SYSTEM.md), [company research](docs/COMPANY_RESEARCH.md) and [integration contract](docs/INTEGRATIONS.md).

@@ -18,7 +18,7 @@ TOOLS = [dict(name='read_case_context',description='Read this case and its opera
 class SupportAI:
     def __init__(self,settings,home): self.settings,self.home=settings,Path(home)
     def readiness(self):
-        return bool(shutil.which('hermes') and self.settings.llm_model and
+        return bool(self.settings.llm_provider in {'openai','ollama'} and shutil.which('hermes') and self.settings.llm_model and
                     (self.settings.llm_provider=='ollama' or self.settings.llm_api_key))
     def generate(self,role,instruction,context,examples):
         if not self.readiness(): raise RuntimeError('AI_NOT_CONFIGURED')
@@ -72,3 +72,9 @@ class SupportAI:
     def sync(self,examples):
         return native_request([],self.settings,mode='memory',home=self.home,
             examples=[{'version_id':e['id'],'approved_reply':e['text']} for e in examples])
+
+    def check(self):
+        probe=SupportAI(self.settings,self.home.parent/'connection-check')
+        result=probe.generate('Connection Check','Return exactly {"ok":true}. Do not call tools.',{'check':'connection only; no tenant data'},[])
+        if set(result)!={'ok'} or result['ok'] is not True:raise ValueError('AI_CONNECTION_SCHEMA_INVALID')
+        return {'ok':True}

@@ -23,11 +23,13 @@ def main():
         try:
             with sync_playwright() as pw:
                 browser=pw.chromium.launch(channel='chrome',headless=True)
-                context=browser.new_context(viewport={'width':1440,'height':1100})
+                context=browser.new_context(viewport={'width':1440,'height':1100},timezone_id='Asia/Kuala_Lumpur')
                 page=context.new_page();errors=[];external=[]
                 page.on('pageerror',lambda e:errors.append(str(e)))
                 page.on('request',lambda r:external.append(r.url) if not r.url.startswith(url) else None)
-                page.goto(url);expect(page.locator('.metric')).to_have_count(4)
+                page.goto(url);expect(page.locator('#authGate')).to_be_visible()
+                page.locator('#authUsername').fill('qa-admin');page.locator('#authName').fill('QA support');page.locator('#authPassword').fill('Isolated-browser-password-123');page.locator('#authSubmit').click()
+                expect(page.locator('#operatorApp')).to_be_visible();expect(page.locator('.metric')).to_have_count(4)
                 assert page.locator('[data-view="marketing"], [data-view="sales"], [data-view="owners"], [data-view="moves"]').count()==0
                 page.locator('[data-view="settings"]').click()
                 def submit(form_id,values,checks=()):
@@ -65,6 +67,10 @@ def main():
                 with patch('server.choose_database',return_value=None):
                     page.locator('#chooseDatabase').click()
                     expect(page.locator('#notice')).to_contain_text('Database selection cancelled')
+                page.locator('[data-record]').first.click();page.locator('#recordSource').fill('QA support record v2');page.locator('#recordText').fill('Verified QA correction: contact support for shared Wi-Fi outages.')
+                page.locator('#recordReason').fill('QA corrected the source guidance after review.');page.locator('#recordConfirmed').check();page.locator('#correctRecord').click()
+                expect(page.locator('#recordManagement')).to_contain_text('v2')
+                page.locator('#createBackup').click();expect(page.locator('#backupsList')).to_contain_text('bytes')
                 page.screenshot(path=str(output/'database-records-desktop.png'),full_page=True)
                 page.locator('[data-view="sources"]').click()
                 assert page.locator('#sourceForm [name="enabled"]').count()==0
@@ -82,8 +88,12 @@ def main():
                 expect(page.locator('#caseDialog')).to_be_visible()
                 page.locator('#reloadCase').click()
                 expect(page.locator('#caseDraft')).to_have_value('Could you confirm whether other devices have the same issue?')
-                page.locator('#caseOwner').fill('QA support');page.locator('[data-act="acknowledge"]').click()
+                page.locator('[data-act="acknowledge"]').click()
                 expect(page.locator('#caseDetail .case-tags')).to_contain_text('Staff handling')
+                page.locator('#caseNote').fill('PRIVATE internal support note: fixture audit only.')
+                page.locator('[data-act="note"]').click()
+                page.locator('#caseConfirmed').check();page.locator('[data-act="publish_response"]').click()
+                expect(page.locator('#caseDetail .conversation')).to_contain_text('Could you confirm whether other devices')
                 page.locator('#caseConfirmed').check();page.locator('[data-act="queue_response"]').click()
                 page.locator('#caseNote').fill('Fictional investigation recorded and awaiting tenant confirmation.')
                 page.locator('[data-act="followup"]').click();expect(page.locator('#caseDetail .case-tags')).to_contain_text('Follow-up')
@@ -94,6 +104,8 @@ def main():
                 page.locator('[data-close="caseDialog"]').click();page.locator('[data-view="memory"]').click()
                 expect(page.locator('#memoryExamples')).to_contain_text('Could you confirm')
                 page.locator('[data-revoke]').click();expect(page.locator('#memoryExamples')).to_contain_text('Close a verified case')
+                page.locator('[data-view="settings"]').click();page.locator('#checkAi').click();page.locator('#refresh').click();expect(page.locator('#aiCheckStatus')).to_contain_text('PASSED')
+                submit('userForm',dict(username='qa-support',name='Second Support',password='Support-browser-password-123',role='SUPPORT'))
                 page.locator('[data-view="notifications"]').click()
                 page.locator('[data-approve]').first.click();expect(page.locator('[data-deliver]')).to_have_count(1)
                 page.locator('[data-deliver]').click();expect(page.locator('#notice')).to_contain_text('Configure an HTTPS notification gateway')
@@ -106,8 +118,27 @@ def main():
                 expect(portal.locator('#tenantCases')).to_contain_text('Fictional room Wi-Fi enquiry')
                 assert portal.locator('#tenantMoves').count()==0
                 assert 'move arrangements' not in portal.locator('body').inner_text().lower()
+                expect(portal.locator('#tenantCases')).to_contain_text('Could you confirm whether other devices')
+                assert 'PRIVATE internal support note' not in portal.locator('body').inner_text()
+                portal.locator('[data-note]').first.fill('The issue returned after the last support action.');portal.locator('#refreshPortal').click();expect(portal.locator('[data-note]').first).to_have_value('The issue returned after the last support action.')
+                portal.locator('[data-unresolved]').first.click();expect(portal.locator('#tenantCases')).to_contain_text('HUMAN_REVIEW')
+                page.locator('[data-view="cases"]').click();page.locator('#refresh').click();page.locator('#caseRows [data-case]').first.click()
+                page.locator('[data-act="acknowledge"]').click();page.locator('#caseNote').fill('Fixture support action completed; awaiting tenant feedback.');page.locator('[data-act="followup"]').click()
+                portal.locator('#refreshPortal').click();expect(portal.locator('[data-resolved]')).to_be_visible()
+                portal.locator('[data-resolved]').click();expect(portal.locator('#portalNotice')).to_contain_text('outcome feedback')
+                page.locator('#reloadCase').click();expect(page.locator('#caseDetail')).to_contain_text('Reported resolved')
+                page.locator('#caseNote').fill('Support verified the new tenant outcome feedback.');page.locator('#caseConfirmed').check();page.locator('[data-act="verify"]').click();page.locator('[data-act="close"]').click()
+                page.screenshot(path=str(output/'tenant-case-conversation-desktop.png'),full_page=True)
+                portal.locator('#refreshPortal').click();expect(portal.locator('#tenantCases')).to_contain_text('CLOSED')
+                portal.screenshot(path=str(output/'tenant-portal-conversation-desktop.png'),full_page=True)
+                page.locator('[data-close="caseDialog"]').click()
+
                 portal.close()
                 page.locator('[data-view="overview"]').click();page.screenshot(path=str(output/'tenant-overview-desktop.png'),full_page=True)
+                page.locator('#signOut').click();expect(page.locator('#authGate')).to_be_visible()
+                page.locator('#authUsername').fill('qa-support');page.locator('#authPassword').fill('Support-browser-password-123');page.locator('#authSubmit').click();expect(page.locator('#operatorApp')).to_be_visible()
+                page.locator('[data-view="settings"]').click();expect(page.locator('#recordForm')).to_be_hidden();expect(page.locator('#userForm')).to_be_hidden()
+                page.locator('[data-view="database"]').click();expect(page.locator('#createBackup')).to_be_hidden()
                 for width in [1440,390]:
                     page.set_viewport_size({'width':width,'height':1000})
                     for view in ['overview','cases','notifications','sources','memory','settings','database','activity']:
@@ -121,7 +152,7 @@ def main():
                 assert not errors,errors
                 assert not external,external
                 context.close();browser.close()
-                print('PASS: tenant support records, removed move/PIC forms, AI draft, closure, revoked memory, notifications, portal, 8 responsive views, database records/search/selection/persistence and source pause/resume; no page errors or external requests.')
+                print('PASS: admin setup, support login and restricted controls, portal publishing/privacy/outcome feedback, record correction, backups, connection-check integration, case lifecycle, database selection, source pause/resume and eight responsive views; no page errors or external requests.')
         finally:server.shutdown();server.server_close();thread.join()
 
 if __name__=='__main__':main()

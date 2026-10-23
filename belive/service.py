@@ -8,7 +8,7 @@ from belive.store import Store, bounded, digest, now, redact
 from belive.settings import load_settings
 from belive.ai import SupportAI, CATEGORIES
 
-COMMANDS = {'intake','tenant','condo','record','portal_issue','source','approve_message','reject_message','feedback','case_action','database_location'}
+COMMANDS = {'intake','tenant','condo','record','portal_issue','source','approve_message','reject_message','feedback','case_action','database_location','record_update','tenant_feedback','portal_revoke'}
 NOTIFICATION_KINDS = {'STAFF_ALERT','TENANT_RESPONSE','STAFF_WORK_ORDER','ACK_TIMEOUT','TENANT_FOLLOWUP'}
 
 def support_notification(item):
@@ -16,9 +16,9 @@ def support_notification(item):
 
 def support_condo(record):
     # Preserve old scheduling data on disk without treating it as current support guidance.
-    legacy = any(key in record for key in ('days','start','end','checklist'))
+    legacy = record.get('review_required',False) or any(key in record for key in ('days','start','end','checklist'))
     return {'id':record['id'],'name':record['name'],'rules':'' if legacy else record['rules'],
-            'verified':record.get('verified',False),'needs_review':legacy}
+            'verified':record.get('verified',False),'needs_review':legacy,'version':record.get('version',1)}
 
 STATES = ['AI_PENDING','AWAITING_CONTACT','HUMAN_REVIEW','IN_PROGRESS','FOLLOW_UP','VERIFIED','CLOSED','SKIPPED']
 
@@ -45,6 +45,26 @@ class Service:
             for item in self.store.all(db,'job'):
                 if item['status']=='RUNNING':
                     item['status']='INTERRUPTED';self.store.put(db,'job',item)
+    def context(self,db,c):
+        from belive.conversations import conversation
+        context={'case':{k:c[k] for k in ('title','description','category','severity')},'verified_records':[],
+                 'condo_rules':None,'property_version':None,'tenant_verified':bool(c['tenant_id']),
+                 'conversation':conversation(self.store,db,c)[-12:]}
+        if c['tenant_id']:
+            t=self.store.get(db,'tenant',c['tenant_id']);condo=support_condo(self.store.get(db,'condo',t['condo_id']))
+            context['condo_rules']=condo['rules'] or None;context['property_version']={'id':condo['id'],'version':condo['version']}
+            context['verified_records']=[r for r in self.store.all(db,'record') if r['tenant_id']==t['id'] and r['verified'] and r.get('active',True) and (not r.get('expires_at') or r['expires_at']>now())]
+        return context
+    def check_ai(self):
+        check={'id':'ai','status':'RUNNING','at':now(),'provider':self.settings.llm_provider,'model':self.settings.llm_model}
+        with self.store.connect() as db:self.store.put(db,'health',check)
+        try:
+            self.ai.check();check.update(status='PASSED',detail='A real configured-provider response passed the connection schema check.')
+        except Exception as exc:
+            check.update(status='FAILED',detail='AI_NOT_CONFIGURED' if str(exc)=='AI_NOT_CONFIGURED' else 'AI_CONNECTION_FAILED')
+        check['finished_at']=now()
+        with self.store.connect() as db:self.store.put(db,'health',check);self.store.event(db,'ai','CONNECTION_CHECK_'+check['status'],check['detail'])
+        return check
     def styles(self,db,shared=False):
         latest={}
         for f in reversed(self.store.all(db,'feedback')): latest[f['case_id']]=f
@@ -60,8 +80,19 @@ class Service:
             result['outbox']=[m for m in result['outbox'] if support_notification(m)]
             for case in result['cases']:
                 if case['category'] not in CATEGORIES:case['category']='OTHER'
+            from belive.conversations import conversation
+            for case in result['cases']:
+                case['conversation']=conversation(self.store,db,case)
+                case['activity']=[dict(r) for r in db.execute('SELECT * FROM events WHERE entity=? ORDER BY id DESC LIMIT 100',(case['id'],))]
+                active=case['status'] not in {'CLOSED','SKIPPED','VERIFIED'}
+                deadlines=[d for d in [case.get('ack_due') if case['status']=='HUMAN_REVIEW' else None,case.get('followup_due') if case['status']=='FOLLOW_UP' else None,case.get('action_due')] if d]
+                case['due_at']=min(deadlines) if deadlines and active else None;case['overdue']=bool(case['due_at'] and case['due_at']<now())
+            ranks={'CRITICAL':0,'HIGH':1,'MEDIUM':2,'UNASSESSED':2,'LOW':3}
+            result['cases'].sort(key=lambda c:(c['status'] in {'CLOSED','SKIPPED'},c['severity']!='CRITICAL',not c['overdue'],ranks.get(c['severity'],4),c.get('due_at') or '9999',c['created_at']))
+            for record in result['records']:record['history']=self.store.history(db,'record',record['id'])
+            result['backups']=self.store.all(db,'backup');result['health']=self.store.all(db,'health')
             result['examples']=self.styles(db);result['audit']=self.store.audit(db)
-            result['readiness']={'ai':self.ai.readiness(),'scheduler':True}
+            result['readiness']={'ai':self.ai.readiness(),'scheduler':True,'provider':self.settings.llm_provider,'model':self.settings.llm_model}
             from belive.workspace import selected_database
             active=self.store.path.resolve()
             selected=selected_database(self.workspace_config,active) if self.workspace_config else active
@@ -69,6 +100,7 @@ class Service:
             result['reports']={
                 'categories':{k:sum(c.get('category')==k for c in result['cases']) for k in CATEGORIES},
                 'statuses':{k:sum(c['status']==k for c in result['cases']) for k in STATES},
+                'overdue':sum(c['overdue'] for c in result['cases']),
                 'human_handoffs':sum(c.get('handoff',False) for c in result['cases']),
                 'verified_closures':sum(c['status']=='CLOSED' and bool(c.get('verification')) for c in result['cases'])}
             return result
@@ -84,7 +116,7 @@ class Service:
         self.store.event(db,entity,'NOTIFICATION_QUEUED',kind+'; no external message sent')
         return item
     def handoff(self,db,c,reason):
-        c.update(status='HUMAN_REVIEW',handoff=True,review_reason=reason,ack_due=due(self.settings.acknowledgement_minutes),escalation=0)
+        c.update(status='HUMAN_REVIEW',handoff=True,review_reason=reason,next_action='Staff assessment required',action_due=None,followup_due=None,ack_due=due(self.settings.acknowledgement_minutes),escalation=0)
         self.enqueue(db,c['id'],'STAFF_ALERT',reason,'primary-support')
     def create(self,db,p):
         title=bounded(p.get('title'),4,120);description=bounded(p.get('description'),10,6000)
@@ -128,7 +160,7 @@ class Service:
             prior=db.execute('SELECT result FROM requests WHERE key=?',(key,)).fetchone()
             if prior:
                 saved=json.loads(prior[0]);require(saved['fingerprint']==fingerprint,'Idempotency key reused with different data');return saved['result']
-            result=self._command(db,name,p)
+            result=self._command(db,name,{**p,'_request_key':key})
             cached={k:v for k,v in result.items() if k!='token'} if name=='portal_issue' else result
             db.execute('INSERT INTO requests VALUES(?,?)',(key,json.dumps({'fingerprint':fingerprint,'result':cached})))
             return result
@@ -150,14 +182,55 @@ class Service:
         if name=='condo':
             require(p.get('confirmed') is True,'Confirm this support guidance against the property record')
             require(not any(k in p for k in ('days','start','end','checklist')), 'Only property support guidance is supported')
+            old=next((c for c in self.store.all(db,'condo') if c['id']==p.get('id')),None)
+            if old:self.store.version(db,'condo',old)
             c={'id':ref(p.get('id')),'name':bounded(p.get('name'),2,120),
-               'rules':bounded(p.get('rules'),8,3000),'verified':True,'verified_at':now()}
-            self.store.put(db,'condo',c);self.store.event(db,c['id'],'SUPPORT_GUIDANCE_RECORDED',c['rules']);return c
+               'rules':bounded(p.get('rules'),8,3000),'verified':True,'verified_at':now(),'version':old.get('version',1)+1 if old else 1}
+            self.store.version(db,'condo',c);self.store.put(db,'condo',c);self.store.event(db,c['id'],'SUPPORT_GUIDANCE_RECORDED',c['rules']);return c
         if name=='record':
             t=self.store.get(db,'tenant',p.get('tenant_id'))
             require(p.get('confirmed') is True,'Verify the record before adding it to AI context')
-            record={'id':uid('REC'),'tenant_id':t['id'],'text':bounded(p.get('text'),8,3000),'source':bounded(p.get('source'),3,250),'verified':True,'at':now()}
-            self.store.put(db,'record',record);self.store.event(db,t['id'],'VERIFIED_RECORD_ADDED',record['id']);return record
+            record={'id':uid('REC'),'tenant_id':t['id'],'text':bounded(p.get('text'),8,3000),'source':bounded(p.get('source'),3,250),'verified':True,'active':True,'version':1,'at':now(),'expires_at':None}
+            self.store.version(db,'record',record);self.store.put(db,'record',record);self.store.event(db,t['id'],'VERIFIED_RECORD_ADDED',record['id']);return record
+        if name=='record_update':
+            record=self.store.get(db,'record',p.get('id'))
+            require(p.get('version')==record.get('version',1),'Record changed; reload its latest version')
+            reason=bounded(p.get('reason'),8,1000);action=p.get('action')
+            require(action in {'CORRECT','DEACTIVATE'},'Choose CORRECT or DEACTIVATE')
+            self.store.version(db,'record',record)
+            if action=='CORRECT':
+                require(p.get('confirmed') is True,'Verify the correction against its source')
+                record.update(text=bounded(p.get('text'),8,3000),source=bounded(p.get('source'),3,250),active=True)
+                expiry=p.get('expires_at') or None
+                if expiry:
+                    date=datetime.fromisoformat(expiry);require(date.tzinfo is not None and date>datetime.now(timezone.utc),'Expiry must be a future time with timezone')
+                    expiry=date.astimezone(timezone.utc).isoformat()
+                record['expires_at']=expiry
+            else:record['active']=False
+            record.update(version=record.get('version',1)+1,at=now(),change_reason=reason,changed_by=p.get('_actor','operator'))
+            self.store.version(db,'record',record);self.store.put(db,'record',record);self.store.event(db,record['id'],'RECORD_'+action,reason);return record
+        if name=='tenant_feedback':
+            c=self.store.get(db,'case',p.get('id'));require(c['tenant_id']==p.get('tenant_id'),'Case does not belong to this tenant')
+            resolved=p.get('resolved');require(type(resolved)is bool,'Resolution feedback must be true or false')
+            require(not resolved or c['status'] not in {'CLOSED','SKIPPED'},'Case is already closed')
+            note=bounded(p.get('note') or ('I confirm the reported issue is resolved.' if resolved else 'The issue is still unresolved.'),8,2000)
+            from belive.conversations import post
+            post(self.store,db,c,'TENANT',note,'feedback-'+p['_request_key'])
+            c['tenant_resolution']={'resolved':resolved,'note':note,'at':now()}
+            dangerous=risk(note)
+            if dangerous:c['severity']='CRITICAL'
+            if not resolved or dangerous:
+                c['verification']='';c['action_due']=None;self.handoff(db,c,'Tenant outcome feedback contains a safety risk' if dangerous else 'Tenant reports the issue is still unresolved')
+                self.store.put(db,'feedback',{'id':uid('STYLE'),'case_id':c['id'],'text':'','verdict':'REJECTED','share':False,'at':now()})
+            c['revision']+=1;c['updated_at']=now();self.store.put(db,'case',c)
+            self.store.event(db,c['id'],'TENANT_RESOLUTION_FEEDBACK',note);return {'saved':True}
+        if name=='portal_revoke':
+            tenant=self.store.get(db,'tenant',p.get('tenant_id'))
+            require(p.get('confirmed') is True,'Confirm revocation of this tenant access')
+            keys=[x for x in self.store.all(db,'portal') if x['tenant_id']==tenant['id']]
+            for item in keys:db.execute("DELETE FROM objects WHERE kind='portal' AND id=?",(item['id'],))
+            self.store.event(db,tenant['id'],'PORTAL_ACCESS_REVOKED',str(len(keys))+' access keys revoked')
+            return {'revoked':len(keys)}
         if name=='portal_issue':
             t=self.store.get(db,'tenant',p.get('tenant_id'));token=secrets.token_urlsafe(32)
             item={'id':digest(token),'tenant_id':t['id'],'expires':due(10080)}
@@ -197,6 +270,28 @@ class Service:
             require(bool(c['tenant_id']),'Verify/link the tenant before queuing a private response')
             require(p.get('confirmed') is True,'Review the exact saved response before queueing')
             self.enqueue(db,c['id'],'TENANT_RESPONSE',c['draft'],c['tenant_id']);note='Saved response queued; approval still required'
+        elif action=='publish_response':
+            require(status not in {'CLOSED','SKIPPED'} and c['tenant_id'] and c['draft'],'An active verified-tenant case and saved response are required')
+            require(p.get('confirmed') is True,'Review the exact saved response before publishing to the tenant portal')
+            from belive.conversations import post
+            post(self.store,db,c,'SUPPORT',c['draft'],'support-'+digest(c['draft']))
+            note='Reviewed response published to the tenant portal; no external gateway delivery claimed'
+        elif action=='assess':
+            require(status not in {'CLOSED','SKIPPED'},'An active case is required')
+            category=p.get('category');severity=p.get('severity');note=bounded(note,8,1000)
+            require(category in CATEGORIES and severity in {'LOW','MEDIUM','HIGH','CRITICAL'},'Choose a supported category and urgency')
+            require(not risk(c['description']+' '+c.get('tenant_update','')+' '+c.get('tenant_resolution',{}).get('note','')) or severity=='CRITICAL','Detected safety risks require critical handling')
+            c.update(category=category,severity=severity)
+            if severity in {'HIGH','CRITICAL'}:self.handoff(db,c,'Staff urgency assessment: '+note)
+        elif action=='note':
+            note=bounded(note,8,2000)
+        elif action=='plan':
+            require(status not in {'CLOSED','SKIPPED'},'An active case is required')
+            c['next_action']=bounded(note,8,1000);deadline=p.get('due_at')
+            if deadline:
+                date=datetime.fromisoformat(deadline);require(date.tzinfo is not None and date>datetime.now(timezone.utc),'Choose a future deadline with timezone')
+                c['action_due']=date.astimezone(timezone.utc).isoformat()
+            else:c['action_due']=None
         elif action=='workorder':
             require(bool(c['tenant_id']) and status not in {'CLOSED','SKIPPED'},'Verified tenant and active case required')
             note=bounded(note,8,2000)
@@ -209,7 +304,7 @@ class Service:
         elif action=='followup':
             require(status in {'IN_PROGRESS','AI_PENDING'},'Staff handling or a prepared AI response is required')
             require(bool(c['tenant_id']),'Verify tenant before case follow-up');note=bounded(note,8,2000)
-            c['status']='FOLLOW_UP';c['followup_due']=due(self.settings.followup_minutes);c['followup_count']=0
+            c['action_due']=None;c['status']='FOLLOW_UP';c['followup_due']=due(self.settings.followup_minutes);c['followup_count']=0
         elif action=='reassess':
             require(status=='FOLLOW_UP','Only follow-up cases can be reassessed');note=bounded(note,8,2000);self.handoff(db,c,note)
         elif action=='verify':
@@ -225,29 +320,26 @@ class Service:
             c['verification']='';self.handoff(db,c,note)
             self.store.put(db,'feedback',{'id':uid('STYLE'),'case_id':c['id'],'text':'','verdict':'REJECTED','share':False,'at':now()})
         else:raise ValueError('Unknown case action')
-        c['revision']+=1;c['updated_at']=now();self.store.put(db,'case',c);self.store.event(db,c['id'],action.upper(),note)
+        c['revision']+=1;c['updated_at']=now();self.store.put(db,'case',c);self.store.event(db,c['id'],action.upper(),p.get('_actor','operator')+': '+str(note))
         return c
     def analyse(self,case_id):
         with self.lock,self.store.connect() as db:
             c=self.store.get(db,'case',case_id)
             require(c['status'] not in {'CLOSED','VERIFIED','SKIPPED','FOLLOW_UP'},'AI analysis is not available at this stage')
             require(c['severity'] not in {'HIGH','CRITICAL'} and not risk(c['description']),'High-risk case requires staff handling')
-            context={'case':{k:c[k] for k in ('title','description','category','severity')},'verified_records':[],'condo_rules':None,'tenant_verified':bool(c['tenant_id']),
-                     'reported_updates':[row[0] for row in db.execute("SELECT detail FROM events WHERE entity=? AND action='TENANT_UPDATE' ORDER BY id DESC LIMIT 10",(c['id'],))]}
-            if c['tenant_id']:
-                t=self.store.get(db,'tenant',c['tenant_id']);context['condo_rules']=support_condo(self.store.get(db,'condo',t['condo_id']))['rules'] or None
-                context['verified_records']=[r for r in self.store.all(db,'record') if r['tenant_id']==t['id'] and r['verified']]
+            context=self.context(db,c)
             examples=self.styles(db);revision=c['revision'];job={'id':uid('AI'),'case_id':c['id'],'status':'RUNNING','at':now()}
             self.store.put(db,'job',job)
         try: result=self.ai.analyse(context,examples);error=''
         except Exception as exc: result=None;error='AI_NOT_CONFIGURED' if str(exc)=='AI_NOT_CONFIGURED' else 'AI_FAILED_OR_INVALID'
         with self.lock,self.store.connect() as db:
             current=self.store.get(db,'case',case_id)
-            if current['revision']!=revision or self.styles(db)!=examples:
+            if current['revision']!=revision or self.styles(db)!=examples or self.context(db,current)!=context:
                 job['status']='STALE';job['error']='Case or reviewed guidance changed during AI work; result not applied'
             else:
                 if error:self.handoff(db,current,error)
                 else:
+                    result['record_refs']=[{'id':r['id'],'version':r.get('version',1),'source':r['source'],'text':r['text']} for r in context['verified_records'] if r['id'] in result.get('record_ids',[])]
                     current.update(analysis=result,category=result['category'],severity=result['severity'])
                     if result['relevance']=='NON_SUPPORT' and not result['uncertainty'] and result['severity'] not in {'HIGH','CRITICAL'}:current['status']='SKIPPED'
                     elif result['uncertainty'] or result['relevance']=='UNCERTAIN' or result['severity'] in {'HIGH','CRITICAL'} or result.get('requires_human',False):self.handoff(db,current,'AI requires human assessment: '+result['summary'])
@@ -279,6 +371,8 @@ class Service:
             item=self.store.get(db,'portal',digest(token));require(item['expires']>now(),'Portal access expired')
             tenant=item['tenant_id']
             cases=[{k:c.get(k) for k in ('id','title','description','status','created_at')} for c in self.store.all(db,'case') if c['tenant_id']==tenant]
+            from belive.conversations import conversation
+            for case in cases:case['conversation']=conversation(self.store,db,self.store.get(db,'case',case['id']))
             return {'tenant_id':tenant,'cases':cases}
     def portal_submit(self,token,p,key):
         tenant=self.portal(token)['tenant_id']
@@ -293,9 +387,15 @@ class Service:
             fingerprint=digest(json.dumps([tenant,p],sort_keys=True));old=db.execute('SELECT result FROM requests WHERE key=?',(key,)).fetchone()
             if old:
                 saved=json.loads(old[0]);require(saved['fingerprint']==fingerprint,'Idempotency mismatch');return saved['result']
+            from belive.conversations import post
+            post(self.store,db,c,'TENANT',note,'update-'+key)
             self.store.event(db,c['id'],'TENANT_UPDATE',note)
             c['tenant_update']=note;c['revision']+=1
-            if risk(note):c['severity']='CRITICAL';self.handoff(db,c,'Tenant update contains potential safety risk')
+            if risk(note):c['severity']='CRITICAL';c['verification']='';self.handoff(db,c,'Tenant update contains potential safety risk')
             self.store.put(db,'case',c)
             db.execute('INSERT INTO requests VALUES(?,?)',(key,json.dumps({'fingerprint':fingerprint,'result':{'saved':True}})))
             return {'saved':True}
+
+    def portal_feedback(self,token,p,key):
+        tenant=self.portal(token)['tenant_id']
+        return self.command('tenant_feedback',{'id':p.get('id'),'resolved':p.get('resolved'),'note':p.get('note'),'tenant_id':tenant},key)

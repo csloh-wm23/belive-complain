@@ -12,13 +12,16 @@ The project reuses native Hermes transport concepts and the existing visual lang
 |---|---|
 | `server.py` | Local HTTP/static allowlist, CSRF/origin/host guards, tenant bearer access, background task deduplication, 30-second scheduler |
 | `belive/service.py` | Transactional commands, tenancy verification assertions, property support guidance, case transitions, outbox, escalation, feedback and scoped portal |
+| `belive/access.py` | Local Admin/Support accounts, password hashing, session expiry, login throttling and account revocation |
+| `belive/conversations.py` | Tenant-visible messages isolated from drafts and private operator audit |
+| `belive/backups.py` | Consistent SQLite snapshots, checksum validation and recovery into a separate paused workspace |
 | `belive/workspace.py` | Validated database file selection, read-only existing-schema checks and persisted next-launch preference |
-| `belive/store.py` | SQLite objects, immutable source versions, append-only audit, persisted command idempotency; email/number masking |
+| `belive/store.py` | SQLite objects, immutable source/record versions, append-only audit, persisted command idempotency; email/number masking |
 | `belive/ai.py` | Structured triage and investigation/response; schema/evidence/record validation, bounded read-only tools |
 | `belive/hermes_native.py`, `belive/hermes_worker.py` | Installed native AIAgent subprocess, isolated MemoryStore, explicit allowlist, bounded steps/timeouts, no shell or publishing tools |
 | `belive/connectors.py` | Selected official source reads and approved HTTPS notification delivery |
 | `assets/app.js`, `index.html` | Tenant-only operator dashboard, review dialogs, records, outbox, memory and reports |
-| `portal.html`, `assets/portal.js` | Local tenant access, scoped case viewing, complaint intake and updates |
+| `portal.html`, `assets/portal.js` | Local tenant access, scoped conversations, tenant replies and resolution feedback |
 
 No live action is simulated in the normal workflow. Test doubles live only in tests. Missing configuration produces explicit failure/handover.
 
@@ -44,7 +47,7 @@ Internal intake begins at `AI_PENDING`; an external unverified case begins at `A
 
 Staff acknowledgement records ownership and enters `IN_PROGRESS`. An action note starts `FOLLOW_UP`. Staff can reassess an unresolved case into human review. Resolution requires a verified tenant, explicit confirmation and evidence to enter `VERIFIED`. Only a verified case with no open work orders can enter `CLOSED`. Reopening closed/skipped cases routes to staff and revokes old learning. A tenant update containing a detected safety risk escalates immediately.
 
-Case actions use revision checks. AI runs outside the state transaction, then discards its result if the case or reviewed example set changed. Current approved/corrected styles are projected into the isolated native MemoryStore before each generation. Rejected entries may remain on disk until the next projection but are excluded from retrieval immediately and cannot be used by the next agent run.
+Case actions use revision checks. AI runs outside the state transaction, then discards its result if the case, public conversation, verified support context/property version or reviewed example set changed. Current approved/corrected styles are projected into the isolated native MemoryStore before each generation. Rejected entries may remain on disk until the next projection but are excluded from retrieval immediately and cannot be used by the next agent run.
 
 ## Timers, delivery and failure
 
@@ -61,7 +64,7 @@ Messages move `PENDING_APPROVAL -> APPROVED -> SENDING -> DELIVERED/UNKNOWN`, or
 - All AI tools are read-only and restricted to current case context and current reviewed examples. Source text and record text are untrusted.
 - A seven-day portal key is stored as a hash and scoped to one verified tenant. Intake ignores a client-provided tenant ID; updates require case ownership. Drafts, AI internals and other tenants are excluded from portal responses.
 - Shared memory requires a separately configured client token and explicit example sharing. Basic redaction is not comprehensive anonymisation; review before sharing.
-- The local operator interface has no production user-role system. Do not expose this server to a network as a production portal.
+- Operator data APIs require a valid login session and CSRF token. Admin-only operations are rejected for Support accounts at the server. This remains a loopback service, not a publicly hosted identity platform.
 - JSON exports contain operational records. Keep them private. Source/audit immutability is enforced by this database schema, not by an external tamper-proof service.
 
 ## Database interface and launch behavior
@@ -72,6 +75,40 @@ The operator can choose a SQLite file with the local native picker. The protecte
 
 The Windows batch launcher opens Python in a dedicated console and immediately exits. The server starts automatically. Ctrl+C is handled by Python for clean shutdown; no batch process remains waiting to request “Terminate batch job”, and there is no pause after a normal shutdown.
 
+## Conversations, ownership and deadlines
+
+Publishing to the tenant portal is an explicit operator action on the saved response. It requires verified tenancy, an active case and confirmation that the exact wording was reviewed. Identical published wording is deduplicated per case. It creates a real local portal message and does not claim email/social/gateway delivery. Drafts, analysis, citations, work orders and internal notes remain private.
+
+The portal returns only the current tenant's public conversation. Tenant updates are persisted and included in future AI context. Outcome feedback records the tenant's assertion; it does not verify or close the case. An unresolved outcome can reopen a closed case and revoke its previous style example. Safety flags in an update or outcome feedback override routine processing and require critical staff handling, even if the tenant selected resolved.
+
+Acknowledgement records the signed-in operator name. Operators can record a manual category/urgency assessment, private note and future action deadline. Detected safety flags cannot be downgraded through that assessment. The queue places active critical cases first, then overdue work and remaining urgency/deadline order. Closure clears the active due-state display. Default timers are still prototype settings, not claimed BeLive SLAs.
+
+## Versioned support context
+
+Support records carry a version, active state, optional expiry, source reference and correction reason. A correction requires source verification and the expected current version; deactivation stops future AI retrieval. Every version is retained in `record_history`, with database triggers prohibiting history updates/deletions. Property guidance also retains versions. Legacy records are treated as version 1 and acquire history on their next edit.
+
+AI context contains only the matching tenant's current active, unexpired verified support records. Saved citations capture the exact ID/version/source/text used. A context change during generation discards the result. Historical citations remain evidence of what was used at the time and do not establish that the guidance is still current; operators must review before publication.
+
+## Operator access and revocation
+
+First-run setup creates one local administrator using the chosen password; it is disabled after an account exists. Passwords are salted PBKDF2-HMAC-SHA256 hashes with 600,000 iterations, following the algorithm/work-factor guidance in [OWASP Password Storage](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html). The API never returns password hashes in its snapshots or user list. Login failures are throttled after five attempts for the same username.
+
+An operator session lasts eight hours; the browser cookie is HttpOnly and SameSite=Strict, and only a hash of the random session secret is stored. Logout/deactivation revokes sessions. Support accounts can handle cases and reviewed responses. Admins manage accounts, verified records, source configuration, AI connection checks, memory projection, tenant keys and database recovery. Both roles can read operational case context; this is a small support-team permission model, not property-by-property access control. Password recovery/MFA, external identity providers and public TLS hosting are outside this local implementation.
+
+Tenant keys remain separate bearer credentials and can be revoked by an admin without deleting the conversation. Revocation and session expiry are checked on subsequent requests; hidden controls are not the authorization boundary.
+
+## Consistent backups and recovery
+
+Backup uses the [SQLite connection backup API](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup), verifies integrity and records a checksum. Files are created with unique names and existing files are not overwritten. Recovery validates the saved checksum and schema, then creates a separate database for the next launch. The active database stays intact.
+
+The recovered copy revokes sessions/tenant keys, pauses source reads, holds outstanding gateway messages, clears due timers, routes active cases to staff, deactivates recovered support context and appends rejection verdicts for recovered style examples. Property guidance is marked for revalidation. This prevents an older snapshot from silently re-enabling a subsequently rejected example or replaying old external actions. Restored account credentials are those present in the backup. Source/audit/history evidence is retained.
+
+## Real connection checks and evaluation
+
+The admin connection test runs a genuine configured-provider probe through native Hermes, with neutral context and a separate isolated check-memory directory. Only a valid actual response records success; missing configuration/failures are reported. A prior successful check is dated evidence, not continuous provider health.
+
+`evals/tenant_support.json` contains 24 clearly fictional English/Malay/Chinese cases. `scripts/evaluate_ai.py` makes no provider calls unless explicitly invoked with `--run-live`. Live evaluation uses a temporary database, captures schema/category/handover results and requires human review for factual and language quality. It does not insert examples into the normal workflow or claim a measured score without a run.
+
 ## Scope correction and existing data
 
 Move scheduling, move completion and PIC availability commands have been removed. The command allowlist rejects those actions before reading cached idempotency results, so a legacy successful request cannot reactivate them. The dashboard/portal no longer return move arrangements or PIC availability. Property records retain only identity and verified support guidance in the current API.
@@ -80,4 +117,4 @@ Existing arrangement objects and append-only activity are retained for history. 
 
 ## Validation status
 
-23 isolated backend/HTTP/native-memory/database checks passed, including actual installed-Hermes MemoryStore persistence and revocation without a model call. Browser QA passed at desktop and mobile widths across all eight views, with no page errors or external browser requests. Database persistence, read-only rejection of unrelated files, next-launch selection, protected picker cancellation and source pause/resume are covered; browser tests substitute the native picker result rather than opening a real dialog. A separate Windows smoke check started the real batch launcher against a temporary database and confirmed that one Ctrl+C stopped its isolated Python console without a batch prompt. Native AI provider output, company source access and a real notification gateway still need configuration and live acceptance testing.
+35 isolated backend/HTTP/native-memory/database checks passed, including actual installed-Hermes MemoryStore persistence and revocation without a model call. Browser QA passed at desktop and mobile widths across all eight views, with no page errors or external browser requests. Database persistence, read-only rejection of unrelated files, next-launch selection, protected picker cancellation and source pause/resume are covered; browser tests substitute the native picker result rather than opening a real dialog. A separate Windows smoke check started the real batch launcher against a temporary database and confirmed that one Ctrl+C stopped its isolated Python console without a batch prompt. The new authenticated browser walkthrough additionally verifies portal replies/privacy/outcomes, record correction, backup controls and Support role restrictions. The native provider has no model/key configured in this checkout, so actual provider quality, company source access and external gateway delivery still require live acceptance testing.

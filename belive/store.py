@@ -32,6 +32,11 @@ class Store:
               CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,entity TEXT NOT NULL,
                 action TEXT NOT NULL,detail TEXT NOT NULL,created_at TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS requests(key TEXT PRIMARY KEY,result TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS record_history(kind TEXT NOT NULL,record_id TEXT NOT NULL,
+                version INTEGER NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(kind,record_id,version));
+              CREATE INDEX IF NOT EXISTS event_entity ON events(entity,id);
+              CREATE TRIGGER IF NOT EXISTS history_no_update BEFORE UPDATE ON record_history BEGIN SELECT RAISE(ABORT,'Immutable record version'); END;
+              CREATE TRIGGER IF NOT EXISTS history_no_delete BEFORE DELETE ON record_history BEGIN SELECT RAISE(ABORT,'Immutable record version'); END;
               CREATE TRIGGER IF NOT EXISTS sources_no_update BEFORE UPDATE ON sources BEGIN SELECT RAISE(ABORT,'Immutable source'); END;
               CREATE TRIGGER IF NOT EXISTS sources_no_delete BEFORE DELETE ON sources BEGIN SELECT RAISE(ABORT,'Immutable source'); END;
               CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT,'Append-only audit'); END;
@@ -56,5 +61,10 @@ class Store:
     def event(self,db,entity,action,detail):
         db.execute('INSERT INTO events(entity,action,detail,created_at) VALUES(?,?,?,?)',
                    (str(entity),action,redact(str(detail))[:4000],now()))
+    def version(self,db,kind,record):
+        db.execute('INSERT OR IGNORE INTO record_history VALUES(?,?,?,?,?)',
+            (kind,record['id'],record.get('version',1),json.dumps(record),now()))
+    def history(self,db,kind,record_id):
+        return [json.loads(r[0]) for r in db.execute('SELECT body FROM record_history WHERE kind=? AND record_id=? ORDER BY version DESC',(kind,record_id))]
     def audit(self,db):
         return [dict(row) for row in db.execute('SELECT * FROM events ORDER BY id DESC LIMIT 500')]

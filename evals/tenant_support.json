@@ -1,0 +1,218 @@
+[
+  {
+    "id": "en-01",
+    "language": "en",
+    "fictional": true,
+    "text": "The Wi-Fi in my room drops every evening. What information should I provide?",
+    "expected_category": "WIFI",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "en-02",
+    "language": "en",
+    "fictional": true,
+    "text": "The shared kitchen has not been cleaned. Can support check the cleaning request?",
+    "expected_category": "CLEANING",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "en-03",
+    "language": "en",
+    "fictional": true,
+    "text": "A cabinet door in my rented room is loose and needs attention.",
+    "expected_category": "MAINTENANCE",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "en-04",
+    "language": "en",
+    "fictional": true,
+    "text": "My room access code is not accepted. Please arrange a code reset.",
+    "expected_category": "ACCESS",
+    "handoff_required": true,
+    "critical": false
+  },
+  {
+    "id": "en-05",
+    "language": "en",
+    "fictional": true,
+    "text": "The water supply in my room has stopped. Please ask the responsible team to check.",
+    "expected_category": "UTILITIES",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "en-06",
+    "language": "en",
+    "fictional": true,
+    "text": "The amount on my rental bill looks incorrect. Can someone check my account?",
+    "expected_category": "BILLING",
+    "handoff_required": true,
+    "critical": false
+  },
+  {
+    "id": "en-07",
+    "language": "en",
+    "fictional": true,
+    "text": "Where can I find the verified quiet-hours rules for my property?",
+    "expected_category": "HOUSE_RULES",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "en-08",
+    "language": "en",
+    "fictional": true,
+    "text": "There is smoke and sparks from the electrical socket in my room.",
+    "expected_category": "OTHER",
+    "handoff_required": true,
+    "critical": true
+  },
+  {
+    "id": "ms-01",
+    "language": "ms",
+    "fictional": true,
+    "text": "Wi-Fi bilik saya kerap terputus pada waktu malam. Maklumat apa yang diperlukan?",
+    "expected_category": "WIFI",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "ms-02",
+    "language": "ms",
+    "fictional": true,
+    "text": "Dapur bersama masih kotor. Boleh pihak sokongan semak permintaan pembersihan?",
+    "expected_category": "CLEANING",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "ms-03",
+    "language": "ms",
+    "fictional": true,
+    "text": "Pintu kabinet di bilik sewa saya longgar dan memerlukan perhatian.",
+    "expected_category": "MAINTENANCE",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "ms-04",
+    "language": "ms",
+    "fictional": true,
+    "text": "Kod akses bilik saya tidak diterima. Saya perlukan bantuan untuk menetapkan semula kod.",
+    "expected_category": "ACCESS",
+    "handoff_required": true,
+    "critical": false
+  },
+  {
+    "id": "ms-05",
+    "language": "ms",
+    "fictional": true,
+    "text": "Bekalan air di bilik saya terhenti. Boleh pasukan berkaitan menyemaknya?",
+    "expected_category": "UTILITIES",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "ms-06",
+    "language": "ms",
+    "fictional": true,
+    "text": "Jumlah pada bil sewa saya nampak salah. Boleh seseorang semak akaun saya?",
+    "expected_category": "BILLING",
+    "handoff_required": true,
+    "critical": false
+  },
+  {
+    "id": "ms-07",
+    "language": "ms",
+    "fictional": true,
+    "text": "Di manakah saya boleh melihat peraturan waktu senyap yang disahkan untuk kediaman saya?",
+    "expected_category": "HOUSE_RULES",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "ms-08",
+    "language": "ms",
+    "fictional": true,
+    "text": "Ada kebakaran dan asap dari soket elektrik di bilik saya.",
+    "expected_category": "OTHER",
+    "handoff_required": true,
+    "critical": true
+  },
+  {
+    "id": "zh-01",
+    "language": "zh",
+    "fictional": true,
+    "text": "房间的 Wi-Fi 每晚都会断线，请问需要提供哪些资料？",
+    "expected_category": "WIFI",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "zh-02",
+    "language": "zh",
+    "fictional": true,
+    "text": "公共厨房还没有清洁，请协助跟进清洁需求。",
+    "expected_category": "CLEANING",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "zh-03",
+    "language": "zh",
+    "fictional": true,
+    "text": "租住房间里的柜门松脱，需要工作人员处理。",
+    "expected_category": "MAINTENANCE",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "zh-04",
+    "language": "zh",
+    "fictional": true,
+    "text": "房间门锁不接受我的密码，请安排工作人员协助重设。",
+    "expected_category": "ACCESS",
+    "handoff_required": true,
+    "critical": false
+  },
+  {
+    "id": "zh-05",
+    "language": "zh",
+    "fictional": true,
+    "text": "房间没有自来水了，请相关人员检查供水问题。",
+    "expected_category": "UTILITIES",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "zh-06",
+    "language": "zh",
+    "fictional": true,
+    "text": "我的租金账单金额似乎不正确，请工作人员检查账户。",
+    "expected_category": "BILLING",
+    "handoff_required": true,
+    "critical": false
+  },
+  {
+    "id": "zh-07",
+    "language": "zh",
+    "fictional": true,
+    "text": "请问在哪里可以查看这处住所已经确认的安静时段规定？",
+    "expected_category": "HOUSE_RULES",
+    "handoff_required": null,
+    "critical": false
+  },
+  {
+    "id": "zh-08",
+    "language": "zh",
+    "fictional": true,
+    "text": "房间插座冒烟，而且有漏电和火灾的迹象。",
+    "expected_category": "OTHER",
+    "handoff_required": true,
+    "critical": true
+  }
+]

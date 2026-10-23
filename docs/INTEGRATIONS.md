@@ -52,9 +52,9 @@ Queue acceptance alone must not be described as delivered. A timeout, invalid re
 
 ## Local tenant portal
 
-Staff issues a seven-day bearer key after verification. Only its hash is stored in the portal table; the raw key is returned once and is excluded from the idempotency cache. Do not place keys in URLs. Keys permit viewing that tenant's limited case fields and submitting reports/updates; they cannot access the operator snapshot.
+Staff issues a seven-day bearer key after verification. Only its hash is stored in the portal table; the raw key is returned once and is excluded from the idempotency cache. Do not place keys in URLs. Keys permit viewing that tenant's public conversations and limited case fields, replying and reporting outcomes; they cannot access the operator snapshot.
 
-This is a local demonstration of scoped access, not deployable identity infrastructure. The operator dashboard is accessible to the local machine user. Production use needs staff authentication and roles, tenant authentication/revocation, TLS, protection against abuse and an agreed data lifecycle. A public GitHub repository does not host the running backend or tenant portal.
+This is a local demonstration of scoped access, not deployable identity infrastructure. The operator dashboard now requires Admin/Support login; data/configuration operations enforce roles on the server. Tenant keys are independently scoped and revocable. Production use still needs a deployment/identity design, TLS, protection against abuse and an agreed data lifecycle. A public GitHub repository does not host the running backend or tenant portal.
 
 ## Database location and visible records
 
@@ -63,3 +63,19 @@ Open **Database & records** to search stored property, tenant and support-contex
 The default file is `data/belive.db`. The ignored `data/workspace.json` preference contains only the selected path. No tenant records are stored there or in browser localStorage. `python server.py --database ABSOLUTE_PATH` can explicitly override selection for a launch. Python's Tk support is needed for the native picker; normal database use and record browsing do not depend on Tk.
 
 The Windows launcher opens a dedicated Python console and exits its batch process immediately. Leave the Python window running for the dashboard and scheduled checks; one Ctrl+C stops it. An already-running older launcher must be stopped before using the revised one.
+
+## Reviewed portal responses
+
+The local portal is an implemented communication channel. Operators review/save wording and explicitly publish it to the verified tenant's conversation. No external credentials are needed for that local operation. Gateway queue approval/delivery remains separate; portal publication is not reported as external delivery. Tenant resolved feedback is an assertion for staff review. Unresolved feedback can reopen a closed case; safety flags always route to staff.
+
+## Operator access
+
+Create an admin in first-run setup, then create Support accounts in settings. Credentials belong to the selected database. There is no default account or hard-coded password. The session cookie is HttpOnly/SameSite=Strict for this loopback HTTP app. Admin operations include users, source and context changes, AI checks, portal-key management, backup/recovery and database selection. Support operations include case handling, internal notes, reviewed responses and external notification review. Role checks are enforced independently of the visible UI.
+
+## Real AI check and evaluation
+
+The admin **Test AI connection** action sends a neutral request to the configured provider through native Hermes and records the validated outcome and timestamp. It sends no tenant data but may incur model charges. The separate 24-case evaluation is opt-in with `python scripts/evaluate_ai.py --run-live`; without that flag the script only describes the fictional test set. See the README for setup and interpretation. No real provider score has been measured in the unconfigured development checkout.
+
+## Backup recovery
+
+Admin backup uses SQLite's online backup API and stores a verified checksum beside the database. Recovery creates a separate copy rather than replacing the live file. In that copy, source checks pause, outstanding messages enter `RECOVERY_HOLD`, sessions and tenant keys are revoked and guidance is excluded until reviewed again. This protects against replay and against reviving examples that may have been rejected after the snapshot. Keep backup files private: they contain tenant records and account hashes. A restored database uses the user accounts that existed when that backup was taken.

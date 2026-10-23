@@ -15,12 +15,13 @@ from belive.connectors import deliver,scan,validate_source
 class FakeAI:
     def __init__(self,fail=False):self.fail=fail;self.calls=[]
     def readiness(self):return True
+    def check(self):return {'ok':True}
     def analyse(self,context,examples):
         self.calls.append((context,examples))
         if self.fail:raise RuntimeError('provider timeout')
         return dict(relevance='SUPPORT',category='WIFI',severity='LOW',summary='Tenant reports a Wi-Fi issue.',
                     uncertainty=False,evidence=context['case']['description'],plan='Ask whether other devices are affected.',
-                    response='Could you confirm whether other devices have the same issue?',requires_human=False,record_ids=[])
+                    response='Could you confirm whether other devices have the same issue?',requires_human=False,record_ids=[context['verified_records'][0]['id']] if context['verified_records'] else [])
 
 class BackendTests(unittest.TestCase):
     def setUp(self):

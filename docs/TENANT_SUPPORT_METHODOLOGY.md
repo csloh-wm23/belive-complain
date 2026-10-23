@@ -16,11 +16,11 @@ BeLive's public website describes furnished co-living rentals and services inclu
 2. **Verify and protect:** public feedback does not prove tenancy. Invite private contact and let staff verify identity before accessing tenant-specific records. Screen immediate safety risks before routine AI.
 3. **Classify:** a logical Triage Agent returns support relevance, category, urgency, an evidence excerpt, summary and uncertainty. Invalid or uncertain output requires staff.
 4. **Investigate:** logical Investigation/Response Agents use the case, relevant tenant updates, that tenant's verified records, verified property house rules and reviewed wording examples. Missing facts become questions, not invented account information.
-5. **Assist:** prepare a response and proposed action. Staff reviews wording and handles physical repairs, billing/refund decisions, security-access changes and exceptions. In this prototype all external notifications require approval.
+5. **Assist:** prepare a response and proposed action. Staff reviews wording and handles physical repairs, billing/refund decisions, security-access changes and exceptions. In this prototype all external notifications require approval. Reviewed responses can be published to the tenant portal, with a separate conversation from internal notes.
 6. **Handover:** failed/uncertain AI, elevated risk or unsupported actions create a staff review case with the reason. Staff acknowledges ownership; missed acknowledgement queues escalation to backup and management.
-7. **Track:** work orders retain department, description and completion evidence. A follow-up stage gathers tenant feedback; reminders keep the case open. An unresolved or newly risky case is reassessed by staff.
+7. **Track:** work orders retain department, description and completion evidence. The tenant portal records replies and resolved/unresolved feedback. A follow-up stage gathers tenant feedback; reminders keep the case open. An unresolved or newly risky case is reassessed by staff.
 8. **Verify and close:** require explicit outcome evidence, verified tenancy and no outstanding work order. AI never declares resolution by itself, and customer silence is not proof of resolution.
-9. **Improve:** after verified closure, staff approves, corrects or rejects reusable response wording. Only the latest approved/corrected version is retrieved. Rejection/reopening revokes reuse; learning here means reviewed retrieval, not model training.
+9. **Improve:** after verified closure, staff approves, corrects or rejects reusable response wording. Verified support context retains immutable versions and can be corrected, expired or deactivated. Only the latest approved/corrected writing-example version is retrieved. Rejection/reopening revokes reuse; learning here means reviewed retrieval, not model training.
 
 ## Logical responsibilities and implementation
 
@@ -55,3 +55,7 @@ Acceptance requires correct tenant isolation, no action before its required appr
 ## Decisions for the next meeting
 
 Confirm tenant-support scope; agree on the verified source of tenant/condo data; select one supported communication channel for the pilot; define staff escalation ownership and timing; identify a small evaluation set and acceptance criteria. Keep move-in/out coordination, inspections, PIC assignment, owner support, marketing and sales outside this pilot.
+
+## Demonstration and evaluation readiness
+
+The repository includes local Admin/Support login, a tenant conversation/outcome loop, critical/overdue queue views, versioned support context and consistent backup/recovery. The 24-case English/Malay/Chinese evaluation set is kept separate from the application database. The connection probe and opt-in evaluator require actual model configuration; their results must be reported as unmeasured until a real run is completed. Human reviewers should judge language quality, factual grounding and the appropriateness of handover, not only automated category checks.

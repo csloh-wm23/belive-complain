@@ -9,6 +9,9 @@ import webbrowser
 from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
+from http.cookies import SimpleCookie
+from belive.access import Access
+from belive.backups import operation as backup_operation
 from belive.service import Service
 from belive.store import now
 from belive.connectors import scan,deliver
@@ -53,8 +56,8 @@ class Tasks:
                 with self.service.store.connect() as db:self.service.store.event(db,'scheduler','SCHEDULER_FAILED','Tick failed; next scheduled attempt will recheck persisted state')
 
 def make_handler(service,tasks=None):
-    tasks=tasks or Tasks(service)
-    csrf=secrets.token_urlsafe(32)
+    tasks=tasks or Tasks(service);access=Access(service);csrf=secrets.token_urlsafe(32)
+    support_routes={'intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
     class Handler(SimpleHTTPRequestHandler):
         extensions_map={**SimpleHTTPRequestHandler.extensions_map,'.js':'text/javascript'}
         def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT),**kwargs)
@@ -63,14 +66,20 @@ def make_handler(service,tasks=None):
             self.send_header('Referrer-Policy','no-referrer')
             self.send_header('Content-Security-Policy',"default-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
             super().end_headers()
-        def valid_host(self):
-            return self.headers.get('Host') in {f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}'}
-        def json(self,code,value):
-            data=json.dumps(value).encode();self.send_response(code);self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+        def valid_host(self):return self.headers.get('Host') in {f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}'}
+        def json(self,code,value,cookie=None):
+            data=json.dumps(value).encode();self.send_response(code)
+            if cookie is not None:self.send_header('Set-Cookie','belive_session='+cookie+'; Path=/; HttpOnly; SameSite=Strict; Max-Age='+('28800' if cookie else '0'))
+            self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
         def token(self):return self.headers.get('Authorization','').removeprefix('Bearer ')
+        def session(self):
+            try:
+                cookie=SimpleCookie(self.headers.get('Cookie',''));return cookie['belive_session'].value if 'belive_session' in cookie else ''
+            except Exception:return ''
         def do_GET(self):
             if not self.valid_host():return self.json(403,{'error':'Local host required'})
             path=urlsplit(self.path).path
+            if path=='/api/auth':return self.json(200,{'setup_required':not access.users(),'user':access.current(self.session())})
             if path=='/api/shared-memory':
                 clients=json.loads(os.getenv('BELIVE_MEMORY_CLIENTS','{}'))
                 if not any(isinstance(v,str) and v and hmac.compare_digest(self.token(),v) for v in clients.values()):return self.json(401,{'error':'Scoped client token required'})
@@ -81,7 +90,15 @@ def make_handler(service,tasks=None):
                 except ValueError:return self.json(401,{'error':'Invalid or expired tenant access key'})
             if path.startswith('/api/'):
                 if not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),csrf):return self.json(403,{'error':'Open the operator dashboard to access this endpoint'})
-                if path=='/api/status':return self.json(200,{**service.snapshot(),'tasks':sorted(tasks.running)})
+                user=access.current(self.session())
+                if not user:return self.json(401,{'error':'Sign in to the operator dashboard'})
+                if path=='/api/users':
+                    if user['role']!='ADMIN':return self.json(403,{'error':'Administrator access required'})
+                    return self.json(200,{'users':access.users()})
+                if path=='/api/status':
+                    snapshot=service.snapshot();snapshot.update(tasks=sorted(tasks.running),operator=user)
+                    if user['role']!='ADMIN':snapshot['storage']['can_choose']=False;snapshot['backups']=[]
+                    return self.json(200,snapshot)
                 return self.json(404,{'error':'Unknown endpoint'})
             if path not in STATIC:return self.send_error(404)
             file=ROOT/STATIC[path]
@@ -94,37 +111,52 @@ def make_handler(service,tasks=None):
             if not self.valid_host():return self.json(403,{'error':'Local host required'})
             origin=self.headers.get('Origin')
             if origin and origin not in {f'http://127.0.0.1:{self.server.server_port}',f'http://localhost:{self.server.server_port}'}:return self.json(403,{'error':'Foreign origin rejected'})
-            path=urlsplit(self.path).path
-            if path not in {'/api/portal/intake','/api/portal/update'} and not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),csrf):return self.json(403,{'error':'Invalid operator token'})
+            path=urlsplit(self.path).path;route=path.removeprefix('/api/')
+            portal=path in {'/api/portal/intake','/api/portal/update','/api/portal/feedback'}
+            if not portal and not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),csrf):return self.json(403,{'error':'Invalid operator token'})
             try:
                 size=int(self.headers.get('Content-Length','0'))
                 if not 1<=size<=64000:raise ValueError('Request size must be 1–64,000 bytes')
                 p=json.loads(self.rfile.read(size));key=self.headers.get('Idempotency-Key','')
                 if not isinstance(p,dict):raise ValueError('JSON object required')
-                if path=='/api/portal/intake':
-                    result=service.portal_submit(self.token(),p,key);tasks.analyse(result)
-                    return self.json(200,{'id':result['id'],'status':result['status']})
-                if path=='/api/portal/update':return self.json(200,service.portal_update(self.token(),p,key))
-                if path=='/api/analyse':
+                if portal:
+                    if path=='/api/portal/intake':
+                        result=service.portal_submit(self.token(),p,key);tasks.analyse(result)
+                        return self.json(200,{'id':result['id'],'status':result['status']})
+                    if path=='/api/portal/feedback':return self.json(200,service.portal_feedback(self.token(),p,key))
+                    return self.json(200,service.portal_update(self.token(),p,key))
+                if route in {'setup','login'}:
+                    if route=='setup':access.create(p,bootstrap=True)
+                    session,user=access.login(p);return self.json(200,{'user':user},cookie=session)
+                user=access.current(self.session())
+                if not user:return self.json(401,{'error':'Sign in to the operator dashboard'})
+                if route=='logout':access.logout(self.session());return self.json(200,{'signed_out':True},cookie='')
+                if user['role']!='ADMIN' and route not in support_routes:return self.json(403,{'error':'Administrator access required'})
+                if route=='users':return self.json(200,access.create(p))
+                if route=='deactivate-user':return self.json(200,access.deactivate(p.get('id'),user['id']))
+                if route=='tenant_feedback':raise ValueError('Tenant feedback requires tenant portal access')
+                p={**p,'_actor':user['id']}
+                if route=='case_action' and p.get('action')=='acknowledge':p['owner']=user['name']
+                if route=='analyse':
                     with service.store.connect() as db:c=service.store.get(db,'case',p.get('id'))
                     if c['severity'] in {'HIGH','CRITICAL'}:raise ValueError('Safety risk requires staff handling')
-                    started=tasks.start('ai-'+c['id'],lambda:service.analyse(c['id']))
-                    return self.json(202,{'started':started})
-                if path=='/api/scan':return self.json(202,{'started':tasks.scan(p.get('id'))})
-                if path=='/api/deliver':return self.json(200,deliver(service,p.get('id')))
-                if path=='/api/memory-sync':
+                    return self.json(202,{'started':tasks.start('ai-'+c['id'],lambda:service.analyse(c['id']))})
+                if route=='ai-check':return self.json(202,{'started':tasks.start('ai-connection',service.check_ai)})
+                if route=='scan':return self.json(202,{'started':tasks.scan(p.get('id'))})
+                if route=='deliver':return self.json(200,deliver(service,p.get('id')))
+                if route in {'backup','restore'}:return self.json(200,backup_operation(service,route,p,key))
+                if route=='memory-sync':
                     with service.store.connect() as db:examples=service.styles(db)
-                    result=service.ai.sync(examples);return self.json(200,{'entries':result['entries']})
-                if path=='/api/select-database':
+                    return self.json(200,{'entries':service.ai.sync(examples)['entries']})
+                if route=='select-database':
                     if not 8<=len(key)<=150:raise ValueError('A request idempotency key is required')
                     if service.workspace_config is None:raise ValueError('Database selection is not available in this session')
                     chosen=choose_database(service.store.path.resolve())
                     if chosen is None:return self.json(200,{'cancelled':True})
-                    return self.json(200,service.command('database_location',{'path':str(chosen)},key))
-                if path=='/api/tick':service.tick();return self.json(200,{'checked':True})
-                if not path.startswith('/api/'):raise ValueError('Unknown endpoint')
-                result=service.command(path.removeprefix('/api/'),p,key)
-                if path=='/api/intake':tasks.analyse(result)
+                    return self.json(200,service.command('database_location',{'path':str(chosen),'_actor':user['id']},key))
+                if route=='tick':service.tick();return self.json(200,{'checked':True})
+                result=service.command(route,p,key)
+                if route=='intake':tasks.analyse(result)
                 return self.json(200,result)
             except (ValueError,TypeError,KeyError) as exc:return self.json(400,{'error':str(exc)[:300]})
             except Exception:return self.json(500,{'error':'OPERATION_FAILED: no success confirmed; inspect activity and configuration'})
