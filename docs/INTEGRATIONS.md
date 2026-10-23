@@ -12,7 +12,7 @@ Before each stage the isolated MemoryStore is rebuilt from current feedback (at 
 
 ## Public-source reads
 
-Configure only resources BeLive is authorised to access, enable them explicitly and set the appropriate tokens in `.env`. No login, challenge handling, broad web crawl or arbitrary URL follow is implemented. HTTP redirects are rejected. Each response is limited to 1 MB and 20 seconds; each scan processes at most 25 recent text entries. There is no pagination, token refresh or historical backfill.
+Configure only resources BeLive is authorised to access and set the appropriate tokens in `.env`. The source form states that saving starts checks every 15 minutes while the app is open. Pause/resume applies to that source and persists across restarts; it does not control whether the backend is running. No login, challenge handling, broad web crawl or arbitrary URL follow is implemented. HTTP redirects are rejected. Each response is limited to 1 MB and 20 seconds; each scan processes at most 25 recent text entries. There is no pagination, token refresh or historical backfill.
 
 - Google: resource `accounts/ACCOUNT_ID/locations/LOCATION_ID`, token `BELIVE_GOOGLE_TOKEN`. Uses the official Business Profile [reviews.list](https://developers.google.com/my-business/reference/rest/v4/accounts.locations.reviews/list) endpoint, ordered by update time.
 - Facebook: `PAGE_ID/feed` or `POST_ID/comments`, token `BELIVE_FACEBOOK_TOKEN`, explicit `BELIVE_FACEBOOK_VERSION` such as the version approved for your application. Uses Graph fields `id,message,created_time`. [Official Page posts documentation](https://developers.facebook.com/docs/pages-api/posts/).
@@ -55,3 +55,11 @@ Queue acceptance alone must not be described as delivered. A timeout, invalid re
 Staff issues a seven-day bearer key after verification. Only its hash is stored in the portal table; the raw key is returned once and is excluded from the idempotency cache. Do not place keys in URLs. Keys permit viewing that tenant's limited case fields and submitting reports/updates; they cannot access the operator snapshot.
 
 This is a local demonstration of scoped access, not deployable identity infrastructure. The operator dashboard is accessible to the local machine user. Production use needs staff authentication and roles, tenant authentication/revocation, TLS, protection against abuse and an agreed data lifecycle. A public GitHub repository does not host the running backend or tenant portal.
+
+## Database location and visible records
+
+Open **Database & records** to search stored property, tenant and support-context tables and inspect the active file path. Operational records are persisted in SQLite. The local file picker selects a file for the next launch; it does not relocate the active database or migrate its contents. Reopen an existing BeLive database to see its records, or choose a new filename to start empty after restarting. Validation reads existing database schema without modifying it and rejects unrelated databases.
+
+The default file is `data/belive.db`. The ignored `data/workspace.json` preference contains only the selected path. No tenant records are stored there or in browser localStorage. `python server.py --database ABSOLUTE_PATH` can explicitly override selection for a launch. Python's Tk support is needed for the native picker; normal database use and record browsing do not depend on Tk.
+
+The Windows launcher opens a dedicated Python console and exits its batch process immediately. Leave the Python window running for the dashboard and scheduled checks; one Ctrl+C stops it. An already-running older launcher must be stopped before using the revised one.

@@ -12,6 +12,7 @@ The project reuses native Hermes transport concepts and the existing visual lang
 |---|---|
 | `server.py` | Local HTTP/static allowlist, CSRF/origin/host guards, tenant bearer access, background task deduplication, 30-second scheduler |
 | `belive/service.py` | Transactional commands, tenancy verification assertions, property support guidance, case transitions, outbox, escalation, feedback and scoped portal |
+| `belive/workspace.py` | Validated database file selection, read-only existing-schema checks and persisted next-launch preference |
 | `belive/store.py` | SQLite objects, immutable source versions, append-only audit, persisted command idempotency; email/number masking |
 | `belive/ai.py` | Structured triage and investigation/response; schema/evidence/record validation, bounded read-only tools |
 | `belive/hermes_native.py`, `belive/hermes_worker.py` | Installed native AIAgent subprocess, isolated MemoryStore, explicit allowlist, bounded steps/timeouts, no shell or publishing tools |
@@ -47,7 +48,7 @@ Case actions use revision checks. AI runs outside the state transaction, then di
 
 ## Timers, delivery and failure
 
-While the launcher runs, a 30-second loop checks pending AI, due acknowledgements/follow-ups and configured sources. Source scans run no more often than their persisted 15-minute schedule; an operator can request a bounded scan manually. Sources are disabled until explicitly enabled. Background tasks are deduplicated per case/source.
+While the launcher runs, a 30-second loop checks pending AI, due acknowledgements/follow-ups and configured sources. Source scans run no more often than their persisted 15-minute schedule; an operator can request a bounded scan manually. Saving an authorised source starts its checks by default. Existing paused sources remain paused across restarts. Operators can pause/resume checks for an individual source; there is no server-enable setting. Background tasks are deduplicated per case/source.
 
 The prototype defaults are 30 minutes for acknowledgement and 24 hours for follow-up. Two acknowledgement escalations target backup support and then management. Two recorded follow-up cycles return an unanswered case to staff. These timers record queued attempts, not confirmed customer contact. No timer closes a case or approves a message.
 
@@ -63,6 +64,14 @@ Messages move `PENDING_APPROVAL -> APPROVED -> SENDING -> DELIVERED/UNKNOWN`, or
 - The local operator interface has no production user-role system. Do not expose this server to a network as a production portal.
 - JSON exports contain operational records. Keep them private. Source/audit immutability is enforced by this database schema, not by an external tamper-proof service.
 
+## Database interface and launch behavior
+
+**Database & records** displays the active SQLite file and searchable property, verified-tenant and support-context tables from the server snapshot. Reloading the browser reads the same database; there is no browser-local record store. Cases, outbox, sources and audit remain in their respective operational views.
+
+The operator can choose a SQLite file with the local native picker. The protected endpoint validates the idempotency key before opening the picker. Cancellation makes no change. Selection stores only the next-launch path in ignored `data/workspace.json`, while the current connection continues using the active file. Existing unrelated databases are rejected using read-only schema inspection. A new file is created only when the application next opens it. No live database file is moved, copied or deleted. The explicit CLI `--database` option overrides the saved preference for that launch. The default selection is `data/belive.db`.
+
+The Windows batch launcher opens Python in a dedicated console and immediately exits. The server starts automatically. Ctrl+C is handled by Python for clean shutdown; no batch process remains waiting to request “Terminate batch job”, and there is no pause after a normal shutdown.
+
 ## Scope correction and existing data
 
 Move scheduling, move completion and PIC availability commands have been removed. The command allowlist rejects those actions before reading cached idempotency results, so a legacy successful request cannot reactivate them. The dashboard/portal no longer return move arrangements or PIC availability. Property records retain only identity and verified support guidance in the current API.
@@ -71,4 +80,4 @@ Existing arrangement objects and append-only activity are retained for history. 
 
 ## Validation status
 
-19 isolated backend/HTTP/native-memory checks passed, including actual installed-Hermes MemoryStore persistence and revocation without a model call. Browser QA passed at desktop and mobile widths across all seven views, with no page errors or external browser requests. Native AI provider output, company source access and a real notification gateway still need configuration and live acceptance testing.
+23 isolated backend/HTTP/native-memory/database checks passed, including actual installed-Hermes MemoryStore persistence and revocation without a model call. Browser QA passed at desktop and mobile widths across all eight views, with no page errors or external browser requests. Database persistence, read-only rejection of unrelated files, next-launch selection, protected picker cancellation and source pause/resume are covered; browser tests substitute the native picker result rather than opening a real dialog. A separate Windows smoke check started the real batch launcher against a temporary database and confirmed that one Ctrl+C stopped its isolated Python console without a batch prompt. Native AI provider output, company source access and a real notification gateway still need configuration and live acceptance testing.

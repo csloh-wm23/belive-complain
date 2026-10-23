@@ -42,6 +42,16 @@ class HttpTests(unittest.TestCase):
         for name in ['move','move_complete','staff']:
             code,body=self.request('/api/'+name,{},headers={'X-CSRF-Token':self.csrf,'Idempotency-Key':secrets.token_hex(16)})
             self.assertEqual(code,400);self.assertIn('only tenant enquiry and complaint',json.loads(body)['error'])
+    def test_database_picker_is_operator_only_and_can_be_cancelled(self):
+        self.s.workspace_config=Path(self.tmp.name)/'workspace.json'
+        with patch('server.choose_database',return_value=None) as picker:
+            self.assertEqual(self.request('/api/select-database',{})[0],403)
+            picker.assert_not_called()
+            self.assertEqual(self.request('/api/select-database',{},headers={'X-CSRF-Token':self.csrf})[0],400)
+            picker.assert_not_called()
+            code,body=self.request('/api/select-database',{},headers={'X-CSRF-Token':self.csrf,'Idempotency-Key':secrets.token_hex(16)})
+            self.assertEqual(code,200);self.assertTrue(json.loads(body)['cancelled']);picker.assert_called_once()
+            self.assertFalse(self.s.workspace_config.exists())
     def test_shared_memory_never_exports_tenant_records(self):
         with patch.dict(os.environ,{'BELIVE_MEMORY_CLIENTS':json.dumps({'test':'isolated-test-token'})}):
             self.assertEqual(self.request('/api/shared-memory')[0],401)

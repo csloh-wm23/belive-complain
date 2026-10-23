@@ -12,7 +12,7 @@ Use Python 3.11 or newer. Double-click **Run BeLive Prototype.bat**, or run:
 python server.py
 ```
 
-Open [the local dashboard](http://127.0.0.1:8877). Keep the terminal running for scheduled checks; stop it with Ctrl+C. The server listens only on `127.0.0.1`. No pip packages are needed for the dashboard or deterministic workflows. AI requires a separately installed native Hermes runtime and a configured model.
+Open [the local dashboard](http://127.0.0.1:8877). The launcher starts the backend automatically in its own Python window. Keep that window open for scheduled checks; press Ctrl+C once to stop. The batch launcher exits after opening Python, so it does not show an additional “Terminate batch job” prompt. The server listens only on `127.0.0.1`. No pip packages are needed for the dashboard or deterministic workflows. AI requires a separately installed native Hermes runtime and a configured model.
 
 ## Tenant-support scope
 
@@ -23,7 +23,8 @@ Open [the local dashboard](http://127.0.0.1:8877). Keep the terminal running for
 - Hand uncertain, risky or failed AI cases to staff; track ownership, work orders, acknowledgement escalation, follow-ups and evidence-based closure.
 - Review notifications before sending through a configured gateway. Store uncertain delivery as `UNKNOWN` without automatic retry.
 - Review response wording after closure. Latest rejection/reopening revokes future reuse. Examples are style guidance, never verified facts or model retraining.
-- Inspect activity, case-category counts and a JSON support snapshot.
+- Browse and search saved property, tenant and support-context records in **Database & records**; view activity and case-category counts.
+- See the active database file and choose another BeLive database for the next launch.
 
 ## First walkthrough
 
@@ -33,6 +34,8 @@ Open [the local dashboard](http://127.0.0.1:8877). Keep the terminal running for
 4. Record a work order if needed, complete it with evidence, start follow-up, verify the outcome and close. Silence never automatically closes a case.
 5. Approve or correct reusable wording; reject it to revoke reuse.
 6. Issue a tenant access key after identity verification and open [the local portal](http://127.0.0.1:8877/portal). The key exposes only that tenant's cases.
+7. Open **Database & records** to inspect the saved data, search by reference or evidence, and see its database location. **Choose database for next launch** opens a local file picker. The selected file opens after a restart; current records remain in the current file.
+8. Saving an authorised source starts its checks every 15 minutes while the app is open. **Pause checks** and **Resume checks** apply to that source; they do not start or stop the server.
 
 ## Configuration and actual connection status
 
@@ -53,7 +56,7 @@ The tenant portal and operator dashboard are a **local prototype**, not a produc
 
 ## Data
 
-State lives in `data/belive.db`; sources and audit rows have append-only SQLite guards. Native memory lives in `data/hermes_memory/support`. Database access by the machine owner is outside these application guards. Email/long-number masking is basic; staff must remove names, addresses, access codes and other sensitive material from reusable examples before sharing.
+State lives in SQLite, initially `data/belive.db`; sources and audit rows have append-only SQLite guards. **Database & records** shows the active file, saved property/tenant/support records, and any file selected for the next launch. A new filename starts an empty workspace; an existing BeLive database reopens its saved records. Selection does not move, copy or delete records. The selected path is an application preference in ignored `data/workspace.json`, which stores no tenant records. The optional `--database` argument overrides that preference. Native memory lives in `hermes_memory/support` beside the active database. Database access by the machine owner is outside these application guards. Email/long-number masking is basic; staff must remove names, addresses, access codes and other sensitive material from reusable examples before sharing.
 
 Move-in/out operations have been removed from the interface, portal, AI categories and service commands. Old arrangement data is preserved on disk but is excluded from operational snapshots; legacy move notices cannot be approved or delivered. Legacy scheduling rules must be replaced with verified support guidance before AI uses that property context. Restart any running server after updating.
 
@@ -66,13 +69,13 @@ python -m unittest discover -s tests -p "test_*.py" -v
 # Equivalent: npm test
 ```
 
-There are 19 backend/HTTP/native-memory checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
+There are 23 backend/HTTP/native-memory/database checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
 
 ```sh
 python -m pip install -r requirements-dev.txt
 python tests/browser_check.py
 ```
 
-Browser QA covers tenant records, absence of move/PIC forms, AI draft integration with a test double, case closure, memory rejection, gateway configuration failure, tenant portal and seven responsive views. Screenshots go into ignored `artifacts/`.
+Browser QA covers tenant records, absence of move/PIC forms, AI draft integration with a test double, case closure, memory rejection, gateway configuration failure, tenant portal, saved-record search, database selection/cancellation and persistence, source pause/resume, and eight responsive views. The native file-picker result is substituted during browser QA so tests do not open a dialog or change the real workspace. Screenshots go into ignored `artifacts/`.
 
 Read the [tenant-support proposal and methodology](docs/TENANT_SUPPORT_METHODOLOGY.md), [system behavior and diagram mapping](docs/FORUM_SYSTEM.md), [company research](docs/COMPANY_RESEARCH.md) and [integration contract](docs/INTEGRATIONS.md).

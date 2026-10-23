@@ -6,5 +6,6 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-python server.py
-pause
+rem Run Python in its own console so Ctrl+C never reaches a waiting batch job.
+start "BeLive tenant support" python "%~dp0server.py" %*
+exit /b

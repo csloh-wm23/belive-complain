@@ -32,7 +32,7 @@ def validate_source(p):
     else:valid=False
     if not valid:raise ValueError('Use a selected Google location, Facebook Page feed/post comments, or Threads post replies resource')
     return {'id':p.get('id') or 'SRC-'+secrets.token_hex(5),'platform':platform,'resource':resource,
-            'enabled':p.get('enabled') is True,'authorised':True,'last_scan':None,'next_scan':now(),'status':'READY','error':''}
+            'enabled':p.get('enabled',True) is True,'authorised':True,'last_scan':None,'next_scan':now(),'status':'READY','error':''}
 
 def read_source(source):
     platform,resource=source['platform'],source['resource']
@@ -52,7 +52,7 @@ def read_source(source):
 def scan(service,source_id):
     from belive.service import due
     with service.store.connect() as db:source=service.store.get(db,'source',source_id)
-    if not source['enabled']:raise ValueError('Enable the selected source before scanning')
+    if not source['enabled']:raise ValueError('Resume checks for the selected source before scanning')
     try:
         rows=read_source(source)
         results=[]

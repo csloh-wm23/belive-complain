@@ -2,6 +2,7 @@
 import sys
 import tempfile
 import threading
+from unittest.mock import patch
 from pathlib import Path
 from http.server import ThreadingHTTPServer
 from playwright.sync_api import sync_playwright,expect
@@ -15,7 +16,7 @@ from test_backend import FakeAI
 def main():
     output=ROOT/'artifacts';output.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
-        service=Service(Path(tmp)/'browser.db',FakeAI())
+        service=Service(Path(tmp)/'browser.db',FakeAI(),workspace_config=Path(tmp)/'workspace.json')
         server=ThreadingHTTPServer(('127.0.0.1',0),make_handler(service))
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         url=f'http://127.0.0.1:{server.server_port}'
@@ -44,6 +45,36 @@ def main():
                 expect(page.locator('#resources')).to_contain_text('1 verified tenants')
                 assert page.locator('#moveForm,#staffForm,[name="checklist"],[name="days"]').count()==0
                 assert 'Move-in' not in page.locator('body').inner_text()
+                submit('recordForm',dict(tenant_id='T-QA',source='QA support record',text='Verified QA record: shared Wi-Fi support is handled by the support team.'),['confirmed'])
+                page.locator('[data-view="database"]').click()
+                expect(page.locator('#databaseRecords')).to_contain_text('Fictional QA property')
+                expect(page.locator('#databaseRecords')).to_contain_text('T-QA')
+                expect(page.locator('#databaseRecords')).to_contain_text('QA support record')
+                page.locator('#recordSearch').fill('QA support record')
+                expect(page.locator('#databaseRecords .saved-record-group').first).to_contain_text('0 of 1')
+                page.locator('#recordSearch').fill('')
+                chosen=Path(tmp)/'Selected workspace.db'
+                with patch('server.choose_database',return_value=chosen):
+                    page.locator('#chooseDatabase').click()
+                    expect(page.locator('#databaseLocation')).to_contain_text('Selected workspace.db')
+                assert not chosen.exists()
+                page.reload();page.locator('[data-view="database"]').click()
+                expect(page.locator('#databaseRecords')).to_contain_text('QA support record')
+                expect(page.locator('#databaseLocation')).to_contain_text('browser.db')
+                expect(page.locator('#databaseLocation')).to_contain_text('Selected workspace.db')
+                with patch('server.choose_database',return_value=None):
+                    page.locator('#chooseDatabase').click()
+                    expect(page.locator('#notice')).to_contain_text('Database selection cancelled')
+                page.screenshot(path=str(output/'database-records-desktop.png'),full_page=True)
+                page.locator('[data-view="sources"]').click()
+                assert page.locator('#sourceForm [name="enabled"]').count()==0
+                submit('sourceForm',dict(platform='GOOGLE',resource='accounts/1/locations/2'),['authorised'])
+                expect(page.locator('#sourcesList')).to_contain_text('MONITORING')
+                page.get_by_role('button',name='Pause checks',exact=True).click()
+                expect(page.locator('#sourcesList')).to_contain_text('PAUSED')
+                page.get_by_role('button',name='Resume checks',exact=True).click()
+                expect(page.locator('#sourcesList')).to_contain_text('MONITORING')
+
                 page.locator('#newCase').click();form=page.locator('#intakeForm')
                 form.locator('[name="title"]').fill('Fictional room Wi-Fi enquiry')
                 form.locator('[name="description"]').fill('My room Wi-Fi drops each evening. This is a QA fixture.')
@@ -79,15 +110,18 @@ def main():
                 page.locator('[data-view="overview"]').click();page.screenshot(path=str(output/'tenant-overview-desktop.png'),full_page=True)
                 for width in [1440,390]:
                     page.set_viewport_size({'width':width,'height':1000})
-                    for view in ['overview','cases','notifications','sources','memory','settings','activity']:
+                    for view in ['overview','cases','notifications','sources','memory','settings','database','activity']:
                         page.locator('[data-view="'+view+'"]').click()
                         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth+1'),f'Overflow at {width}/{view}'
                     page.locator('[data-view="overview"]').click()
-                    if width==390:page.screenshot(path=str(output/'tenant-overview-mobile.png'),full_page=True)
+                    if width==390:
+                        page.screenshot(path=str(output/'tenant-overview-mobile.png'),full_page=True)
+                        page.locator('[data-view="database"]').click()
+                        page.screenshot(path=str(output/'database-records-mobile.png'),full_page=True)
                 assert not errors,errors
                 assert not external,external
                 context.close();browser.close()
-                print('PASS: tenant support records, removed move/PIC forms, AI draft, closure, revoked memory, notifications, portal, 7 responsive views; no page errors or external requests.')
+                print('PASS: tenant support records, removed move/PIC forms, AI draft, closure, revoked memory, notifications, portal, 8 responsive views, database records/search/selection/persistence and source pause/resume; no page errors or external requests.')
         finally:server.shutdown();server.server_close();thread.join()
 
 if __name__=='__main__':main()

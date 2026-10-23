@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from belive.service import Service
 from belive.store import now
 from belive.connectors import scan,deliver
+from belive.workspace import DEFAULT_CONFIG,selected_database,choose_database
 
 ROOT=Path(__file__).resolve().parent
 STATIC={'/':'index.html','/index.html':'index.html','/assets/app.js':'assets/app.js',
@@ -114,6 +115,12 @@ def make_handler(service,tasks=None):
                 if path=='/api/memory-sync':
                     with service.store.connect() as db:examples=service.styles(db)
                     result=service.ai.sync(examples);return self.json(200,{'entries':result['entries']})
+                if path=='/api/select-database':
+                    if not 8<=len(key)<=150:raise ValueError('A request idempotency key is required')
+                    if service.workspace_config is None:raise ValueError('Database selection is not available in this session')
+                    chosen=choose_database(service.store.path.resolve())
+                    if chosen is None:return self.json(200,{'cancelled':True})
+                    return self.json(200,service.command('database_location',{'path':str(chosen)},key))
                 if path=='/api/tick':service.tick();return self.json(200,{'checked':True})
                 if not path.startswith('/api/'):raise ValueError('Unknown endpoint')
                 result=service.command(path.removeprefix('/api/'),p,key)
@@ -126,12 +133,15 @@ def make_handler(service,tasks=None):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--port',type=int,default=8877)
-    parser.add_argument('--database',type=Path,default=ROOT/'data/belive.db');parser.add_argument('--no-browser',action='store_true');args=parser.parse_args()
+    parser.add_argument('--database',type=Path,default=None);parser.add_argument('--no-browser',action='store_true');args=parser.parse_args()
     if not 1024<=args.port<=65535:parser.error('Port must be 1024–65535')
-    service=Service(args.database);tasks=Tasks(service)
+    database=args.database or selected_database()
+    service=Service(database,workspace_config=DEFAULT_CONFIG);tasks=Tasks(service)
     with ThreadingHTTPServer(('127.0.0.1',args.port),make_handler(service,tasks)) as server:
         thread=threading.Thread(target=tasks.loop,daemon=True);thread.start()
         url=f'http://127.0.0.1:{args.port}';print('BeLive tenant support: '+url,flush=True)
+        print('Database: '+str(service.store.path.resolve()),flush=True)
+        print('Keep this window open. Press Ctrl+C once to stop.',flush=True)
         if not args.no_browser:threading.Timer(.4,lambda:webbrowser.open(url)).start()
         try:server.serve_forever()
         except KeyboardInterrupt:pass

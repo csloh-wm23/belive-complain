@@ -8,7 +8,7 @@ from belive.store import Store, bounded, digest, now, redact
 from belive.settings import load_settings
 from belive.ai import SupportAI, CATEGORIES
 
-COMMANDS = {'intake','tenant','condo','record','portal_issue','source','approve_message','reject_message','feedback','case_action'}
+COMMANDS = {'intake','tenant','condo','record','portal_issue','source','approve_message','reject_message','feedback','case_action','database_location'}
 NOTIFICATION_KINDS = {'STAFF_ALERT','TENANT_RESPONSE','STAFF_WORK_ORDER','ACK_TIMEOUT','TENANT_FOLLOWUP'}
 
 def support_notification(item):
@@ -34,8 +34,8 @@ def risk(text):
     return bool(re.search(r'\b(fire|smoke|sparks?|electrocut\w*|gas leak|gas smell|assault|suicid\w*|self.harm|trapped|threaten\w*|exposed wir\w*)\b|kebakaran|kebocoran gas|terperangkap|火灾|漏电|煤气|自杀',text,re.I))
 
 class Service:
-    def __init__(self,path,ai=None):
-        self.store=Store(path);self.settings=load_settings();self.lock=threading.RLock()
+    def __init__(self,path,ai=None,workspace_config=None):
+        self.store=Store(path);self.settings=load_settings();self.lock=threading.RLock();self.workspace_config=workspace_config
         self.ai=ai or SupportAI(self.settings,self.store.path.parent/'hermes_memory/support')
         # An interrupted external send is uncertain and must never be retried automatically.
         with self.store.connect() as db:
@@ -62,6 +62,10 @@ class Service:
                 if case['category'] not in CATEGORIES:case['category']='OTHER'
             result['examples']=self.styles(db);result['audit']=self.store.audit(db)
             result['readiness']={'ai':self.ai.readiness(),'scheduler':True}
+            from belive.workspace import selected_database
+            active=self.store.path.resolve()
+            selected=selected_database(self.workspace_config,active) if self.workspace_config else active
+            result['storage']={'active':str(active),'selected':str(selected),'restart_required':active!=selected,'can_choose':bool(self.workspace_config)}
             result['reports']={
                 'categories':{k:sum(c.get('category')==k for c in result['cases']) for k in CATEGORIES},
                 'statuses':{k:sum(c['status']==k for c in result['cases']) for k in STATES},
@@ -130,6 +134,12 @@ class Service:
             return result
     def _command(self,db,name,p):
         if name=='intake': return self.create(db,p)
+        if name=='database_location':
+            require(self.workspace_config is not None,'Database selection is not available in this session')
+            from belive.workspace import save_selection
+            path=save_selection(self.workspace_config,p.get('path'))
+            self.store.event(db,'workspace','DATABASE_LOCATION_SELECTED','Next launch: '+str(path))
+            return {'path':str(path),'restart_required':path!=self.store.path.resolve()}
         if name=='tenant':
             condo=self.store.get(db,'condo',p.get('condo_id'))
             require(p.get('confirmed') is True,'Staff must confirm tenancy against an authorised record')
