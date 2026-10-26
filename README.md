@@ -4,6 +4,10 @@ An independent prototype for **BeLive Ventures / BeLive CoLiving, Malaysia**, co
 
 This version has a Python/SQLite backend, native Hermes integration, tenant-scoped portal access and configurable connectors. It starts with an empty database. Fictional records are confined to tests and the separate opt-in evaluation set; fake AI exists only in automated tests.
 
+## New here?
+
+Start with the [short teammate guide](docs/TEAMMATE_GUIDE.md) or [download the two-page PDF](output/pdf/BeLive-Quick-Guide.pdf). They explain the first login, all eight pages, the Resource field and one practice case.
+
 ## Run locally
 
 Use Python 3.11 or newer. Double-click **Run BeLive Prototype.bat**, or run:
