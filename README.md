@@ -65,7 +65,7 @@ Opt in to actual model evaluation only after configuration:
 python scripts/evaluate_ai.py --run-live --limit 24
 ```
 
-The script uses an isolated temporary database, not the operator database, and writes an ignored report to `artifacts/ai-evaluation.json`. Automated scoring checks valid output, expected categories and required human handover. Human review is still needed for language quality, factual accuracy and usefulness. No live evaluation score is claimed in this repository: this checkout had no model/key configured during development.
+The script uses an isolated temporary database, not the operator database, and writes an ignored report to `artifacts/ai-evaluation.json`. Automated scoring checks valid output, expected categories and required human handover. Human review is still needed for language quality, factual accuracy and usefulness. A [real Hermes/Ollama Cloud smoke test](docs/LIVE_AI_SMOKE_TEST.md) passed on 26 October 2026 using three provider requests and fictional tenant records. The full 24-case evaluation has not been run; this limited smoke test is not an overall quality score.
 
 ## Configuration and actual connection status
 
@@ -73,14 +73,14 @@ Copy `.env.example` to `.env` in **this** project, fill only the required settin
 
 | Integration | Implemented | Still needed for live use |
 |---|---|---|
-| Native Hermes | Bounded `AIAgent` loop; triage and investigation/response stages; two read-only tools | Hermes on PATH, an OpenAI-compatible configured model through the supported OpenAI/Ollama options, provider credentials when required; live model validation |
+| Native Hermes | Bounded `AIAgent` loop; triage and investigation/response stages; two read-only tools | Hermes on PATH, an OpenAI-compatible configured model through the supported OpenAI/Ollama options, provider credentials when required; validation of your own connection and broader support quality |
 | MemoryStore | Isolated current-feedback projection; persistence and revocation tested against installed Hermes | Operator-reviewed, redacted examples |
 | Google reviews | Selected authorised Business Profile location; at most 25 recent text reviews | Company-authorised API access/token and live verification |
 | Facebook / Threads | Selected Page feed/post comments or selected Threads replies; bounded reads | Required platform access, supported API version/permissions and live verification; these Meta adapters have not been verified against company accounts |
 | Notification gateway | HTTPS, HMAC signature, explicit approval, idempotency key and confirmed receipt contract | A company-owned gateway that resolves internal recipients, sends through approved channels and implements the documented receipt contract |
 | Company records | Staff-entered verified records | Actual property support guidance and tenancy evidence; no Spacify API connection is assumed |
 
-`Native Hermes configured` checks local prerequisites; it does not prove a successful provider call. No live company messages, public posts, paid model calls or company API reads were made during validation.
+`Native Hermes configured` checks local prerequisites; it does not prove a successful provider call. Real Ollama Cloud calls were made for the documented fictional-data smoke test. No live company messages, public posts or company API reads were made during validation.
 
 The application remains a local prototype listening only on loopback. It now has Admin/Support login, hashed passwords, expiring operator sessions, account deactivation and tenant-key revocation. Production hosting still requires a deployment design, TLS, stronger tenant identity verification, operational monitoring and agreed retention rules. A public GitHub repository does not host the running portal.
 

@@ -74,7 +74,7 @@ Create an admin in first-run setup, then create Support accounts in settings. Cr
 
 ## Real AI check and evaluation
 
-The admin **Test AI connection** action sends a neutral request to the configured provider through native Hermes and records the validated outcome and timestamp. It sends no tenant data but may incur model charges. The separate 24-case evaluation is opt-in with `python scripts/evaluate_ai.py --run-live`; without that flag the script only describes the fictional test set. See the README for setup and interpretation. No real provider score has been measured in the unconfigured development checkout.
+The admin **Test AI connection** action sends a neutral request to the configured provider through native Hermes and records the validated outcome and timestamp. It sends no tenant data but may incur model charges. The separate 24-case evaluation is opt-in with `python scripts/evaluate_ai.py --run-live`; without that flag the script only describes the fictional test set. See the README for setup and interpretation. A [limited live Hermes/Ollama Cloud smoke test](LIVE_AI_SMOKE_TEST.md) passed on 26 October 2026 with fictional records. The full 24-case evaluation has not been run, and no overall accuracy score is claimed.
 
 ## Backup recovery
 
