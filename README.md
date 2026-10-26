@@ -69,6 +69,8 @@ The script uses an isolated temporary database, not the operator database, and w
 
 ## Configuration and actual connection status
 
+For step-by-step key placement and testing, see [Add the AI key and test BeLive](docs/AI_KEY_SETUP.md). The guide contains placeholders; real keys must be supplied privately.
+
 Copy `.env.example` to `.env` in **this** project, fill only the required settings and restart. Never commit `.env`, tenant exports, database files or tokens. The original phone-support application's configuration is not read.
 
 | Integration | Implemented | Still needed for live use |
