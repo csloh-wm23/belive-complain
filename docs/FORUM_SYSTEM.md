@@ -22,8 +22,17 @@ The project reuses native Hermes transport concepts and the existing visual lang
 | `belive/connectors.py` | Selected official source reads and approved HTTPS notification delivery |
 | `assets/app.js`, `index.html` | Tenant-only operator dashboard, review dialogs, records, outbox, memory and reports |
 | `portal.html`, `assets/portal.js` | Local tenant access, scoped conversations, tenant replies and resolution feedback |
+| `tenant-site.html`, `assets/tenant-site.css`, `assets/tenant-home.svg` | Separate BeLive tenant website with complaint, tracking and support-topic links |
 
 No live action is simulated in the normal workflow. Test doubles live only in tests. Missing configuration produces explicit failure/handover.
+
+## Tenant website entry and internal complaints
+
+`GET /belive` serves a separate tenant-facing BeLive website, with assets explicitly included in the static allowlist. The operator dashboard remains at `/`. The website links **Make a complaint** to `/portal#report`, **My requests** to `/portal#conversations`, and individual support topics to an allowlisted title prefill. Topic parameters are not trusted classifications and do not bypass AI or staff assessment. No access key is placed in a URL.
+
+Before showing any tenant records or accepting an intake, the portal requires the staff-issued tenant bearer key. Successful access focuses the requested form or conversation. Submissions use the existing tenant-scoped `/api/portal/intake` route and reach the same SQLite cases, risk checks, AI workflow and operator queue. Staff sees the case under **Support cases** and must review/publish a response before the tenant sees it. Tenant replies and outcome feedback use the existing scoped endpoints. **Close my support records** clears the in-page key, drafts and rendered records without revoking the key itself; normal expiry and staff revocation still apply. Back links return to the tenant website.
+
+The tenant site contains no property search, marketing/sales workflow, owner support or move-in/out operations. It shares the existing local backend and does not modify the official BeLive site or publish company/customer data to a hosting service.
 
 ## Flowchart traceability
 
@@ -117,4 +126,6 @@ Existing arrangement objects and append-only activity are retained for history. 
 
 ## Validation status
 
-35 isolated backend/HTTP/native-memory/database checks passed, including actual installed-Hermes MemoryStore persistence and revocation without a model call. Browser QA passed at desktop and mobile widths across all eight views, with no page errors or external browser requests. Database persistence, read-only rejection of unrelated files, next-launch selection, protected picker cancellation and source pause/resume are covered; browser tests substitute the native picker result rather than opening a real dialog. A separate Windows smoke check started the real batch launcher against a temporary database and confirmed that one Ctrl+C stopped its isolated Python console without a batch prompt. The new authenticated browser walkthrough additionally verifies portal replies/privacy/outcomes, record correction, backup controls and Support role restrictions. The native provider has no model/key configured in this checkout, so actual provider quality, company source access and external gateway delivery still require live acceptance testing.
+36 isolated backend/HTTP/native-memory/database checks passed, including actual installed-Hermes MemoryStore persistence and revocation without a model call. Browser QA passed at desktop and mobile widths across all eight views, with no page errors or external browser requests. Database persistence, read-only rejection of unrelated files, next-launch selection, protected picker cancellation and source pause/resume are covered; browser tests substitute the native picker result rather than opening a real dialog. A separate Windows smoke check started the real batch launcher against a temporary database and confirmed that one Ctrl+C stopped its isolated Python console without a batch prompt. The new authenticated browser walkthrough additionally verifies portal replies/privacy/outcomes, record correction, backup controls and Support role restrictions. A limited real Hermes/Ollama Cloud smoke test passed on 26 October 2026, as recorded in `LIVE_AI_SMOKE_TEST.md`. Broader provider quality, company source access and external gateway delivery still require live acceptance testing.
+
+The tenant-website walkthrough also passed at 1440px desktop and 390px mobile widths: complaint and tracking links, topic prefills, invalid/valid access keys, intake saved to the operator queue, reviewed reply, tenant follow-up, return navigation and clearing in-page records. It uses a temporary database and explicit test-only AI. During this walkthrough, the portal intake handler was corrected to capture form values before disabling controls; operator-reviewed responses and private internal notes remain isolated.

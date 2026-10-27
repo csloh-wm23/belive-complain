@@ -43,6 +43,20 @@ class HttpTests(unittest.TestCase):
         for path in ['/data/belive.db','/.env','/belive/settings.py','/../server.py']:
             self.assertEqual(self.request(path)[0],404)
         self.assertEqual(self.request('/api/portal',headers={'Authorization':'Bearer invalid'})[0],401)
+    def test_tenant_website_links_to_scoped_portal(self):
+        # The public entry page must never grant operator or tenant-record access.
+        code,body=self.request('/belive',headers={'Cookie':''})
+        self.assertEqual(code,200)
+        self.assertIn(b'href="/portal#report"',body)
+        self.assertIn(b'href="/portal#conversations"',body)
+        self.assertNotIn(b'csrf-token',body)
+        for path in ['/assets/tenant-site.css','/assets/tenant-home.svg','/portal?topic=wifi']:
+            self.assertEqual(self.request(path,headers={'Cookie':''})[0],200,path)
+        self.assertEqual(self.request('/api/status',headers={'Cookie':'','X-CSRF-Token':self.csrf})[0],401)
+        self.assertEqual(self.request('/api/portal',headers={'Cookie':''})[0],401)
+        self.assertEqual(self.request('/api/portal/intake',dict(title='Website complaint',description='A fictional issue for the public website test.'),{'Cookie':'','Idempotency-Key':secrets.token_hex(16)})[0],400)
+        with self.s.store.connect() as db:self.assertEqual(self.s.store.all(db,'case'),[])
+
     def test_authentication_roles_and_session_revocation(self):
         auth={'X-CSRF-Token':self.csrf,'Idempotency-Key':secrets.token_hex(16)}
         self.assertEqual(self.request('/api/status',headers={**auth,'Cookie':''})[0],401)

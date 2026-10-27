@@ -20,6 +20,14 @@ Open [the local dashboard](http://127.0.0.1:8877). The launcher starts the backe
 
 On the first launch for a database, create your own administrator account in the dashboard. There is no default password. Admins can create Support accounts under **Tenant & property records**. Operator accounts belong to that database, so selecting a new empty database starts a new setup.
 
+## Tenant website and complaint entry
+
+Open the new [BeLive tenant website](http://127.0.0.1:8877/belive). **Make a complaint** opens the private portal's report form; **My requests** opens its conversations after tenant-key verification. Support-topic links prefill the enquiry title. **Back to BeLive** returns to the tenant website.
+
+Staff still sign in at [the dashboard](http://127.0.0.1:8877/); its top bar also links to the tenant website. A tenant submission is saved directly in the same SQLite case workflow and appears under **Support cases**. Routine cases run through the configured AI; only reviewed, explicitly published replies appear in the tenant conversation. The tenant website is a separate customer-facing page in this local prototype, not a change to BeLive's official website or an Internet-hosted service.
+
+To demonstrate: staff records a fictional DEMO tenant in a practice database, issues that tenant a private portal key, then opens the tenant website in a second tab. Submit through **Make a complaint**, return to the staff dashboard to review the case, publish a reviewed reply and refresh **My conversations** in the tenant tab. Use **Close my support records** when finished on a shared device.
+
 ## Tenant-support scope
 
 - Sign in as an Admin or Support operator; admin-only settings are enforced by the API.

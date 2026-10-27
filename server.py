@@ -19,7 +19,9 @@ from belive.workspace import DEFAULT_CONFIG,selected_database,choose_database
 
 ROOT=Path(__file__).resolve().parent
 STATIC={'/':'index.html','/index.html':'index.html','/assets/app.js':'assets/app.js',
-        '/assets/style.css':'assets/style.css','/portal':'portal.html','/assets/portal.js':'assets/portal.js'}
+        '/assets/style.css':'assets/style.css','/portal':'portal.html','/assets/portal.js':'assets/portal.js',
+        '/belive':'tenant-site.html','/assets/tenant-site.css':'assets/tenant-site.css',
+        '/assets/tenant-home.svg':'assets/tenant-home.svg'}
 
 class Tasks:
     def __init__(self,service):self.service=service;self.running=set();self.lock=threading.Lock();self.stop=threading.Event()
