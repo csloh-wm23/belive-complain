@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from belive.store import Store, bounded, digest, now, redact
 from belive.settings import load_settings
-from belive.ai import SupportAI, CATEGORIES
+from belive.ai import SupportAI, CATEGORIES, FAILURE_MESSAGES, failure_code
 
 COMMANDS = {'intake','tenant','condo','record','portal_issue','source','approve_message','reject_message','feedback','case_action','database_location','record_update','tenant_feedback','portal_revoke'}
 NOTIFICATION_KINDS = {'STAFF_ALERT','TENANT_RESPONSE','STAFF_WORK_ORDER','ACK_TIMEOUT','TENANT_FOLLOWUP'}
@@ -331,16 +331,16 @@ class Service:
             examples=self.styles(db);revision=c['revision'];job={'id':uid('AI'),'case_id':c['id'],'status':'RUNNING','at':now()}
             self.store.put(db,'job',job)
         try: result=self.ai.analyse(context,examples);error=''
-        except Exception as exc: result=None;error='AI_NOT_CONFIGURED' if str(exc)=='AI_NOT_CONFIGURED' else 'AI_FAILED_OR_INVALID'
+        except Exception as exc: result=None;error=failure_code(exc)
         with self.lock,self.store.connect() as db:
             current=self.store.get(db,'case',case_id)
             if current['revision']!=revision or self.styles(db)!=examples or self.context(db,current)!=context:
                 job['status']='STALE';job['error']='Case or reviewed guidance changed during AI work; result not applied'
             else:
-                if error:self.handoff(db,current,error)
+                if error:self.handoff(db,current,error+': '+FAILURE_MESSAGES[error])
                 else:
                     result['record_refs']=[{'id':r['id'],'version':r.get('version',1),'source':r['source'],'text':r['text']} for r in context['verified_records'] if r['id'] in result.get('record_ids',[])]
-                    current.update(analysis=result,category=result['category'],severity=result['severity'])
+                    current.update(analysis=result,category=result['category'],severity=result['severity'],review_reason='')
                     if result['relevance']=='NON_SUPPORT' and not result['uncertainty'] and result['severity'] not in {'HIGH','CRITICAL'}:current['status']='SKIPPED'
                     elif result['uncertainty'] or result['relevance']=='UNCERTAIN' or result['severity'] in {'HIGH','CRITICAL'} or result.get('requires_human',False):self.handoff(db,current,'AI requires human assessment: '+result['summary'])
                     else:current['status']='AI_PENDING' if current['tenant_id'] else 'AWAITING_CONTACT'

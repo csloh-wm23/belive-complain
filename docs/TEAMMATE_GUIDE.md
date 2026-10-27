@@ -4,6 +4,8 @@
 
 [Download the two-page PDF](../output/pdf/BeLive-Quick-Guide.pdf) | [Project and detailed setup](../README.md)
 
+[Full click-by-click presentation script: all website and staff pages](PRESENTATION_WALKTHROUGH.md)
+
 ## 1. Open the app and sign in
 
 1. Download this repository using **Code > Download ZIP** and extract it, or pull your existing copy. Install **Python 3.11+** if needed.

@@ -50,3 +50,11 @@ The draft stayed in `AI_PENDING` for operator review. It was not sent, and the c
 Raw local evidence is in ignored `artifacts/live-hermes-2026-10-26/result.json`; fictional test records are in the adjacent `fictional-smoke.db`. The normal operator database was not used or changed for these test cases. The `.env`, raw artifacts and databases are ignored by Git.
 
 This checks real provider connectivity, one English support-generation path, schema/evidence validation and one deterministic safety handover. It does not establish overall accuracy, multilingual quality, production readiness, social-source access or external notification delivery. Other teammates must configure model access on their own machines.
+
+## Live regression retest: 27 October 2026
+
+A separate, user-authorised diagnostic reproduced `AI_UNGROUNDED_EVIDENCE`: the model quoted the complaint title exactly, but validation previously checked only the description. The validator and prompt now accept an exact quote from either tenant-report field, record its source field, and continue to reject invented or unrelated evidence.
+
+After the old server was stopped and the fixed server loaded, an operator-endpoint retry through actual native Hermes and the configured Ollama model completed successfully. The saved assessment was MAINTENANCE / HIGH, with title evidence and human review required. No draft or tenant response was published. High urgency in this case was a valid staff handover, not an AI execution failure. Earlier failed jobs remain in history.
+
+Private diagnostic evidence is held in ignored `artifacts/presentation/ai-diagnostic.json` and `artifacts/presentation/ai-fixed-live-result.json`. No tenant identifiers, provider keys, raw case descriptions or private credentials are included in this report. This retest checks the reproduced failure and saved staff handover; it is not a complete quality evaluation.

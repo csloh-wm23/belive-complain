@@ -10,6 +10,28 @@ CATEGORIES = ['MAINTENANCE','CLEANING','WIFI','ACCESS','UTILITIES','BILLING','HO
 COMPANY = ('BeLive Ventures / BeLive CoLiving, Malaysia, serves tenants with furnished rooms, '
            'Wi-Fi, cleaning, smart access, maintenance. Public company information '
            'is not a tenancy-specific promise. This system handles existing-tenant enquiries and complaints. Move-in/out coordination, inspections, random PIC assignment, marketing, sales and owner support are outside scope.')
+FAILURE_MESSAGES = {
+    'AI_NOT_CONFIGURED':'Configure the AI provider and model, then retry. Staff review is required meanwhile.',
+    'AI_FAILED_OR_INVALID':'The AI request failed or its response could not be validated. Staff review is required; no response was published.',
+    'AI_INVALID_JSON':'The AI did not return a valid JSON object. No assessment was accepted.',
+    'AI_INVALID_SCHEMA':'The AI assessment did not match the required fields. No assessment was accepted.',
+    'AI_INVALID_VALUES':'The AI assessment contained an invalid category, urgency or value. No assessment was accepted.',
+    'AI_INVALID_PLAN':'The AI response plan did not match the required format. No assessment was accepted.',
+    'AI_UNGROUNDED_EVIDENCE':'The AI quote did not exactly match the complaint title or description. No assessment was accepted.',
+    'AI_UNKNOWN_RECORD':'The AI cited a support record outside this case. No assessment was accepted.',
+    'AI_UNSAFE_OUTPUT':'The AI response failed a safety check. Staff review is required.',
+    'HERMES_NOT_INSTALLED':'The Hermes runtime could not be found. Staff review is required.',
+    'HERMES_PYTHON_NOT_FOUND':'The Hermes Python runtime could not be found. Staff review is required.',
+    'HERMES_TIMEOUT':'The AI request exceeded its time limit. Staff review is required; no response was published.',
+    'HERMES_WORKER_EXITED':'The Hermes worker stopped before returning a result. Staff review is required.',
+}
+
+def failure_code(exc):
+    # Only fixed diagnostics may reach the case or audit; provider errors can contain secrets.
+    if isinstance(exc,json.JSONDecodeError):return 'AI_INVALID_JSON'
+    code=str(exc)
+    return code if code in FAILURE_MESSAGES else 'AI_FAILED_OR_INVALID'
+
 TOOLS = [dict(name='read_case_context',description='Read this case and its operator-verified context only.',
               parameters={'type':'object','properties':{},'additionalProperties':False}),
          dict(name='read_reviewed_styles',description='Read current approved writing examples; never verified facts.',
@@ -45,11 +67,15 @@ class SupportAI:
         a=self.generate('Triage Agent',
           'Assess relevance and risk. Return exactly relevance (SUPPORT/NON_SUPPORT/UNCERTAIN), category '
           '('+'/'.join(CATEGORIES)+'), severity (LOW/MEDIUM/HIGH/CRITICAL), summary (string), '
-          'uncertainty (boolean), evidence (exact substring from case description).',context,examples)
+          'uncertainty (boolean), evidence (an exact verbatim substring from case.title or case.description, preserving spelling and case). '
+          'Do not paraphrase the evidence or quote records or conversation messages.',context,examples)
         if set(a)!= {'relevance','category','severity','summary','uncertainty','evidence'}: raise ValueError('AI_INVALID_SCHEMA')
         if a['relevance'] not in {'SUPPORT','NON_SUPPORT','UNCERTAIN'} or a['category'] not in CATEGORIES or a['severity'] not in {'LOW','MEDIUM','HIGH','CRITICAL'} or type(a['uncertainty']) is not bool: raise ValueError('AI_INVALID_VALUES')
         a['summary']=bounded(a['summary'],1,1000)
-        if not isinstance(a['evidence'],str) or not 1<=len(a['evidence'])<=400 or a['evidence'] not in context['case']['description']: raise ValueError('AI_UNGROUNDED_EVIDENCE')
+        if not isinstance(a['evidence'],str) or not 1<=len(a['evidence'])<=400:raise ValueError('AI_UNGROUNDED_EVIDENCE')
+        evidence_field=next((field for field in ('description','title') if a['evidence'] in context['case'].get(field,'')),None)
+        if evidence_field is None:raise ValueError('AI_UNGROUNDED_EVIDENCE')
+        a['evidence_field']=evidence_field
         if a['severity'] in {'HIGH','CRITICAL'} or a['uncertainty'] or a['relevance']!='SUPPORT': return a
         if not context.get('tenant_verified',True):
             return {**a,'plan':'Verify tenancy through an authorised private channel before personal assistance.',
