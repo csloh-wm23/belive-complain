@@ -95,6 +95,41 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(self.request('/api/shared-memory')[0],401)
             code,body=self.request('/api/shared-memory',headers={'Authorization':'Bearer isolated-test-token'})
             self.assertEqual(code,200);self.assertEqual(json.loads(body),{'examples':[]})
+    def test_website_complaint_is_scoped_idempotent_and_reaches_dashboard(self):
+        def cmd(name,p):return self.s.command(name,p,secrets.token_hex(16))
+        cmd('condo',dict(id='WEB',name='Fictional website property',rules='Fictional support guidance for this isolated website test.',confirmed=True))
+        for tid in ['WEB-A','WEB-B']:cmd('tenant',dict(id=tid,condo_id='WEB',unit_ref='DEMO',verified_by='Fixture staff',evidence='Fictional tenancy checked for this test.',confirmed=True))
+        token=cmd('portal_issue',{'tenant_id':'WEB-A'})['token']
+        payload=dict(title='Website Wi-Fi complaint',description='Fictional website complaint: the Wi-Fi disconnects each evening.',tenant_id='WEB-B',entrypoint='OPERATOR')
+        headers={'Authorization':'Bearer '+token,'Idempotency-Key':secrets.token_hex(16)}
+        code,body=self.request('/api/website/complaints',payload,headers)
+        self.assertEqual(code,200);receipt=json.loads(body)
+        self.assertEqual(self.request('/api/website/complaints',payload,headers)[1],body)
+        with self.s.store.connect() as db:
+            cases=self.s.store.all(db,'case');self.assertEqual(len(cases),1)
+            self.assertEqual(cases[0]['id'],receipt['id']);self.assertEqual(cases[0]['tenant_id'],'WEB-A')
+            self.assertEqual(cases[0]['entrypoint'],'TENANT_WEBSITE')
+        code,body=self.request('/api/status',headers={'X-CSRF-Token':self.csrf})
+        self.assertEqual(code,200);self.assertIn(receipt['id'],[c['id'] for c in json.loads(body)['cases']])
+        self.assertEqual(self.request('/api/status',headers={'X-CSRF-Token':self.csrf,'Cookie':''})[0],401)
+        self.assertEqual(self.request('/api/website/complaints',payload,{**headers,'Origin':'https://foreign.example'})[0],403)
+        for thread in threading.enumerate():
+            if thread is not threading.current_thread() and thread.name.startswith('Thread') and thread is not self.thread:thread.join(2)
+
+    def test_website_complaint_needs_tenant_key_and_screens_risk(self):
+        payload=dict(title='Website risk test',description='Smoke and sparks are coming from the electrical socket.')
+        self.assertEqual(self.request('/api/website/complaints',payload,{'Idempotency-Key':secrets.token_hex(16)})[0],400)
+        with self.s.store.connect() as db:self.assertEqual(self.s.store.all(db,'case'),[])
+        def cmd(name,p):return self.s.command(name,p,secrets.token_hex(16))
+        cmd('condo',dict(id='SAFE',name='Fictional safety property',rules='Fictional fixture: immediate risks need staff.',confirmed=True))
+        cmd('tenant',dict(id='SAFE-A',condo_id='SAFE',unit_ref='DEMO',verified_by='Fixture staff',evidence='Fictional tenancy checked for safety test.',confirmed=True))
+        token=cmd('portal_issue',{'tenant_id':'SAFE-A'})['token']
+        code,body=self.request('/api/website/complaints',payload,{'Authorization':'Bearer '+token,'Idempotency-Key':secrets.token_hex(16)})
+        self.assertEqual(code,200);self.assertEqual(json.loads(body)['status'],'HUMAN_REVIEW')
+        with self.s.store.connect() as db:
+            c=self.s.store.get(db,'case',json.loads(body)['id']);self.assertEqual(c['severity'],'CRITICAL')
+            self.assertEqual(self.s.store.all(db,'job'),[])
+
     def test_portal_cannot_choose_another_tenant_on_intake(self):
         def cmd(name,p):return self.s.command(name,p,secrets.token_hex(16))
         cmd('condo',dict(id='C',name='Fixture condo',rules='Fictional support guidance: report Wi-Fi issues privately.',confirmed=True))

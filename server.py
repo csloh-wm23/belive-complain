@@ -21,7 +21,7 @@ ROOT=Path(__file__).resolve().parent
 STATIC={'/':'index.html','/index.html':'index.html','/assets/app.js':'assets/app.js',
         '/assets/style.css':'assets/style.css','/portal':'portal.html','/assets/portal.js':'assets/portal.js',
         '/belive':'tenant-site.html','/assets/tenant-site.css':'assets/tenant-site.css',
-        '/assets/tenant-home.svg':'assets/tenant-home.svg'}
+        '/assets/tenant-home.svg':'assets/tenant-home.svg','/assets/tenant-site.js':'assets/tenant-site.js'}
 
 class Tasks:
     def __init__(self,service):self.service=service;self.running=set();self.lock=threading.Lock();self.stop=threading.Event()
@@ -114,7 +114,8 @@ def make_handler(service,tasks=None):
             origin=self.headers.get('Origin')
             if origin and origin not in {f'http://127.0.0.1:{self.server.server_port}',f'http://localhost:{self.server.server_port}'}:return self.json(403,{'error':'Foreign origin rejected'})
             path=urlsplit(self.path).path;route=path.removeprefix('/api/')
-            portal=path in {'/api/portal/intake','/api/portal/update','/api/portal/feedback'}
+            website=path=='/api/website/complaints'
+            portal=website or path in {'/api/portal/intake','/api/portal/update','/api/portal/feedback'}
             if not portal and not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),csrf):return self.json(403,{'error':'Invalid operator token'})
             try:
                 size=int(self.headers.get('Content-Length','0'))
@@ -122,6 +123,9 @@ def make_handler(service,tasks=None):
                 p=json.loads(self.rfile.read(size));key=self.headers.get('Idempotency-Key','')
                 if not isinstance(p,dict):raise ValueError('JSON object required')
                 if portal:
+                    if website:
+                        result=service.portal_submit(self.token(),p,key,entrypoint='TENANT_WEBSITE');tasks.analyse(result)
+                        return self.json(200,{'id':result['id'],'status':result['status'],'received_at':result['created_at']})
                     if path=='/api/portal/intake':
                         result=service.portal_submit(self.token(),p,key);tasks.analyse(result)
                         return self.json(200,{'id':result['id'],'status':result['status']})

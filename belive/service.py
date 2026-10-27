@@ -139,7 +139,7 @@ class Service:
                 old['source_versions'].append(version);old['revision']+=1;self.store.put(db,'case',old)
                 self.store.event(db,old['id'],'DUPLICATE_LINKED','Identical redacted text linked as another source version');return old
         c={'id':uid('BL'),'title':title,'description':description,'tenant_id':tenant_id,'platform':platform,
-           'source_id':source_id,'source_versions':[version],'category':'OTHER','severity':'UNASSESSED',
+           'source_id':source_id,'source_versions':[version],'entrypoint':p.get('entrypoint','PUBLIC_SOURCE' if external else 'OPERATOR'),'category':'OTHER','severity':'UNASSESSED',
            'status':'AWAITING_CONTACT' if external and not tenant_id else 'AI_PENDING','revision':1,
            'created_at':now(),'updated_at':now(),'owner':'','draft':'','analysis':None,'verification':'',
            'ack_due':None,'followup_due':None,'escalation':0,'handoff':False,'review_reason':''}
@@ -374,9 +374,10 @@ class Service:
             from belive.conversations import conversation
             for case in cases:case['conversation']=conversation(self.store,db,self.store.get(db,'case',case['id']))
             return {'tenant_id':tenant,'cases':cases}
-    def portal_submit(self,token,p,key):
+    def portal_submit(self,token,p,key,entrypoint='TENANT_PORTAL'):
+        require(entrypoint in {'TENANT_PORTAL','TENANT_WEBSITE'},'Unsupported tenant entry point')
         tenant=self.portal(token)['tenant_id']
-        return self.command('intake',{'title':p.get('title'),'description':p.get('description'),'tenant_id':tenant,'platform':'INTERNAL'},key)
+        return self.command('intake',{'title':p.get('title'),'description':p.get('description'),'tenant_id':tenant,'platform':'INTERNAL','entrypoint':entrypoint},key)
     def portal_update(self,token,p,key):
         require(isinstance(key,str) and 8<=len(key)<=150,'A request idempotency key is required')
         tenant=self.portal(token)['tenant_id']

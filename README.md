@@ -22,11 +22,18 @@ On the first launch for a database, create your own administrator account in the
 
 ## Tenant website and complaint entry
 
-Open the new [BeLive tenant website](http://127.0.0.1:8877/belive). **Make a complaint** opens the private portal's report form; **My requests** opens its conversations after tenant-key verification. Support-topic links prefill the enquiry title. **Back to BeLive** returns to the tenant website.
+Open the [BeLive tenant website](http://127.0.0.1:8877/belive). **Make a complaint** opens a form on that website. The tenant enters their private access key, title and details; the form submits to the real support backend and returns a saved case reference. Support-topic links prefill the title. No tenant records or access keys are stored in the browser.
 
-Staff still sign in at [the dashboard](http://127.0.0.1:8877/); its top bar also links to the tenant website. A tenant submission is saved directly in the same SQLite case workflow and appears under **Support cases**. Routine cases run through the configured AI; only reviewed, explicitly published replies appear in the tenant conversation. The tenant website is a separate customer-facing page in this local prototype, not a change to BeLive's official website or an Internet-hosted service.
+The receipt provides **Track this request**, which opens the matching private tenant conversation after key verification, and **Staff: open this case in dashboard**, which opens that exact case after operator sign-in. New website intakes are marked **BeLive website** in **Support cases**. They use the same SQLite database, risk checks, AI assessment and reviewed-response workflow as other support cases. Only explicitly published staff responses reach the tenant conversation.
 
-To demonstrate: staff records a fictional DEMO tenant in a practice database, issues that tenant a private portal key, then opens the tenant website in a second tab. Submit through **Make a complaint**, return to the staff dashboard to review the case, publish a reviewed reply and refresh **My conversations** in the tenant tab. Use **Close my support records** when finished on a shared device.
+To demonstrate the connection:
+
+1. In a practice database, staff records a fictional DEMO property and tenant under **Tenant & property records**, then issues that tenant a portal access key.
+2. Open the tenant website, select **Make a complaint**, enter that key and a fictional issue, then submit.
+3. Note the returned case reference. Select **Staff: open this case in dashboard** and sign in; the same case opens automatically.
+4. Review and publish a response in the case, then use **Track this request** on the receipt to read it as the tenant. Tenant replies appear back in that staff case.
+
+A retry after an uncertain network response reuses the same request ID rather than creating a second complaint. **My requests** and **Back to BeLive** continue to connect the website and private portal. The existing dashboard remains at `/`; the website is a separate customer-facing page in this local prototype, not a change to BeLive's official site or an Internet-hosted service.
 
 ## Tenant-support scope
 

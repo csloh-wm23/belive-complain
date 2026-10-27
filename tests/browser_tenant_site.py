@@ -1,4 +1,4 @@
-"""Tenant website to portal to operator walkthrough; fictional fixtures and test-only AI."""
+"""Direct website complaint -> same staff case -> reviewed tenant reply, in an isolated test DB."""
 import secrets
 import sys
 import tempfile
@@ -30,49 +30,70 @@ def main():
             with sync_playwright() as pw:
                 browser=pw.chromium.launch(channel='chrome',headless=True)
                 context=browser.new_context(viewport={'width':1440,'height':1000},timezone_id='Asia/Kuala_Lumpur')
-                errors=[];external=[]
+                errors=[];external=[];attempts=[]
                 def observe(page):
                     page.on('pageerror',lambda e:errors.append(str(e)))
                     page.on('request',lambda r:external.append(r.url) if not r.url.startswith(url) else None)
                 tenant=context.new_page();observe(tenant)
+                tenant.on('request',lambda r:attempts.append(r.headers.get('idempotency-key')) if r.url.endswith('/api/website/complaints') else None)
                 tenant.goto(url+'/belive')
                 expect(tenant.get_by_role('heading',level=1)).to_contain_text('Your home.')
                 assert tenant.locator('.site-topic').count()==6
                 assert tenant.evaluate('document.documentElement.scrollWidth <= innerWidth')
                 tenant.screenshot(path=str(output/'belive-tenant-website-desktop.png'),full_page=True)
                 tenant.get_by_role('link',name='Make a complaint',exact=True).first.click()
-                expect(tenant).to_have_url(url+'/portal#report')
-                expect(tenant.locator('#tenantIntake')).to_be_hidden()
-                tenant.locator('#accessKey').fill('invalid-key');tenant.locator('#connect').click()
-                expect(tenant.locator('#portalNotice')).not_to_be_empty()
-                expect(tenant.locator('#tenantIntake')).to_be_hidden()
-                tenant.locator('#accessKey').fill(token);tenant.locator('#accessKey').press('Enter')
-                expect(tenant.locator('#tenantIntake')).to_be_visible()
-                expect(tenant.locator('#portalAccessCard')).to_be_hidden()
-                expect(tenant.locator('#tenantIntake [name=title]')).to_be_focused()
+                expect(tenant.locator('#websiteComplaintDialog')).to_be_visible()
+                expect(tenant).to_have_url(url+'/belive')
+                form=tenant.locator('#websiteComplaint')
                 title='DEMO complaint from tenant website'
-                tenant.locator('#tenantIntake [name=title]').fill(title)
-                tenant.locator('#tenantIntake [name=description]').fill('Fictional test: the Wi-Fi in my room drops each evening on two devices.')
-                tenant.get_by_role('button',name='Submit support request',exact=True).click()
-                expect(tenant.locator('#portalNotice')).to_contain_text('saved. Follow replies')
-                expect(tenant.locator('#tenantCases')).to_contain_text(title)
-                assert 'Could you confirm whether other devices' not in tenant.locator('#tenantCases').inner_text()
+                form.locator('[name=title]').fill(title)
+                form.locator('[name=description]').fill('Fictional test: the Wi-Fi in my room drops each evening on two devices.')
+                form.locator('[name=access_key]').fill('invalid-key');tenant.locator('#sendWebsiteComplaint').click()
+                expect(tenant.locator('#websiteComplaintError')).not_to_be_empty()
+                with service.store.connect() as db:assert service.store.all(db,'case')==[]
+                form.locator('[name=access_key]').fill(token)
+                # Lose the first successful receipt after the backend commits: retry must reuse the key.
+                def lose_receipt(route):
+                    result=route.fetch();assert result.ok;route.abort()
+                tenant.route('**/api/website/complaints',lose_receipt,times=1)
+                tenant.locator('#sendWebsiteComplaint').click()
+                expect(tenant.locator('#websiteComplaintError')).to_contain_text('Could not confirm submission')
+                with service.store.connect() as db:assert len(service.store.all(db,'case'))==1
+                tenant.locator('#sendWebsiteComplaint').click()
+                expect(tenant.locator('#websiteReceipt')).to_be_visible()
+                expect(tenant.locator('#websiteReceiptTitle')).to_be_focused()
+                tenant.locator('#websiteReceipt').screenshot(path=str(output/'website-connection-receipt.png'))
+                assert attempts[-1]==attempts[-2]
+                cid=tenant.locator('#websiteCaseRef').inner_text()
+                expect(form.locator('[name=access_key]')).to_have_value('')
+                assert tenant.evaluate('sessionStorage.length===0 && localStorage.length===0')
+                tenant.screenshot(path=str(output/'belive-website-linked-receipt-desktop.png'),full_page=True)
                 with service.store.connect() as db:
                     cases=service.store.all(db,'case');assert len(cases)==1
-                    assert cases[0]['tenant_id']=='DEMO-TENANT';cid=cases[0]['id']
-                staff=context.new_page();observe(staff);staff.goto(url)
+                    assert cases[0]['id']==cid and cases[0]['tenant_id']=='DEMO-TENANT'
+                    assert cases[0]['entrypoint']=='TENANT_WEBSITE'
+                dashboard=tenant.locator('#websiteStaffCase').get_attribute('href')
+                assert dashboard=='/?case='+cid
+                staff=context.new_page();observe(staff);staff.goto(url+dashboard)
+                expect(staff.locator('#authGate')).to_be_visible()
                 staff.locator('#authUsername').fill('website-qa');staff.locator('#authPassword').fill('Fictional-browser-password-123');staff.locator('#authSubmit').click()
-                expect(staff.locator('#operatorApp')).to_be_visible()
-                staff.locator('[data-view=cases]').click()
-                expect(staff.locator('#caseRows')).to_contain_text(title)
-                staff.locator('#caseRows .case-link').filter(has_text=title).click()
+                expect(staff.locator('#caseDialog')).to_be_visible()
+                expect(staff.locator('#caseDetail')).to_contain_text(cid)
+                expect(staff.locator('#caseRows')).to_contain_text('BeLive website')
                 staff.locator('#reloadCase').click()
                 expect(staff.locator('#caseDraft')).to_have_value('Could you confirm whether other devices have the same issue?')
                 staff.locator('#caseNote').fill('PRIVATE QA note: never visible in the tenant conversation.')
                 staff.locator('[data-act=note]').click()
                 staff.locator('#caseConfirmed').check();staff.locator('[data-act=publish_response]').click()
                 expect(staff.locator('#caseDetail .conversation')).to_contain_text('Could you confirm whether other devices')
-                tenant.locator('#refreshPortal').click()
+                staff.locator('#caseDialog').evaluate('(el)=>el.scrollTop=0')
+                staff.locator('#caseDialog').screenshot(path=str(output/'website-connection-dashboard.png'))
+                staff.screenshot(path=str(output/'belive-website-linked-case-desktop.png'),full_page=True)
+                tenant.locator('#websiteTrackCase').click()
+                expect(tenant).to_have_url(url+'/portal?case='+cid+'#conversations')
+                expect(tenant.locator('#tenantArea')).to_be_hidden()
+                tenant.locator('#accessKey').fill(token);tenant.locator('#connect').click()
+                expect(tenant.locator('#portal-case-'+cid+' h3')).to_be_focused()
                 expect(tenant.locator('#tenantCases')).to_contain_text('Could you confirm whether other devices')
                 assert 'PRIVATE QA note' not in tenant.locator('body').inner_text()
                 tenant.locator('[data-note]').fill('Fictional test reply: two devices are affected.')
@@ -83,32 +104,35 @@ def main():
                 tenant.screenshot(path=str(output/'belive-tenant-complaint-desktop.png'),full_page=True)
                 tenant.locator('#portalSignOut').click()
                 expect(tenant.locator('#tenantArea')).to_be_hidden();expect(tenant.locator('#tenantCases')).to_be_empty()
-                expect(tenant.locator('#accessKey')).to_be_focused()
-                assert tenant.evaluate('sessionStorage.length===0 && localStorage.length===0')
                 tenant.get_by_role('link',name='Back to BeLive',exact=False).click()
                 tenant.get_by_role('link',name='My requests',exact=False).click()
-                expect(tenant).to_have_url(url+'/portal#conversations')
                 tenant.locator('#accessKey').fill(token);tenant.locator('#connect').click()
                 expect(tenant.locator('#conversationHeading')).to_be_focused()
                 tenant.get_by_role('link',name='Back to BeLive',exact=False).click()
                 tenant.locator('.site-topic[href*="topic=wifi"]').click()
-                expect(tenant.locator('#tenantIntake [name=title]')).to_have_value('Wi-Fi support request')
-                tenant.locator('#accessKey').fill(token);tenant.locator('#connect').click()
-                expect(tenant.locator('#tenantIntake [name=title]')).to_be_focused()
+                expect(tenant.locator('#websiteComplaint [name=title]')).to_have_value('Wi-Fi support request')
+                tenant.locator('#websiteComplaint [name=access_key]').fill(token)
+                tenant.locator('#closeWebsiteComplaint').click()
+                expect(tenant.locator('#websiteComplaint [name=access_key]')).to_have_value('')
                 mobile=browser.new_context(viewport={'width':390,'height':844},is_mobile=True,device_scale_factor=1,timezone_id='Asia/Kuala_Lumpur')
                 phone=mobile.new_page();observe(phone);phone.goto(url+'/belive')
                 assert phone.evaluate('document.documentElement.scrollWidth <= innerWidth')
                 phone.screenshot(path=str(output/'belive-tenant-website-mobile.png'),full_page=True)
                 phone.get_by_role('link',name='Make a complaint',exact=True).first.click()
-                expect(phone.locator('#portalAccessCard')).to_be_visible()
-                phone.locator('#accessKey').fill(token);phone.locator('#connect').click()
-                expect(phone.locator('#tenantCases')).to_contain_text(title)
+                mf=phone.locator('#websiteComplaint');mf.locator('[name=access_key]').fill(token)
+                mf.locator('[name=title]').fill('DEMO mobile website complaint')
+                mf.locator('[name=description]').fill('Fictional mobile test: the room Wi-Fi disconnects on my phone.')
+                phone.locator('#sendWebsiteComplaint').click();expect(phone.locator('#websiteReceipt')).to_be_visible()
+                assert phone.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                phone.screenshot(path=str(output/'belive-website-linked-receipt-mobile.png'),full_page=True)
+                phone.locator('#websiteTrackCase').click();phone.locator('#accessKey').fill(token);phone.locator('#connect').click()
+                expect(phone.locator('#tenantCases')).to_contain_text('DEMO mobile website complaint')
                 assert phone.evaluate('document.documentElement.scrollWidth <= innerWidth')
                 phone.screenshot(path=str(output/'belive-tenant-complaint-mobile.png'),full_page=True)
                 assert not errors,errors
                 assert not external,external
                 mobile.close();context.close();browser.close()
-                print('PASS: desktop/mobile tenant website, complaint/tracking/topic links, private access, tenant intake visible in staff dashboard, reviewed reply, tenant follow-up, navigation and clearing access; no page errors or external requests.')
+                print('PASS: website form, real saved receipt, lost-receipt retry without duplicates, matching authenticated dashboard deep link, reviewed tenant reply, privacy, tracking links and desktop/mobile layouts.')
         finally:
             server.shutdown();server.server_close();worker.join()
 
