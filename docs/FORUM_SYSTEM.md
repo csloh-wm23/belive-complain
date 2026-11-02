@@ -13,11 +13,12 @@ The project reuses native Hermes transport concepts and the existing visual lang
 | `server.py` | Local HTTP/static allowlist, CSRF/origin/host guards, tenant bearer access, background task deduplication, 30-second scheduler |
 | `belive/service.py` | Transactional commands, tenancy verification assertions, property support guidance, case transitions, outbox, escalation, feedback and scoped portal |
 | `belive/access.py` | Local Admin/Support accounts, password hashing, session expiry, login throttling and account revocation |
+| `belive/automation.py` | Versioned property knowledge, routine portal-answer gates, information-only acceptance and staff exceptions |
 | `belive/conversations.py` | Tenant-visible messages isolated from drafts and private operator audit |
 | `belive/backups.py` | Consistent SQLite snapshots, checksum validation and recovery into a separate paused workspace |
 | `belive/workspace.py` | Validated database file selection, read-only existing-schema checks and persisted next-launch preference |
 | `belive/store.py` | SQLite objects, immutable source/record versions, append-only audit, persisted command idempotency; email/number masking |
-| `belive/ai.py` | Structured triage and investigation/response; schema/evidence/record validation, bounded read-only tools |
+| `belive/ai.py` | Separate Complaint Analysis, Support Response and conditional Safety Review agent calls; complaint/enquiry classification; schema/evidence/record validation, bounded read-only tools |
 | `belive/hermes_native.py`, `belive/hermes_worker.py` | Installed native AIAgent subprocess, isolated MemoryStore, explicit allowlist, bounded steps/timeouts, no shell or publishing tools |
 | `belive/connectors.py` | Selected official source reads and approved HTTPS notification delivery |
 | `assets/app.js`, `index.html` | Tenant-only operator dashboard, review dialogs, records, outbox, memory and reports |
@@ -26,17 +27,27 @@ The project reuses native Hermes transport concepts and the existing visual lang
 
 No live action is simulated in the normal workflow. Test doubles live only in tests. Missing configuration produces explicit failure/handover.
 
+## FYP workflow, 2 November 2026
+
+Complaint Analysis Agent identifies COMPLAINT/ENQUIRY/NON_SUPPORT, relevance, topic, LOW/MEDIUM/HIGH/CRITICAL, exact evidence and uncertainty. The UI maps LOW to SIMPLE, MEDIUM to MODERATE and HIGH/CRITICAL to HIGH. Handover/uncertain cases cannot present as SIMPLE merely because a model returned LOW. The separate Support Response Agent retrieves up to eight current property knowledge entries and five current reviewed styles. A conditional Safety Review Agent separately checks adapted guidance. Actual role, status and timestamps are stored; these are logical agents using the configured native Hermes model with read-only tools.
+
+**Only SIMPLE replies send automatically**, and only through the private verified tenant portal after knowledge/language/confidence/version/safety gates. MODERATE is always handed to staff, while safe AI assessment and a private draft reduce staff work. Physical/account/financial requests are queued immediately and may get background AI assistance; a LOW model result cannot lower this deterministic MODERATE floor. HIGH danger bypasses routine response generation. Unknown facts stay questions or require staff; Hermes never invents property facts when prior knowledge is missing.
+
+`belive/routing.py` holds admin-approved category destinations. The AI supplies category, deterministic routing supplies destination, and handover queues a local STAFF_ALERT. Unconfigured categories use Support team. This does not claim an external message reached a department. Work orders and gateway delivery remain separately reviewed.
+
+`belive/learning.py` runs isolated real-model before/after comparisons against the same immutable question/guide context. The approved redacted lesson affects only the second run. Clarity checks require a reply starting directly with points 1 and 2, exactly one question mark, and at most 90 whitespace-separated words. Word counts are also recorded. Adoption requires more checks, or all checks passing with at least 20% fewer words and at least 12 words. Only an actually measured improvement automatically creates an active learned_style scoped to the fictional demo property; future ordinary demo cases retrieve it. Revoke excludes it immediately and stale in-flight results are discarded. Provider failure, interruption, changed guidance and equal/worse output never create fabricated improvement. These are narrow writing checks, not factual accuracy, causality proof or retraining. Normal support also automatically retrieves latest approved/corrected redacted styles from verified closed cases, excluding rejection/reopening. Company knowledge remains separately reviewed and versioned.
+
+`belive/demo.py` prepares an explicit fictional property/tenant and missing tracked demonstration knowledge entries without replacing normal records. One-hour demo sessions are scoped to these reserved demo_only records; supplied tenant IDs cannot select a different tenant. Disabling demo revokes its sessions. Recovery disables demo access, automation and learned styles and interrupts pending comparisons; no withdrawn lesson is revived.
+
+Staff navigation is Home, Cases, Public posts, Learning and Setup & knowledge. More tools contains Messages, Saved records and Reports. Tenant navigation is New request / My requests with one selected conversation. `docs/FYP_DEMO_GUIDE.md` documents the exact walkthrough.
+
 ## Tenant website entry and internal complaints
 
-`GET /belive` serves a separate tenant-facing BeLive website, with assets explicitly included in the static allowlist. The operator dashboard remains at `/`. With JavaScript enabled, **Make a complaint** and support-topic links open the website's own complaint dialog. A tenant submits their staff-issued bearer key, title and description to `POST /api/website/complaints`. The tenant is resolved from the key on the server; client-supplied tenant references and entry-point metadata are ignored. The normal host/origin checks, validation, idempotency, source retention, risk screening, background AI and case queue all apply.
+`GET /belive` serves the tenant-facing website; staff dashboard remains `/`. Report/support-topic links open `/portal`, with an optional topic prefill. The portal sends authenticated, idempotent intake to the backend. Normal access uses a verified tenant's private code. **Try demo tenant** calls `POST /api/demo/session`, available only after explicit fictional setup. Host/origin guards apply; it cannot open arbitrary tenants. Keys stay in memory, never URLs or browser storage. Sign out clears all rendered case titles/messages, in-page keys and drafts.
 
-The backend fixes the case entry point to `TENANT_WEBSITE`; dashboard rows identify new website intakes as **BeLive website**. A successful API response supplies the actual saved case ID and timestamp. Only then does the page show a receipt. During submission the dialog is locked; a retry of unchanged details after a lost response reuses its idempotency key. No success is claimed from a click alone, and no mock receipt is generated.
+The backend resolves tenancy from the bearer key and ignores supplied tenant/entrypoint values. The existing `/api/website/complaints` API remains supported for independent form integrations with the same checks; the redesigned main website uses the simpler portal entry. Both use immutable source versions, risk screening, background AI, actual saved case IDs and the same scoped staff queue. `/portal?case=CASE_ID#conversations` focuses a case only if it belongs to the authenticated tenant. Operator case links still require staff login.
 
-The receipt's staff link uses `/?case=CASE_ID`. The dashboard opens that case only after its normal operator authentication and snapshot checks. The tenant tracking link uses `/portal?case=CASE_ID#conversations`; a tenant key is still required, and only that tenant's authorised records can be returned. The requested case is focused only if it exists in those scoped records. Access keys are never put in links or browser storage and are cleared from the website form when it closes. Without JavaScript, report links retain their existing private-portal fallback.
-
-**My requests**, portal replies and outcome feedback continue to use the existing scoped endpoints. **Close my support records** clears the in-page key, drafts and rendered records without revoking the key itself; normal expiry and staff revocation still apply. Back links return to the tenant website. Staff still reviews and explicitly publishes any response before it appears in the tenant conversation.
-
-The tenant site contains no property search, marketing/sales workflow, owner support or move-in/out operations. It shares the existing local backend and does not modify the official BeLive site or publish company/customer data to a hosting service.
+SIMPLE replies can be automatic after all checks; all other AI drafts remain private. Tenant feedback cannot verify physical repairs or close maintenance cases. Still unresolved gives inline confirmation and staff handover. No public social posting or Internet hosting is introduced.
 
 ## Flowchart traceability
 
@@ -88,7 +99,7 @@ Messages move `PENDING_APPROVAL -> APPROVED -> SENDING -> DELIVERED/UNKNOWN`, or
 
 ## Database interface and launch behavior
 
-**Database & records** displays the active SQLite file and searchable property, verified-tenant and support-context tables from the server snapshot. Reloading the browser reads the same database; there is no browser-local record store. Cases, outbox, sources and audit remain in their respective operational views.
+**More tools → Saved records** displays the active SQLite file and searchable property, verified-tenant and support-context tables from the server snapshot. Reloading the browser reads the same database; there is no browser-local record store. Cases, outbox, sources and audit remain in their respective operational views.
 
 The operator can choose a SQLite file with the local native picker. The protected endpoint validates the idempotency key before opening the picker. Cancellation makes no change. Selection stores only the next-launch path in ignored `data/workspace.json`, while the current connection continues using the active file. Existing unrelated databases are rejected using read-only schema inspection. A new file is created only when the application next opens it. No live database file is moved, copied or deleted. The explicit CLI `--database` option overrides the saved preference for that launch. The default selection is `data/belive.db`.
 
@@ -96,7 +107,7 @@ The Windows batch launcher opens Python in a dedicated console and immediately e
 
 ## Conversations, ownership and deadlines
 
-Publishing to the tenant portal is an explicit operator action on the saved response. It requires verified tenancy, an active case and confirmation that the exact wording was reviewed. Identical published wording is deduplicated per case. It creates a real local portal message and does not claim email/social/gateway delivery. Drafts, analysis, citations, work orders and internal notes remain private.
+In review mode, publishing to the tenant portal is an explicit operator action on the saved response. Optional routine automation uses the separate approved-knowledge gate described below. Manual publication requires verified tenancy, an active case and confirmation that the exact wording was reviewed. Automatic publication follows the EXACT or GUIDANCE controls below. Identical published wording is deduplicated per case. It creates a real local portal message and does not claim email/social/gateway delivery. Drafts, analysis, citations, work orders and internal notes remain private.
 
 The portal returns only the current tenant's public conversation. Tenant updates are persisted and included in future AI context. Outcome feedback records the tenant's assertion; it does not verify or close the case. An unresolved outcome can reopen a closed case and revoke its previous style example. Safety flags in an update or outcome feedback override routine processing and require critical staff handling, even if the tenant selected resolved.
 
@@ -143,3 +154,37 @@ The tenant-website walkthrough also passed at 1440px desktop and 390px mobile wi
 Direct website submission is covered by scoped-tenant, cross-origin, idempotency and immediate-risk HTTP checks. The updated browser walkthrough loses a committed receipt and retries it without a duplicate, opens the same case after staff login, follows its reviewed reply through the private tracking link and checks desktop/mobile layouts. These UI checks use fictional records, a temporary database and explicit test-only AI.
 
 The title-evidence regression adds seven checks for exact title/description provenance, rejected paraphrases and unrelated excerpts, schema enforcement, safe error diagnostics, retry recovery and human-required repairs. The complete staff browser walkthrough passed after the evidence label change. A user-authorised live Hermes/Ollama retest on 27 October 2026 completed a validated maintenance assessment with HIGH urgency and staff handover; no response was published. See `LIVE_AI_SMOKE_TEST.md` and `PRESENTATION_WALKTHROUGH.md`.
+
+
+## Property knowledge and optional routine automation
+
+See [the setup and operating guide](AI_KNOWLEDGE_AND_AUTOMATION.md). Admins approve versioned, property-scoped informational answers with language, source and optional expiry. Both reviewed AI drafts and optional routine automation retrieve relevant current knowledge. Knowledge is verified context, not response-style memory or model retraining.
+
+Automation defaults off for existing databases and affects only new private tenant requests after enablement. It uses the existing grouped native Hermes stages. The model selects an approved answer with confidence, request language and case evidence. Deterministic gates require a certain, supported response matching the verified tenant's property and language. EXACT knowledge preserves approved wording and requires LOW urgency. GUIDANCE knowledge supports automatic adapted information or safe clarification only at LOW (SIMPLE) urgency; MEDIUM (MODERATE) assistance is held for staff review, only after a separate native Hermes groundedness/safety review passes and the selected guide is cited. HIGH/CRITICAL, uncertainty, failed review and human-required actions cannot publish automatically. The reviewer is an additional safeguard, not a correctness guarantee. It rechecks case, record, policy and knowledge versions inside the commit transaction.
+
+Portal follow-ups schedule a fresh assessment automatically. A maximum of three automatic answers prevents endless loops. Explicit human requests, failed answers, missing knowledge, policy/record uncertainty, dangerous content and unsupported actions go to staff. Handover creates a private portal receipt and the existing local staff alert, without claiming external delivery or staff acknowledgement.
+
+The new ANSWERED state means a tenant accepted an informational answer. It is separate from CLOSED, physical repair completion and verified-closure metrics. Unresolved feedback reopens staff handling. Automatic check-ins remain private portal messages and never close a case by timeout. Recovery pauses automation and deactivates knowledge pending review. No live company facts or automatic public/external messages were seeded or sent by this change.
+
+## Tenant feedback visibility and fresh requests
+
+The portal displays plain-language case status and an explanation beside each conversation. A pending automatic assessment is identified separately from a saved request awaiting staff review. Choosing Still unresolved saves the entered note and requests staff handling; it does not start another automatic FAQ cycle. Confirmation and errors appear beside the clicked controls and move into view. Subsequent tenant messages remain visible to staff while the case awaits review.
+
+If a response is lost after the server commits a tenant update, the portal retains the text and reuses the same idempotency key for an unchanged retry. A new private request after ANSWERED, CLOSED or SKIPPED receives a new case instead of inheriting that old outcome. Replays of the original submission, active duplicate protection and stable public-source identity remain unchanged.
+
+Demo knowledge may include low-risk device-side Wi-Fi checks based on a named public technical source. It remains scoped to the fictional demo property and does not establish BeLive equipment instructions, permission to alter shared equipment, an outage diagnosis or a repair result. Missing approved knowledge and physical-action requests continue to require staff.
+
+## Reusable guidance validation, 2 November 2026
+
+The demo property contains 24 GUIDANCE entries across all eight tenant-support categories and three target answer languages, alongside 12 EXACT portal FAQs. General intake playbooks describe the local support process; they do not supply real property rules or tenant account facts. The Wi-Fi guide cites Microsoft Support for device-side connectivity checks. Exact replies remain available when fixed wording is appropriate.
+
+The full isolated suite passed 70 checks. An additional regression for retaining the current approved style projection also passed with the affected guidance and native-memory tests. Browser checks passed for tenant handover at desktop/mobile sizes, a lost confirmation retried without duplicate feedback, a fresh request after acceptance, and admin guidance save/edit controls. Browser AI is an explicit test double.
+
+Separate real configured-model checks passed for naturally worded Wi-Fi guidance, a contextual follow-up and cleaning-report intake. The selected guides passed the native knowledge/safety review before publication. Unknown pet rules, financial action and a danger report went to staff. These fictional checks establish specific workflows, not general AI accuracy, real company integration or autonomous repair completion. Private reports remain outside versioned project data.
+
+
+## FYP update verification
+
+88 automated checks passed after the FYP workflow update, including complaint classification, SIMPLE-only publication, MODERATE assistance without sending, safety bypass, approved routing, demo isolation/revocation, measured learning, future retrieval and paused recovery. A real configured Hermes/Ollama run sent one SIMPLE private answer, held a broken-fan MODERATE draft and screened smoke/sparks directly to staff. Browser checks at 1440px and 390px covered tenant navigation, unresolved feedback, private MODERATE drafts, actual agent display, routing, comparison and revocation. Test doubles are explicitly labelled in browser tests; native results use the real configured model. Private raw reports stay in ignored artifacts. These are limited tests, not general accuracy or production readiness claims.
+
+The installed local app's real-model comparison `LEARN-6FD369679E` improved from 2/3 to 3/3 declared writing checks and from 74 to 25 words, using the same question and approved guide. Its approved style lesson was adopted automatically. A fresh ordinary demo request retrieved that lesson, recorded all three actual agent stages and published one SIMPLE private response. This demonstrates specific feedback retrieval and writing improvement; it does not establish general accuracy or that repairs were completed. Existing accounts and all 11 pre-update cases were verified unchanged during installation. Staff navigation now preserves the selected page in the URL and across refresh.

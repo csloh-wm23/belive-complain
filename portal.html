@@ -1,18 +1,18 @@
 <!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BeLive · Tenant Support Portal</title><link rel="stylesheet" href="/assets/style.css"></head>
-<body>
-<main class="tenant-portal">
-  <nav class="portal-nav" aria-label="Tenant portal"><a href="/belive" class="portal-back">← Back to BeLive</a><span>PRIVATE TENANT SUPPORT</span></nav>
-  <div class="page-heading"><div><span class="eyebrow">BELIVE COLIVING</span><h1>Let's take care of it.</h1><p>Report an issue or follow the conversation on an existing request.</p></div><button id="portalSignOut" hidden>Close my support records</button></div>
-  <section class="card" id="portalAccessCard"><h2>Your private support space</h2><form id="portalAccess"><label>Tenant access key provided by staff<input id="accessKey" type="password" required autocomplete="off"></label><button id="connect" type="submit" class="primary">Open my support records</button></form><p class="muted">Use the private key issued after staff verified your tenancy. This is different from a staff login. If you don't have a key yet, ask BeLive staff for one.</p></section>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BeLive · Get help</title><link rel="stylesheet" href="/assets/style.css"><link rel="stylesheet" href="/assets/fyp.css"></head>
+<body><main class="tenant-portal">
+  <nav class="portal-nav"><a href="/belive" class="portal-back">← BeLive home</a><span>TENANT SUPPORT</span></nav>
+  <div class="page-heading"><div><span class="eyebrow">YOUR HOME, YOUR SUPPORT</span><h1>How can we help?</h1><p>Send a request. Follow the reply. Keep everything in one place.</p></div><button id="portalSignOut" hidden>Sign out</button></div>
+  <section class="card" id="portalAccessCard">
+    <div id="demoEntry" hidden><span class="eyebrow">TRY THE UNIVERSITY PROTOTYPE</span><h2>No sign-up needed for the demo.</h2><p>Use a fictional tenant to try AI replies and staff handover.</p><button class="primary" id="tryDemoTenant">Try demo tenant</button><p class="muted">Demo records only. This does not open any real tenant's requests.</p></div>
+    <details id="privateAccess"><summary>Use my private tenant code</summary><form id="portalAccess"><label>Tenant code<input id="accessKey" type="password" required autocomplete="off" placeholder="Paste the private code provided by staff"></label><button id="connect" type="submit" class="primary">Open my requests</button></form><p class="muted">For normal tenant access, staff verifies your tenancy and provides this private code. Staff usernames and passwords are used on the staff dashboard.</p></details>
+  </section>
   <div id="portalNotice" role="status" aria-live="polite"></div>
   <section id="tenantArea" hidden>
-    <section class="card" id="report"><span class="eyebrow">TELL US WHAT'S HAPPENING</span><h2>Report an enquiry or complaint</h2><form id="tenantIntake"><label>Title<input name="title" required minlength="4" maxlength="120" placeholder="A short description of your concern"></label><label>Details<textarea name="description" required minlength="10" maxlength="6000" placeholder="What happened, when did it start, and what have you noticed?"></textarea></label><p class="muted">Do not include passwords, lock codes, payment card details or identity-document numbers. For immediate danger, use an appropriate emergency or building-safety channel.</p><button class="primary">Submit support request</button></form></section>
-    <section class="card" id="conversations"><div class="card-heading"><div><span class="eyebrow">KEEP THE CONVERSATION GOING</span><h2 id="conversationHeading" tabindex="-1">My conversations</h2></div><button id="refreshPortal">Refresh conversations</button></div><div id="tenantCases"></div></section>
+    <p id="tenantIdentity" class="muted"></p><p id="demoTenantBanner" class="verification" hidden>Demo tenant · All records in this account are fictional.</p>
+    <nav class="portal-tabs" aria-label="Your support"><button data-portal-view="report" id="newRequestTab">New request</button><button data-portal-view="conversations" id="myRequestsTab">My requests <span id="requestCount"></span></button></nav>
+    <section class="card" id="report"><span class="eyebrow">NEW REQUEST</span><h2>Tell us what's happening</h2><form id="tenantIntake"><label>Short title<input name="title" required minlength="4" maxlength="120" placeholder="e.g. Wi-Fi keeps disconnecting"></label><label>What happened?<textarea name="description" required minlength="10" maxlength="6000" placeholder="Describe the issue and anything you have already tried."></textarea></label><p class="muted">Leave out private codes, payment details and identity documents. For immediate danger, use the appropriate emergency or building-safety channel.</p><button class="primary">Submit support request</button></form></section>
+    <section class="card" id="conversations" hidden><div class="card-heading"><div><span class="eyebrow">YOUR REQUESTS</span><h2 id="conversationHeading" tabindex="-1">My requests</h2></div><button id="refreshPortal">Refresh conversations</button></div><div id="requestList"></div><button id="allRequests" class="text-button" hidden>← All my requests</button><div id="tenantCases"></div></section>
   </section>
-  <div class="portal-bottom"><a href="/belive">← Return to the BeLive website</a><p>Independent university prototype · Existing-tenant support</p></div>
-</main>
-<script src="/assets/portal.js" type="module"></script>
-</body>
-</html>
+  <div class="portal-bottom"><a href="/belive">← Return to BeLive home</a><p>Independent university prototype · Existing-tenant support</p></div>
+</main><script src="/assets/portal.js" type="module"></script></body></html>

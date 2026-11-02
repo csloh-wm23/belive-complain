@@ -19,7 +19,7 @@ class FakeAI:
     def analyse(self,context,examples):
         self.calls.append((context,examples))
         if self.fail:raise RuntimeError('provider timeout')
-        return dict(relevance='SUPPORT',category='WIFI',severity='LOW',summary='Tenant reports a Wi-Fi issue.',
+        return dict(report_type='COMPLAINT',relevance='SUPPORT',category='WIFI',severity='LOW',summary='Tenant reports a Wi-Fi issue.',
                     uncertainty=False,evidence=context['case']['description'],plan='Ask whether other devices are affected.',
                     response='Could you confirm whether other devices have the same issue?',requires_human=False,record_ids=[context['verified_records'][0]['id']] if context['verified_records'] else [])
 
@@ -140,7 +140,7 @@ class BackendTests(unittest.TestCase):
     def test_removed_category_is_not_accepted_from_ai(self):
         ai=SupportAI(Settings(),Path(self.tmp.name)/'memory')
         context={'case':{'description':'Please arrange a move.'},'verified_records':[]}
-        result=dict(relevance='SUPPORT',category='MOVE_IN_OUT',severity='LOW',summary='Request',uncertainty=False,evidence='arrange a move')
+        result=dict(report_type='COMPLAINT',relevance='SUPPORT',category='MOVE_IN_OUT',severity='LOW',summary='Request',uncertainty=False,evidence='arrange a move')
         with patch.object(ai,'generate',return_value=result):
             with self.assertRaisesRegex(ValueError,'AI_INVALID_VALUES'):ai.analyse(context,[])
     def test_portal_scope_and_key_not_in_cached_requests(self):
@@ -166,7 +166,7 @@ class BackendTests(unittest.TestCase):
     def test_ai_schema_and_exact_evidence_validation(self):
         ai=SupportAI(Settings(),Path(self.tmp.name)/'memory')
         context={'case':{'description':'The Wi-Fi is unstable.'},'verified_records':[]}
-        bad=dict(relevance='SUPPORT',category='WIFI',severity='LOW',summary='An issue',uncertainty=False,evidence='invented excerpt')
+        bad=dict(report_type='COMPLAINT',relevance='SUPPORT',category='WIFI',severity='LOW',summary='An issue',uncertainty=False,evidence='invented excerpt')
         with patch.object(ai,'generate',return_value=bad):
             with self.assertRaises(ValueError):ai.analyse(context,[])
         with patch.object(ai,'generate',return_value={**bad,'evidence':'The Wi-Fi','uncertainty':'false'}):

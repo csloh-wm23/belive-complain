@@ -1,0 +1,290 @@
+[
+  {
+    "category": "WIFI",
+    "language": "en",
+    "kind": "EXACT",
+    "question": "How do I report a Wi-Fi connection problem?",
+    "answer": "Use this conversation to tell support which devices are affected and when the Wi-Fi disconnects.",
+    "source": "DEMO ONLY: local prototype portal controls, reviewed for fictional testing."
+  },
+  {
+    "category": "WIFI",
+    "language": "ms",
+    "kind": "EXACT",
+    "question": "Bagaimana saya melaporkan masalah sambungan Wi-Fi?",
+    "answer": "Gunakan perbualan ini untuk memberitahu sokongan peranti yang terjejas dan bila sambungan Wi-Fi terputus.",
+    "source": "DEMO ONLY: local prototype portal controls, reviewed for fictional testing."
+  },
+  {
+    "category": "WIFI",
+    "language": "zh",
+    "kind": "EXACT",
+    "question": "如何报告 Wi-Fi 连接问题？",
+    "answer": "请在此对话中告诉客服哪些设备受到影响，以及 Wi-Fi 何时断线。",
+    "source": "DEMO ONLY: local prototype portal controls, reviewed for fictional testing."
+  },
+  {
+    "category": "OTHER",
+    "language": "en",
+    "kind": "EXACT",
+    "question": "How do I check replies to my support request?",
+    "answer": "Open My requests and enter your tenant access key. Find your request under My conversations and choose Refresh to load new replies.",
+    "source": "DEMO ONLY: local prototype portal controls, reviewed for fictional testing."
+  },
+  {
+    "category": "OTHER",
+    "language": "ms",
+    "kind": "EXACT",
+    "question": "Bagaimana saya menyemak balasan untuk permintaan sokongan saya?",
+    "answer": "Buka My requests dan masukkan kunci akses penyewa anda. Cari permintaan di My conversations dan pilih Refresh untuk memuatkan balasan baharu.",
+    "source": "DEMO ONLY: local prototype portal controls, reviewed for fictional testing."
+  },
+  {
+    "category": "OTHER",
+    "language": "zh",
+    "kind": "EXACT",
+    "question": "如何查看客服对我的请求的回复？",
+    "answer": "打开 My requests 并输入租户访问密钥。在 My conversations 中找到你的请求，然后点击 Refresh 查看新回复。",
+    "source": "DEMO ONLY: local prototype portal controls, reviewed for fictional testing."
+  },
+  {
+    "category": "OTHER",
+    "language": "en",
+    "kind": "EXACT",
+    "question": "How can I add more details to my support request?",
+    "answer": "Open your request in My conversations. Type the extra details in Reply or outcome details and choose Send reply to support. Keep the discussion in the same request.",
+    "source": "DEMO ONLY: local prototype portal controls, reviewed for fictional testing."
+  },
+  {
+    "category": "OTHER",
+    "language": "ms",
+    "kind": "EXACT",
+    "question": "Bagaimana saya menambah maklumat pada permintaan sokongan saya?",
+    "answer": "Buka permintaan anda di My conversations. Taip maklumat tambahan dalam Reply or outcome details dan pilih Send reply to support. Teruskan perbincangan dalam permintaan yang sama.",
+    "source": "DEMO ONLY: local prototype portal controls, reviewed for fictional testing."
+  },
+  {
+    "category": "OTHER",
+    "language": "zh",
+    "kind": "EXACT",
+    "question": "如何为我的客服请求补充资料？",
+    "answer": "在 My conversations 中打开你的请求。在 Reply or outcome details 中填写补充资料，然后点击 Send reply to support。请在同一个请求内继续对话。",
+    "source": "DEMO ONLY: local prototype portal controls, reviewed for fictional testing."
+  },
+  {
+    "category": "OTHER",
+    "language": "en",
+    "kind": "EXACT",
+    "question": "How can I confirm that an automatic answer helped me?",
+    "answer": "For an automatic informational answer, choose This answers my question. This records that the information helped. It does not confirm that physical work was completed.",
+    "source": "DEMO ONLY: local prototype portal controls, reviewed for fictional testing."
+  },
+  {
+    "category": "OTHER",
+    "language": "ms",
+    "kind": "EXACT",
+    "question": "Bagaimana saya mengesahkan jawapan automatik telah membantu saya?",
+    "answer": "Untuk jawapan maklumat automatik, pilih This answers my question. Ini merekodkan bahawa maklumat itu membantu. Ia tidak mengesahkan bahawa kerja fizikal telah selesai.",
+    "source": "DEMO ONLY: local prototype portal controls, reviewed for fictional testing."
+  },
+  {
+    "category": "OTHER",
+    "language": "zh",
+    "kind": "EXACT",
+    "question": "如何确认自动回复已解答我的问题？",
+    "answer": "收到自动提供的信息后，请点击 This answers my question。这会记录该信息已解答你的问题，但不会确认任何实际工作已经完成。",
+    "source": "DEMO ONLY: local prototype portal controls, reviewed for fictional testing."
+  },
+  {
+    "category": "WIFI",
+    "language": "en",
+    "kind": "GUIDANCE",
+    "question": "Wi-Fi router internet not working slow connection keeps dropping network not visible",
+    "answer": "Use the current conversation. For Wi-Fi, internet or router concerns, ask only for missing details: which devices are affected, whether the usual network name is visible, and when the issue started. Safe device-side checks are: confirm Wi-Fi is on and airplane mode is off; turn only the tenant device Wi-Fi off/on and reconnect to its usual network; compare another device on the same network. Give at most two relevant checks or questions per reply. Do not repeat details already provided or failed suggestions. Leave shared equipment unchanged. Do not diagnose an outage or hardware fault, or promise restoration. If the checks already failed or shared-equipment changes are needed, hand over to staff.",
+    "source": "DEMO ONLY: device-side checks from Microsoft Support and local support procedure. https://support.microsoft.com/en-us/windows/experience/connectivity-networking/fix-wi-fi-connection-issues-in-windows"
+  },
+  {
+    "category": "WIFI",
+    "language": "ms",
+    "kind": "GUIDANCE",
+    "question": "Penghala Wi-Fi internet tidak berfungsi perlahan terputus rangkaian tidak kelihatan",
+    "answer": "Use the current conversation. For Wi-Fi, internet or router concerns, ask only for missing details: which devices are affected, whether the usual network name is visible, and when the issue started. Safe device-side checks are: confirm Wi-Fi is on and airplane mode is off; turn only the tenant device Wi-Fi off/on and reconnect to its usual network; compare another device on the same network. Give at most two relevant checks or questions per reply. Do not repeat details already provided or failed suggestions. Leave shared equipment unchanged. Do not diagnose an outage or hardware fault, or promise restoration. If the checks already failed or shared-equipment changes are needed, hand over to staff.",
+    "source": "DEMO ONLY: device-side checks from Microsoft Support and local support procedure. https://support.microsoft.com/en-us/windows/experience/connectivity-networking/fix-wi-fi-connection-issues-in-windows"
+  },
+  {
+    "category": "WIFI",
+    "language": "zh",
+    "kind": "GUIDANCE",
+    "question": "路由器网络无法使用上不了网网速慢断线看不到无线网络",
+    "answer": "Use the current conversation. For Wi-Fi, internet or router concerns, ask only for missing details: which devices are affected, whether the usual network name is visible, and when the issue started. Safe device-side checks are: confirm Wi-Fi is on and airplane mode is off; turn only the tenant device Wi-Fi off/on and reconnect to its usual network; compare another device on the same network. Give at most two relevant checks or questions per reply. Do not repeat details already provided or failed suggestions. Leave shared equipment unchanged. Do not diagnose an outage or hardware fault, or promise restoration. If the checks already failed or shared-equipment changes are needed, hand over to staff.",
+    "source": "DEMO ONLY: device-side checks from Microsoft Support and local support procedure. https://support.microsoft.com/en-us/windows/experience/connectivity-networking/fix-wi-fi-connection-issues-in-windows"
+  },
+  {
+    "category": "MAINTENANCE",
+    "language": "en",
+    "kind": "GUIDANCE",
+    "question": "Air conditioner aircon fan door tap room maintenance concern not cooling noisy",
+    "answer": "For a general maintenance enquiry, clarify the affected fixture and area, observed symptoms and start time, only where missing. A photo description may help but must exclude people or private documents. Do not provide dismantling, wiring, plumbing or repair instructions. Actual repairs and physical work require staff. Do not claim a visit is scheduled or work completed. Danger or a request to perform repair work must go to staff.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "MAINTENANCE",
+    "language": "ms",
+    "kind": "GUIDANCE",
+    "question": "Penyaman udara kipas pintu paip bilik bermasalah tidak sejuk bising",
+    "answer": "For a general maintenance enquiry, clarify the affected fixture and area, observed symptoms and start time, only where missing. A photo description may help but must exclude people or private documents. Do not provide dismantling, wiring, plumbing or repair instructions. Actual repairs and physical work require staff. Do not claim a visit is scheduled or work completed. Danger or a request to perform repair work must go to staff.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "MAINTENANCE",
+    "language": "zh",
+    "kind": "GUIDANCE",
+    "question": "空调不冷风扇房门水龙头房间设备问题噪音",
+    "answer": "For a general maintenance enquiry, clarify the affected fixture and area, observed symptoms and start time, only where missing. A photo description may help but must exclude people or private documents. Do not provide dismantling, wiring, plumbing or repair instructions. Actual repairs and physical work require staff. Do not claim a visit is scheduled or work completed. Danger or a request to perform repair work must go to staff.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "CLEANING",
+    "language": "en",
+    "kind": "GUIDANCE",
+    "question": "Cleaning shared kitchen bathroom dirty rubbish stain smell hygiene concern",
+    "answer": "For a cleaning enquiry, ask which area is affected and what the tenant noticed, only where missing. Ask when it was noticed if that is useful. Do not give chemical-cleaning instructions, assign a cleaner or invent a cleaning schedule or fee. Cleaning work needs a person. If physical service or a staff decision is needed now, hand over. Never claim the area was cleaned.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "CLEANING",
+    "language": "ms",
+    "kind": "GUIDANCE",
+    "question": "Kebersihan dapur bilik air ruang bersama sampah kotor bau noda",
+    "answer": "For a cleaning enquiry, ask which area is affected and what the tenant noticed, only where missing. Ask when it was noticed if that is useful. Do not give chemical-cleaning instructions, assign a cleaner or invent a cleaning schedule or fee. Cleaning work needs a person. If physical service or a staff decision is needed now, hand over. Never claim the area was cleaned.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "CLEANING",
+    "language": "zh",
+    "kind": "GUIDANCE",
+    "question": "清洁卫生公共厨房浴室垃圾污渍异味很脏",
+    "answer": "For a cleaning enquiry, ask which area is affected and what the tenant noticed, only where missing. Ask when it was noticed if that is useful. Do not give chemical-cleaning instructions, assign a cleaner or invent a cleaning schedule or fee. Cleaning work needs a person. If physical service or a staff decision is needed now, hand over. Never claim the area was cleaned.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "ACCESS",
+    "language": "en",
+    "kind": "GUIDANCE",
+    "question": "Access entry door key lock room building entrance question",
+    "answer": "General access enquiries may clarify the entrance or area and observed symptom without asking for secrets or security credentials. A real lockout, access change or security decision requires authorised staff. Give no bypass steps and no building access secrets. Do not claim access was changed or someone dispatched.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "ACCESS",
+    "language": "ms",
+    "kind": "GUIDANCE",
+    "question": "Akses masuk pintu kunci bilik bangunan soalan",
+    "answer": "General access enquiries may clarify the entrance or area and observed symptom without asking for secrets or security credentials. A real lockout, access change or security decision requires authorised staff. Give no bypass steps and no building access secrets. Do not claim access was changed or someone dispatched.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "ACCESS",
+    "language": "zh",
+    "kind": "GUIDANCE",
+    "question": "门禁房门钥匙门锁房间大楼入口问题",
+    "answer": "General access enquiries may clarify the entrance or area and observed symptom without asking for secrets or security credentials. A real lockout, access change or security decision requires authorised staff. Give no bypass steps and no building access secrets. Do not claim access was changed or someone dispatched.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "UTILITIES",
+    "language": "en",
+    "kind": "GUIDANCE",
+    "question": "Water utilities supply interruption no water electricity power service concern",
+    "answer": "For a general utility enquiry, clarify the service and area affected, when it began and whether other areas appear affected, only if missing. Do not diagnose an outage or invent a restoration time. Give no electrical-panel, gas, plumbing or physical repair steps. Danger, leaks and requests for physical action go to staff.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "UTILITIES",
+    "language": "ms",
+    "kind": "GUIDANCE",
+    "question": "Bekalan air utiliti terputus tiada air elektrik gangguan",
+    "answer": "For a general utility enquiry, clarify the service and area affected, when it began and whether other areas appear affected, only if missing. Do not diagnose an outage or invent a restoration time. Give no electrical-panel, gas, plumbing or physical repair steps. Danger, leaks and requests for physical action go to staff.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "UTILITIES",
+    "language": "zh",
+    "kind": "GUIDANCE",
+    "question": "停水断水供水水电电力中断公共设施问题",
+    "answer": "For a general utility enquiry, clarify the service and area affected, when it began and whether other areas appear affected, only if missing. Do not diagnose an outage or invent a restoration time. Give no electrical-panel, gas, plumbing or physical repair steps. Danger, leaks and requests for physical action go to staff.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "BILLING",
+    "language": "en",
+    "kind": "GUIDANCE",
+    "question": "Billing charge fee rent payment enquiry explanation",
+    "answer": "Billing facts require verified records. For a general process question, clarify which period or charge description the tenant wants reviewed, without requesting sensitive financial information. Do not invent rates, calculate an account balance or approve financial actions. Actual charge, payment, refund or account decisions require staff.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "BILLING",
+    "language": "ms",
+    "kind": "GUIDANCE",
+    "question": "Bil caj yuran sewa bayaran pertanyaan penjelasan",
+    "answer": "Billing facts require verified records. For a general process question, clarify which period or charge description the tenant wants reviewed, without requesting sensitive financial information. Do not invent rates, calculate an account balance or approve financial actions. Actual charge, payment, refund or account decisions require staff.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "BILLING",
+    "language": "zh",
+    "kind": "GUIDANCE",
+    "question": "账单费用租金付款疑问说明",
+    "answer": "Billing facts require verified records. For a general process question, clarify which period or charge description the tenant wants reviewed, without requesting sensitive financial information. Do not invent rates, calculate an account balance or approve financial actions. Actual charge, payment, refund or account decisions require staff.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "HOUSE_RULES",
+    "language": "en",
+    "kind": "GUIDANCE",
+    "question": "Property house rules visitors pets quiet hours shared spaces question",
+    "answer": "For a general rules enquiry, ask which rule the tenant needs help understanding if unclear. Actual property rules must come from current verified property guidance or approved knowledge. This demo supplies no real visitor policy, pet permission, operating hours or penalties. If the specific rule is missing, ask staff to verify it. Never guess a rule.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "HOUSE_RULES",
+    "language": "ms",
+    "kind": "GUIDANCE",
+    "question": "Peraturan rumah pelawat haiwan waktu senyap ruang bersama soalan",
+    "answer": "For a general rules enquiry, ask which rule the tenant needs help understanding if unclear. Actual property rules must come from current verified property guidance or approved knowledge. This demo supplies no real visitor policy, pet permission, operating hours or penalties. If the specific rule is missing, ask staff to verify it. Never guess a rule.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "HOUSE_RULES",
+    "language": "zh",
+    "kind": "GUIDANCE",
+    "question": "房屋规定访客宠物安静时间公共空间规则问题",
+    "answer": "For a general rules enquiry, ask which rule the tenant needs help understanding if unclear. Actual property rules must come from current verified property guidance or approved knowledge. This demo supplies no real visitor policy, pet permission, operating hours or penalties. If the specific rule is missing, ask staff to verify it. Never guess a rule.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "OTHER",
+    "language": "en",
+    "kind": "GUIDANCE",
+    "question": "General tenant support help question something wrong can you hear read my message",
+    "answer": "Use the current conversation to understand a short or differently worded follow-up. You may acknowledge that a written message is visible. If the problem is unclear, ask a concise relevant question about what happened or the affected area, without repeating details already given. Ask at most two questions. Do not invent company facts, diagnoses or completed actions. If the needed information or decision cannot be safely supplied, hand over to staff.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "OTHER",
+    "language": "ms",
+    "kind": "GUIDANCE",
+    "question": "Bantuan penyewa soalan umum ada masalah boleh baca mesej saya",
+    "answer": "Use the current conversation to understand a short or differently worded follow-up. You may acknowledge that a written message is visible. If the problem is unclear, ask a concise relevant question about what happened or the affected area, without repeating details already given. Ask at most two questions. Do not invent company facts, diagnoses or completed actions. If the needed information or decision cannot be safely supplied, hand over to staff.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  },
+  {
+    "category": "OTHER",
+    "language": "zh",
+    "kind": "GUIDANCE",
+    "question": "租户客服帮助一般问题需要帮忙你能看到我的消息吗",
+    "answer": "Use the current conversation to understand a short or differently worded follow-up. You may acknowledge that a written message is visible. If the problem is unclear, ask a concise relevant question about what happened or the affected area, without repeating details already given. Ask at most two questions. Do not invent company facts, diagnoses or completed actions. If the needed information or decision cannot be safely supplied, hand over to staff.",
+    "source": "DEMO ONLY: reviewed local tenant-support procedure; no actual BeLive policies or account facts."
+  }
+]

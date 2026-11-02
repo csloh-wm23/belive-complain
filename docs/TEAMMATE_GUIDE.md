@@ -1,3 +1,7 @@
+# Updated walkthrough
+
+Use [the current simple guide](FYP_DEMO_GUIDE.md) for the new menu, demo sign-in, SIMPLE/MODERATE/HIGH handling and learning comparison. The older walkthrough below describes previous menu names.
+
 # BeLive Tenant Support: teammate quick guide
 
 **For the local v0.3.0 prototype. Existing-tenant enquiries and complaints only.**

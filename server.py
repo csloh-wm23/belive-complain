@@ -23,6 +23,9 @@ STATIC={'/':'index.html','/index.html':'index.html','/assets/app.js':'assets/app
         '/belive':'tenant-site.html','/assets/tenant-site.css':'assets/tenant-site.css',
         '/assets/tenant-home.svg':'assets/tenant-home.svg','/assets/tenant-site.js':'assets/tenant-site.js'}
 
+STATIC['/assets/learning-ui.js']='assets/learning-ui.js'
+STATIC['/assets/fyp.css']='assets/fyp.css'
+
 class Tasks:
     def __init__(self,service):self.service=service;self.running=set();self.lock=threading.Lock();self.stop=threading.Event()
     def start(self,key,fn):
@@ -38,8 +41,12 @@ class Tasks:
         threading.Thread(target=run,daemon=True).start();return True
     def analyse(self,c):
         with self.service.store.connect() as db:c=self.service.store.get(db,'case',c['id'])
-        if c['status'] in {'AI_PENDING','AWAITING_CONTACT'} and c['severity'] not in {'HIGH','CRITICAL'} and not c.get('analysis'):
+        pending=c['status'] in {'AI_PENDING','AWAITING_CONTACT'} or (c['status']=='HUMAN_REVIEW' and c.get('ai_assistance_pending'))
+        if pending and c['severity'] not in {'HIGH','CRITICAL'} and not c.get('analysis'):
             self.start('ai-'+c['id'],lambda:self.service.analyse(c['id']))
+    def learning(self,run_id):
+        from belive.learning import execute
+        return self.start('learning-'+run_id,lambda:execute(self.service,run_id))
     def scan(self,source_id):
         def run():
             ids=scan(self.service,source_id)
@@ -59,7 +66,7 @@ class Tasks:
 
 def make_handler(service,tasks=None):
     tasks=tasks or Tasks(service);access=Access(service);csrf=secrets.token_urlsafe(32)
-    support_routes={'intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
+    support_routes={'lesson_revoke','learning_start','learning_improve','intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
     class Handler(SimpleHTTPRequestHandler):
         extensions_map={**SimpleHTTPRequestHandler.extensions_map,'.js':'text/javascript'}
         def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT),**kwargs)
@@ -82,6 +89,10 @@ def make_handler(service,tasks=None):
             if not self.valid_host():return self.json(403,{'error':'Local host required'})
             path=urlsplit(self.path).path
             if path=='/api/auth':return self.json(200,{'setup_required':not access.users(),'user':access.current(self.session())})
+            if path=='/api/demo':
+                from belive.demo import info
+                with service.store.connect() as db:result=info(service,db)
+                return self.json(200,result)
             if path=='/api/shared-memory':
                 clients=json.loads(os.getenv('BELIVE_MEMORY_CLIENTS','{}'))
                 if not any(isinstance(v,str) and v and hmac.compare_digest(self.token(),v) for v in clients.values()):return self.json(401,{'error':'Scoped client token required'})
@@ -115,7 +126,7 @@ def make_handler(service,tasks=None):
             if origin and origin not in {f'http://127.0.0.1:{self.server.server_port}',f'http://localhost:{self.server.server_port}'}:return self.json(403,{'error':'Foreign origin rejected'})
             path=urlsplit(self.path).path;route=path.removeprefix('/api/')
             website=path=='/api/website/complaints'
-            portal=website or path in {'/api/portal/intake','/api/portal/update','/api/portal/feedback'}
+            portal=website or path in {'/api/demo/session','/api/portal/intake','/api/portal/update','/api/portal/feedback'}
             if not portal and not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),csrf):return self.json(403,{'error':'Invalid operator token'})
             try:
                 size=int(self.headers.get('Content-Length','0'))
@@ -123,6 +134,10 @@ def make_handler(service,tasks=None):
                 p=json.loads(self.rfile.read(size));key=self.headers.get('Idempotency-Key','')
                 if not isinstance(p,dict):raise ValueError('JSON object required')
                 if portal:
+                    if path=='/api/demo/session':
+                        if not isinstance(key,str) or not 8<=len(key)<=150:raise ValueError('A request idempotency key is required')
+                        from belive.demo import session
+                        return self.json(200,session(service))
                     if website:
                         result=service.portal_submit(self.token(),p,key,entrypoint='TENANT_WEBSITE');tasks.analyse(result)
                         return self.json(200,{'id':result['id'],'status':result['status'],'received_at':result['created_at']})
@@ -130,7 +145,9 @@ def make_handler(service,tasks=None):
                         result=service.portal_submit(self.token(),p,key);tasks.analyse(result)
                         return self.json(200,{'id':result['id'],'status':result['status']})
                     if path=='/api/portal/feedback':return self.json(200,service.portal_feedback(self.token(),p,key))
-                    return self.json(200,service.portal_update(self.token(),p,key))
+                    result=service.portal_update(self.token(),p,key)
+                    tasks.analyse({'id':p['id']})
+                    return self.json(200,result)
                 if route in {'setup','login'}:
                     if route=='setup':access.create(p,bootstrap=True)
                     session,user=access.login(p);return self.json(200,{'user':user},cookie=session)
@@ -142,6 +159,9 @@ def make_handler(service,tasks=None):
                 if route=='deactivate-user':return self.json(200,access.deactivate(p.get('id'),user['id']))
                 if route=='tenant_feedback':raise ValueError('Tenant feedback requires tenant portal access')
                 p={**p,'_actor':user['id']}
+                if route in {'learning_start','learning_improve'}:
+                    result=service.command(route,p,key);tasks.learning(result['id'])
+                    return self.json(200,result)
                 if route=='case_action' and p.get('action')=='acknowledge':p['owner']=user['name']
                 if route=='analyse':
                     with service.store.connect() as db:c=service.store.get(db,'case',p.get('id'))

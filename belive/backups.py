@@ -58,9 +58,24 @@ def operation(service,action,p,key):
                     if item['status']!='DELIVERED' and item['status']!='REJECTED':
                         item.update(status='RECOVERY_HOLD',outcome='Recovered snapshot: reconcile prior delivery before preparing a new notification.')
                         recovered.put(db,'outbox',item)
+                for item in recovered.all(db,'automation'):
+                    item.update(enabled=False,version=item.get('version',0)+1)
+                    recovered.put(db,'automation',item)
+                for item in recovered.all(db,'demo'):
+                    item['enabled']=False;recovered.put(db,'demo',item)
+                for item in recovered.all(db,'learned_style'):
+                    item['active']=False;recovered.put(db,'learned_style',item)
+                for item in recovered.all(db,'learning_run'):
+                    if item['status'] in {'BASELINE_QUEUED','BASELINE_RUNNING','IMPROVED_QUEUED','IMPROVED_RUNNING'}:
+                        item.update(status='INTERRUPTED',error='Recovered comparison requires a fresh run')
+                        recovered.put(db,'learning_run',item)
+                for item in recovered.all(db,'answer'):
+                    recovered.version(db,'answer',item)
+                    item.update(active=False,verified=False,version=item.get('version',1)+1)
+                    recovered.version(db,'answer',item);recovered.put(db,'answer',item)
                 for case in recovered.all(db,'case'):
-                    case.update(ack_due=None,followup_due=None,action_due=None)
-                    if case['status'] not in {'CLOSED','SKIPPED'}:
+                    case.update(ack_due=None,followup_due=None,action_due=None,ai_assistance_pending=False)
+                    if case['status'] not in {'CLOSED','SKIPPED','ANSWERED'}:
                         case.update(status='HUMAN_REVIEW',handoff=True,review_reason='Recovered backup: staff review required before resuming',revision=case['revision']+1)
                     recovered.put(db,'case',case)
                 for record in recovered.all(db,'record'):

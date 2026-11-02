@@ -17,7 +17,7 @@ class AIValidationTests(unittest.TestCase):
         self.context={'case':{'title':'my pipe broke','description':'no one comes and fix it'},
                       'verified_records':[],'tenant_verified':True,
                       'conversation':[{'text':'A conversation-only excerpt.'}]}
-        self.triage=dict(relevance='SUPPORT',category='MAINTENANCE',severity='MEDIUM',
+        self.triage=dict(report_type='COMPLAINT',relevance='SUPPORT',category='MAINTENANCE',severity='MEDIUM',
                          summary='Tenant reports a broken pipe and an unresolved request.',
                          uncertainty=False,evidence='my pipe broke')
         self.plan=dict(plan='Staff should assess the reported pipe problem.',

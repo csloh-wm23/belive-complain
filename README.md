@@ -2,11 +2,19 @@
 
 An independent prototype for **BeLive Ventures / BeLive CoLiving, Malaysia**, covering **existing-tenant enquiries and complaints only**. It reuses the earlier project's workflow and UI concepts in a separate application, database and memory store. Move-in/out arrangements, inspections, random PIC assignment, owner support, marketing and sales are outside the current scope.
 
-This version has a Python/SQLite backend, native Hermes integration, tenant-scoped portal access and configurable connectors. It starts with an empty database. Fictional records are confined to tests and the separate opt-in evaluation set; fake AI exists only in automated tests.
+This version has a Python/SQLite backend, native Hermes integration, tenant-scoped portal access and configurable connectors. It starts with an empty database. Fictional records are confined to tests, the opt-in evaluation set and an explicitly enabled demo tenant. Normal AI output always uses the configured real model; test doubles exist only in automated tests.
 
 ## New here?
 
-Start with the [short teammate guide](docs/TEAMMATE_GUIDE.md) or [download the two-page PDF](output/pdf/BeLive-Quick-Guide.pdf). They explain the first login, all eight pages, the Resource field and one practice case.
+Follow the [simple test guide](docs/FYP_DEMO_GUIDE.md). It covers the tenant demo, staff handling, routing and the real-model before/after learning screen. Older PDF walkthroughs may show the previous menu names.
+
+## Two different-purpose agents
+
+The **Complaint Analysis Agent** identifies complaints versus questions, the topic, SIMPLE/MODERATE/HIGH level, uncertainty and source evidence. The **Support Response Agent** reads current verified property knowledge and reviewed style memory, then prepares assistance. A separate **Safety Review Agent** checks adapted guidance before automatic publication. These are actual separate native Hermes calls using the configured model, not eight separate servers.
+
+Only **SIMPLE** private replies can send automatically. **MODERATE** gets AI assistance first but remains with staff for review and sending. **HIGH** goes directly to staff; immediate danger is screened before routine AI. Missing knowledge, failed checks and uncertainty go to staff.
+
+Admins maintain knowledge and configure BeLive's staff destinations under **Setup & knowledge**. **Learning** compares real replies before/after approved feedback and automatically adopts a measured improvement for future fictional demo-property replies. See [knowledge and automation](docs/AI_KNOWLEDGE_AND_AUTOMATION.md).
 
 ## Run locally
 
@@ -18,22 +26,15 @@ python server.py
 
 Open [the local dashboard](http://127.0.0.1:8877). The launcher starts the backend automatically in its own Python window. Keep that window open for scheduled checks; press Ctrl+C once to stop. The batch launcher exits after opening Python, so it does not show an additional “Terminate batch job” prompt. The server listens only on `127.0.0.1`. No pip packages are needed for the dashboard or deterministic workflows. AI requires a separately installed native Hermes runtime and a configured model.
 
-On the first launch for a database, create your own administrator account in the dashboard. There is no default password. Admins can create Support accounts under **Tenant & property records**. Operator accounts belong to that database, so selecting a new empty database starts a new setup.
+On the first launch for a database, create your own administrator account in the dashboard. There is no default password. Admins can create Support accounts under **Setup & knowledge**. Operator accounts belong to that database, so selecting a new empty database starts a new setup.
 
 ## Tenant website and complaint entry
 
-Open the [BeLive tenant website](http://127.0.0.1:8877/belive). **Make a complaint** opens a form on that website. The tenant enters their private access key, title and details; the form submits to the real support backend and returns a saved case reference. Support-topic links prefill the title. No tenant records or access keys are stored in the browser.
+Open [the tenant website](http://127.0.0.1:8877/belive). **Make a complaint** opens the support portal. **Try demo tenant** signs into an explicitly fictional account without copying a key after an admin prepares the demo. Normal tenants use their private staff-issued code.
 
-The receipt provides **Track this request**, which opens the matching private tenant conversation after key verification, and **Staff: open this case in dashboard**, which opens that exact case after operator sign-in. New website intakes are marked **BeLive website** in **Support cases**. They use the same SQLite database, risk checks, AI assessment and reviewed-response workflow as other support cases. Only explicitly published staff responses reach the tenant conversation.
+The portal has **New request** and **My requests** tabs, a compact request list and one selected conversation. The backend saves real case references in SQLite, enforces tenant scope, screens risk and launches the support agents. SIMPLE automatic replies are labelled AI SUPPORT. MODERATE drafts remain private to staff. Still unresolved saves the feedback and hands the case to staff. No key is included in URLs or browser storage.
 
-To demonstrate the connection:
-
-1. In a practice database, staff records a fictional DEMO property and tenant under **Tenant & property records**, then issues that tenant a portal access key.
-2. Open the tenant website, select **Make a complaint**, enter that key and a fictional issue, then submit.
-3. Note the returned case reference. Select **Staff: open this case in dashboard** and sign in; the same case opens automatically.
-4. Review and publish a response in the case, then use **Track this request** on the receipt to read it as the tenant. Tenant replies appear back in that staff case.
-
-A retry after an uncertain network response reuses the same request ID rather than creating a second complaint. **My requests** and **Back to BeLive** continue to connect the website and private portal. The existing dashboard remains at `/`; the website is a separate customer-facing page in this local prototype, not a change to BeLive's official site or an Internet-hosted service.
+Staff sees the same case in **Cases**, with actual agent activity, complaint level, saved knowledge references and a reviewed response editor. More advanced outcome actions are under a collapsible section. The local website is separate from BeLive's official site; it is not publicly hosted.
 
 ## Tenant-support scope
 
@@ -47,7 +48,7 @@ A retry after an uncertain network response reuses the same request ID rather th
 - Correct, expire or deactivate verified support context with immutable version history. AI citations show the exact record version used; changes during generation discard the result.
 - Review notifications before sending through a configured gateway. Store uncertain delivery as `UNKNOWN` without automatic retry.
 - Review response wording after closure. Latest rejection/reopening revokes future reuse. Examples are style guidance, never verified facts or model retraining.
-- Browse and search saved property, tenant and support-context records in **Database & records**; view activity and case-category counts.
+- Browse and search saved property, tenant and support-context records in **More tools → Saved records**; view activity and case-category counts.
 - See the active database file and choose another BeLive database for the next launch.
 - Create verified SQLite backups and recover into a separate workspace without overwriting the active database.
 - Run an actual AI connection probe and use a separate English/Malay/Chinese evaluation set.
@@ -55,18 +56,18 @@ A retry after an uncertain network response reuses the same request ID rather th
 ## First walkthrough
 
 1. Create/sign in to the database's admin account. Add a Support account if another teammate will handle cases.
-2. Under **Tenant & property records**, save verified support guidance and verify a tenant/unit reference against an authorised record. Add relevant support context.
+2. Under **Setup & knowledge**, save verified support guidance and verify a tenant/unit reference against an authorised record. Add relevant support context.
 3. Create a case. Without model configuration it explicitly hands over to staff. With configuration it proposes structured AI assistance; the normal workflow never substitutes a fictional response.
 4. Acknowledge the case under the signed-in operator. Review the urgency/category, save the next action/deadline and add any private notes.
-5. Review and save the response draft, check the confirmation box, then select **Publish saved response to tenant portal**. This creates an actual message in the local portal. External gateway delivery remains a separate reviewed action.
+5. Review and save the response draft, check the confirmation box, then select **Send saved reply to tenant**. This creates an actual message in the local portal. External gateway delivery remains a separate reviewed action.
 6. As admin, issue a tenant access key after identity verification and open [the local portal](http://127.0.0.1:8877/portal). The tenant sees published messages and can reply. **Still unresolved** routes/reopens the case to staff; **Issue resolved** records feedback for staff verification.
 7. Complete work orders, follow up, verify the outcome and close. Close only with evidence and no open work orders. Review reusable wording after closure; latest rejection/reopening revokes reuse.
-8. Open **Database & records** to inspect data and record versions. Correct or deactivate outdated support context. Create a verified backup. Recovery opens a new paused copy on the next launch; current records stay in place.
+8. Open **More tools → Saved records** to inspect data and record versions. Correct or deactivate outdated support context. Create a verified backup. Recovery opens a new paused copy on the next launch; current records stay in place.
 9. Saving an authorised public source starts its checks every 15 minutes while the app is open. **Pause checks** / **Resume checks** affect only that source.
 
 ## Real AI connection and evaluation
 
-Configure this project's `.env`, restart and use **Test AI connection** under **Tenant & property records**. The test sends a neutral prompt with no tenant records and requires a genuine schema-valid provider response. Provider charges may apply. Its saved outcome distinguishes `RUNNING`, `PASSED` and `FAILED`; configuration presence alone is not a successful check.
+Configure this project's `.env`, restart and use **Test AI connection** under **Setup & knowledge**. The test sends a neutral prompt with no tenant records and requires a genuine schema-valid provider response. Provider charges may apply. Its saved outcome distinguishes `RUNNING`, `PASSED` and `FAILED`; configuration presence alone is not a successful check.
 
 The separate evaluation set contains 24 fictional cases: eight each in English, Malay and Chinese. Inspect it without calling a provider:
 
@@ -109,7 +110,7 @@ Admin **Create verified backup** uses SQLite's online backup API and an integrit
 
 ## Data
 
-State lives in SQLite, initially `data/belive.db`; sources and audit rows have append-only SQLite guards. **Database & records** shows the active file, saved property/tenant/support records, and any file selected for the next launch. A new filename starts an empty workspace; an existing BeLive database reopens its saved records. Selection does not move, copy or delete records. The selected path is an application preference in ignored `data/workspace.json`, which stores no tenant records. The optional `--database` argument overrides that preference. Native memory lives in `hermes_memory/support` beside the active database. Database access by the machine owner is outside these application guards. Email/long-number masking is basic; staff must remove names, addresses, access codes and other sensitive material from reusable examples before sharing.
+State lives in SQLite, initially `data/belive.db`; sources and audit rows have append-only SQLite guards. **More tools → Saved records** shows the active file, saved property/tenant/support records, and any file selected for the next launch. A new filename starts an empty workspace; an existing BeLive database reopens its saved records. Selection does not move, copy or delete records. The selected path is an application preference in ignored `data/workspace.json`, which stores no tenant records. The optional `--database` argument overrides that preference. Native memory lives in `hermes_memory/support` beside the active database. Database access by the machine owner is outside these application guards. Email/long-number masking is basic; staff must remove names, addresses, access codes and other sensitive material from reusable examples before sharing.
 
 Move-in/out operations have been removed from the interface, portal, AI categories and service commands. Old arrangement data is preserved on disk but is excluded from operational snapshots; legacy move notices cannot be approved or delivered. Legacy scheduling rules must be replaced with verified support guidance before AI uses that property context. Restart any running server after updating.
 
@@ -122,7 +123,7 @@ python -m unittest discover -s tests -p "test_*.py" -v
 # Equivalent: npm test
 ```
 
-There are 35 backend/HTTP/native-memory/database checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
+There are 62 backend/HTTP/native-memory/database/automation checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
 
 ```sh
 python -m pip install -r requirements-dev.txt

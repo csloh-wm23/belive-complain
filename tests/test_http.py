@@ -57,6 +57,29 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request('/api/portal/intake',dict(title='Website complaint',description='A fictional issue for the public website test.'),{'Cookie':'','Idempotency-Key':secrets.token_hex(16)})[0],400)
         with self.s.store.connect() as db:self.assertEqual(self.s.store.all(db,'case'),[])
 
+    def test_demo_session_requires_explicit_fictional_setup_and_preserves_isolation(self):
+        headers={'Cookie':'','Idempotency-Key':secrets.token_hex(16)}
+        self.assertFalse(json.loads(self.request('/api/demo',headers={'Cookie':''})[1])['available'])
+        self.assertEqual(self.request('/api/demo/session',{},headers)[0],400)
+        self.s.command('demo_prepare',{'confirmed':True},secrets.token_hex(12))
+        self.assertTrue(json.loads(self.request('/api/demo',headers={'Cookie':''})[1])['available'])
+        code,body=self.request('/api/demo/session',{'tenant_id':'NOT-THE-DEMO'},headers)
+        self.assertEqual(code,200);token=json.loads(body)['token']
+        code,body=self.request('/api/portal',headers={'Cookie':'','Authorization':'Bearer '+token})
+        self.assertEqual(code,200);self.assertEqual(json.loads(body)['tenant_id'],'DEMO-AUTOMATION-TEST')
+        self.assertTrue(json.loads(body)['demo_only'])
+        self.assertEqual(self.request('/api/demo/session',{},dict(headers,Origin='https://foreign.example'))[0],403)
+        self.s.command('demo_settings',{'enabled':False},secrets.token_hex(12))
+        self.assertEqual(self.request('/api/portal',headers={'Cookie':'','Authorization':'Bearer '+token})[0],401)
+
+    def test_demo_setup_is_admin_only(self):
+        auth={'X-CSRF-Token':self.csrf,'Idempotency-Key':secrets.token_hex(16)}
+        self.request('/api/users',dict(username='qa-support',name='QA Support',password='Support-test-password-123',role='SUPPORT'),auth)
+        self.request('/api/logout',{},auth)
+        self.request('/api/login',dict(username='qa-support',password='Support-test-password-123'),auth)
+        for route in ['demo_prepare','demo_settings','routing_settings']:
+            self.assertEqual(self.request('/api/'+route,{'confirmed':True},auth)[0],403)
+
     def test_authentication_roles_and_session_revocation(self):
         auth={'X-CSRF-Token':self.csrf,'Idempotency-Key':secrets.token_hex(16)}
         self.assertEqual(self.request('/api/status',headers={**auth,'Cookie':''})[0],401)
@@ -65,7 +88,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(code,200);admin_cookie=self.cookie
         self.assertEqual(self.request('/api/logout',{},auth)[0],200)
         code,_=self.request('/api/login',dict(username='qa-support',password='Support-test-password-123'),auth);self.assertEqual(code,200)
-        for route in ['backup','restore','users','source','record_update','select-database','ai-check']:
+        for route in ['backup','restore','users','source','record_update','select-database','ai-check','answer','answer_deactivate','automation_settings']:
             self.assertEqual(self.request('/api/'+route,{},auth)[0],403,route)
         self.assertEqual(self.request('/api/users',headers=auth)[0],403)
         with self.s.store.connect() as db:
