@@ -1,13 +1,25 @@
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const csrf=document.querySelector('meta[name="csrf-token"]').content;
+let csrf=document.querySelector('meta[name="csrf-token"]').content;
 let data=null,selected=null,lessonRun=null;
 const attempts=new Map();
 async function send(route,payload){
     const signature=JSON.stringify(payload);let attempt=attempts.get(route);
     if(!attempt||attempt.signature!==signature){attempt={signature,id:crypto.randomUUID()};attempts.set(route,attempt);}
-    const response=await fetch('/api/'+route,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf,'Idempotency-Key':attempt.id},body:signature});
-    const result=await response.json();if(!response.ok)throw Error(result.error||'The action could not be completed');
+    const options={method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf,'Idempotency-Key':attempt.id},body:signature};
+    let response=await fetch('/api/'+route,options);
+    let result=await response.json();
+    if(response.status===403&&result.code==='STALE_CSRF'){
+        const authResponse=await fetch('/api/auth');
+        const auth=await authResponse.json();
+        if(authResponse.ok&&auth.csrf_token){
+            csrf=auth.csrf_token;
+            options.headers['X-CSRF-Token']=csrf;
+            response=await fetch('/api/'+route,options);
+            result=await response.json();
+        }
+    }
+    if(!response.ok)throw Error(result.error||'The action could not be completed');
     attempts.delete(route);window.dispatchEvent(new Event('belive:refresh'));return result;
 }
 function card(title,value){
@@ -79,5 +91,8 @@ document.getElementById('routingForm').onsubmit=async event=>{
  event.preventDefault();const form=event.target;const departments={};
  for(const input of form.querySelectorAll('#routingFields input'))departments[input.name]=input.value.trim();
  const status=document.getElementById('routingStatus');
- try{const response=await fetch('/api/routing_settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({departments,confirmed:form.elements.confirmed.checked})});const result=await response.json();if(!response.ok)throw Error(result.error);status.textContent='Routing saved. Future staff handovers use these destinations.';window.dispatchEvent(new Event('belive:refresh'));}catch(error){status.textContent=error.message;}
+ try{
+  await send('routing_settings',{departments,confirmed:form.elements.confirmed.checked});
+  status.textContent='Routing saved. Future staff handovers use these destinations.';
+ }catch(error){status.textContent=error.message;}
 };

@@ -25,6 +25,9 @@ STATIC={'/':'index.html','/index.html':'index.html','/assets/app.js':'assets/app
 
 STATIC['/assets/learning-ui.js']='assets/learning-ui.js'
 STATIC['/assets/fyp.css']='assets/fyp.css'
+STATIC['/assets/workspace-v2.css']='assets/workspace-v2.css'
+STATIC['/assets/workspace-v2.js']='assets/workspace-v2.js'
+STATIC['/assets/property-directory.json']='assets/property-directory.json'
 
 class Tasks:
     def __init__(self,service):self.service=service;self.running=set();self.lock=threading.Lock();self.stop=threading.Event()
@@ -88,7 +91,7 @@ def make_handler(service,tasks=None):
         def do_GET(self):
             if not self.valid_host():return self.json(403,{'error':'Local host required'})
             path=urlsplit(self.path).path
-            if path=='/api/auth':return self.json(200,{'setup_required':not access.users(),'user':access.current(self.session())})
+            if path=='/api/auth':return self.json(200,{'setup_required':not access.users(),'user':access.current(self.session()),'csrf_token':csrf})
             if path=='/api/demo':
                 from belive.demo import info
                 with service.store.connect() as db:result=info(service,db)
@@ -100,9 +103,9 @@ def make_handler(service,tasks=None):
                 return self.json(200,{'examples':[{'id':x['id'],'text':x['text'],'use':'style-only'} for x in items]})
             if path=='/api/portal':
                 try:return self.json(200,service.portal(self.token()))
-                except ValueError:return self.json(401,{'error':'Invalid or expired tenant access key'})
+                except ValueError:return self.json(401,{'error':'Invalid or expired complaint code'})
             if path.startswith('/api/'):
-                if not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),csrf):return self.json(403,{'error':'Open the operator dashboard to access this endpoint'})
+                if not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),csrf):return self.json(403,{'error':'Open the operator dashboard to access this endpoint','code':'STALE_CSRF'})
                 user=access.current(self.session())
                 if not user:return self.json(401,{'error':'Sign in to the operator dashboard'})
                 if path=='/api/users':
@@ -126,21 +129,24 @@ def make_handler(service,tasks=None):
             if origin and origin not in {f'http://127.0.0.1:{self.server.server_port}',f'http://localhost:{self.server.server_port}'}:return self.json(403,{'error':'Foreign origin rejected'})
             path=urlsplit(self.path).path;route=path.removeprefix('/api/')
             website=path=='/api/website/complaints'
-            portal=website or path in {'/api/demo/session','/api/portal/intake','/api/portal/update','/api/portal/feedback'}
-            if not portal and not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),csrf):return self.json(403,{'error':'Invalid operator token'})
+            portal=website or path in {'/api/demo/session','/api/portal/intake','/api/portal/update','/api/portal/feedback','/api/website/complaint-recovery'}
+            if not portal and not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),csrf):return self.json(403,{'error':'Invalid operator token','code':'STALE_CSRF'})
             try:
                 size=int(self.headers.get('Content-Length','0'))
                 if not 1<=size<=64000:raise ValueError('Request size must be 1–64,000 bytes')
                 p=json.loads(self.rfile.read(size));key=self.headers.get('Idempotency-Key','')
                 if not isinstance(p,dict):raise ValueError('JSON object required')
                 if portal:
+                    if path=='/api/website/complaint-recovery':
+                        service.recover_complaint(p)
+                        return self.json(200,{'accepted':True})
                     if path=='/api/demo/session':
                         if not isinstance(key,str) or not 8<=len(key)<=150:raise ValueError('A request idempotency key is required')
                         from belive.demo import session
                         return self.json(200,session(service))
                     if website:
-                        result=service.portal_submit(self.token(),p,key,entrypoint='TENANT_WEBSITE');tasks.analyse(result)
-                        return self.json(200,{'id':result['id'],'status':result['status'],'received_at':result['created_at']})
+                        result=service.website_submit(p,key);tasks.analyse(result)
+                        return self.json(200,result)
                     if path=='/api/portal/intake':
                         result=service.portal_submit(self.token(),p,key);tasks.analyse(result)
                         return self.json(200,{'id':result['id'],'status':result['status']})
@@ -169,6 +175,12 @@ def make_handler(service,tasks=None):
                     return self.json(202,{'started':tasks.start('ai-'+c['id'],lambda:service.analyse(c['id']))})
                 if route=='ai-check':return self.json(202,{'started':tasks.start('ai-connection',service.check_ai)})
                 if route=='scan':return self.json(202,{'started':tasks.scan(p.get('id'))})
+                if route=='scan-all':
+                    with service.store.connect() as db:
+                        sources=[source for source in service.store.all(db,'source') if source['enabled']]
+                    if not sources:raise ValueError('Add and enable at least one authorised platform source first')
+                    started=sum(tasks.scan(source['id']) for source in sources)
+                    return self.json(202,{'started':started,'already_running':len(sources)-started})
                 if route=='deliver':return self.json(200,deliver(service,p.get('id')))
                 if route in {'backup','restore'}:return self.json(200,backup_operation(service,route,p,key))
                 if route=='memory-sync':

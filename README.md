@@ -8,13 +8,18 @@ This version has a Python/SQLite backend, native Hermes integration, tenant-scop
 
 Follow the [simple test guide](docs/FYP_DEMO_GUIDE.md). It covers the tenant demo, staff handling, routing and the real-model before/after learning screen. Older PDF walkthroughs may show the previous menu names.
 
-## Two different-purpose agents
+## One system, two entry sides
 
-The **Complaint Analysis Agent** identifies complaints versus questions, the topic, SIMPLE/MODERATE/HIGH level, uncertainty and source evidence. The **Support Response Agent** reads current verified property knowledge and reviewed style memory, then prepares assistance. A separate **Safety Review Agent** checks adapted guidance before automatic publication. These are actual separate native Hermes calls using the configured model, not eight separate servers.
+The simplified workspace has two ways for a complaint to enter the same queue:
+
+- **Proactive discovery:** scheduled checks of explicitly authorised public sources can identify likely complaints and escalate urgent risks.
+- **Reactive support:** tenants or staff submit a private question or complaint through the local support flow.
+
+Four logical Hermes roles describe the end-to-end workflow: **Complaint Manager**, **External Monitoring**, **Investigation & Resolution**, and **Follow-up & Escalation**. They share verified knowledge, case history and a controlled self-learning loop; they are not four separate servers. Native model calls still record their actual analysis, response and conditional safety-review stages, while monitoring and follow-up use bounded scheduled tools and deterministic safety rules.
 
 Only **SIMPLE** private replies can send automatically. **MODERATE** gets AI assistance first but remains with staff for review and sending. **HIGH** goes directly to staff; immediate danger is screened before routine AI. Missing knowledge, failed checks and uncertainty go to staff.
 
-Admins maintain knowledge and configure BeLive's staff destinations under **Setup & knowledge**. **Learning** compares real replies before/after approved feedback and automatically adopts a measured improvement for future fictional demo-property replies. See [knowledge and automation](docs/AI_KNOWLEDGE_AND_AUTOMATION.md).
+Daily work is organised under **Command center**, **Complaints**, and **Self-learning**. Less frequent AI, knowledge, monitoring, account and database controls are grouped under **System setup**. Self-learning accepts only reviewed outcomes from verified closed cases; rejection or reopening revokes reuse. The optional Learning Lab compares real replies before and after an approved writing lesson. See [knowledge and automation](docs/AI_KNOWLEDGE_AND_AUTOMATION.md).
 
 ## Run locally
 
@@ -30,7 +35,7 @@ On the first launch for a database, create your own administrator account in the
 
 ## Tenant website and complaint entry
 
-Open [the tenant website](http://127.0.0.1:8877/belive). **Make a complaint** opens the support portal. **Try demo tenant** signs into an explicitly fictional account without copying a key after an admin prepares the demo. Normal tenants use their private staff-issued code.
+Open [the customer complaint website](http://127.0.0.1:8877/belive). **Make a complaint** requires no Tenant Code or sign-up. After submission the system displays a case-scoped **Complaint Code** in the form `CMP-XXXX-XXXX-XXXX-XXXX`; it opens only that complaint for replies and outcome updates. **Try demo** remains available after an admin prepares the fictional demo.
 
 The portal has **New request** and **My requests** tabs, a compact request list and one selected conversation. The backend saves real case references in SQLite, enforces tenant scope, screens risk and launches the support agents. SIMPLE automatic replies are labelled AI SUPPORT. MODERATE drafts remain private to staff. Still unresolved saves the feedback and hands the case to staff. No key is included in URLs or browser storage.
 
@@ -60,7 +65,7 @@ Staff sees the same case in **Cases**, with actual agent activity, complaint lev
 3. Create a case. Without model configuration it explicitly hands over to staff. With configuration it proposes structured AI assistance; the normal workflow never substitutes a fictional response.
 4. Acknowledge the case under the signed-in operator. Review the urgency/category, save the next action/deadline and add any private notes.
 5. Review and save the response draft, check the confirmation box, then select **Send saved reply to tenant**. This creates an actual message in the local portal. External gateway delivery remains a separate reviewed action.
-6. As admin, issue a tenant access key after identity verification and open [the local portal](http://127.0.0.1:8877/portal). The tenant sees published messages and can reply. **Still unresolved** routes/reopens the case to staff; **Issue resolved** records feedback for staff verification.
+6. Open [the complaint portal](http://127.0.0.1:8877/portal), submit without a code, and save the generated Complaint Code. That code shows only its own complaint and lets the customer reply. **Still unresolved** routes/reopens the case to staff; **Issue resolved** records feedback for staff verification. Verified Tenant Access remains an optional staff-issued method for viewing a tenant's full private history, and is never required to make a complaint.
 7. Complete work orders, follow up, verify the outcome and close. Close only with evidence and no open work orders. Review reusable wording after closure; latest rejection/reopening revokes reuse.
 8. Open **More tools → Saved records** to inspect data and record versions. Correct or deactivate outdated support context. Create a verified backup. Recovery opens a new paused copy on the next launch; current records stay in place.
 9. Saving an authorised public source starts its checks every 15 minutes while the app is open. **Pause checks** / **Resume checks** affect only that source.
@@ -123,7 +128,7 @@ python -m unittest discover -s tests -p "test_*.py" -v
 # Equivalent: npm test
 ```
 
-There are 62 backend/HTTP/native-memory/database/automation checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
+There are 89 backend/HTTP/native-memory/database/automation checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
 
 ```sh
 python -m pip install -r requirements-dev.txt

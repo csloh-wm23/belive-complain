@@ -14,13 +14,27 @@ _runtime_lock = threading.RLock()
 
 def runtime_python():
     executable = shutil.which("hermes")
+    if not executable and os.name == "nt":
+        roots = []
+        if os.environ.get("USERPROFILE"):
+            roots.append(Path(os.environ["USERPROFILE"]) / "AppData/Local")
+        if os.environ.get("LOCALAPPDATA"):
+            roots.append(Path(os.environ["LOCALAPPDATA"]))
+        executable = next((str(root / "hermes/bin/hermes.exe") for root in roots
+                           if (root / "hermes/bin/hermes.exe").is_file()), None)
     if not executable:
         raise RuntimeError("HERMES_NOT_INSTALLED")
-    directory = Path(executable).resolve().parent
-    python = directory / ("python.exe" if os.name == "nt" else "python")
-    if not python.is_file():
+    # Do not resolve this path on packaged Windows hosts: filesystem
+    # virtualization can expand it beyond Python's import path limit.
+    directory = Path(executable).parent
+    candidates = [directory / ("python.exe" if os.name == "nt" else "python")]
+    if os.name == "nt":
+        candidates.extend((directory.parent / "installs").glob(
+            "*/environments/*/venv/Scripts/python.exe"))
+    available = [path for path in candidates if path.is_file()]
+    if not available:
         raise RuntimeError("HERMES_PYTHON_NOT_FOUND")
-    return python
+    return max(available, key=lambda path: path.stat().st_mtime)
 
 
 def native_request(messages, settings, *, tools=None, dispatch=None, max_steps=5,
@@ -41,7 +55,7 @@ def native_request(messages, settings, *, tools=None, dispatch=None, max_steps=5
     env = dict(os.environ, HERMES_HOME=str(home), PYTHONIOENCODING="utf-8")
     with _runtime_lock:
         with subprocess.Popen([str(runtime_python()), str(root / "hermes_worker.py")],
-                              cwd=root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              cwd=root.parent, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                               stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)) as process:
             events = queue.Queue()

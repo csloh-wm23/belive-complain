@@ -15,6 +15,24 @@ def main():
         output.write(json.dumps(event) + "\n")
         output.flush()
     with contextlib.redirect_stdout(sys.stderr):
+        # Hermes 0.22 enables deferred tool search automatically.  This worker
+        # is intentionally limited to the tools supplied by BeLive, so turn it
+        # off in the request-specific HERMES_HOME before importing the agent.
+        from hermes_cli.config import atomic_config_write, get_config_path, read_raw_config
+
+        config = read_raw_config()
+        tool_config = config.setdefault("tools", {})
+        if not isinstance(tool_config, dict):
+            tool_config = {}
+            config["tools"] = tool_config
+        search_config = tool_config.setdefault("tool_search", {})
+        if not isinstance(search_config, dict):
+            search_config = {}
+            tool_config["tool_search"] = search_config
+        if search_config.get("enabled") != "off":
+            search_config["enabled"] = "off"
+            atomic_config_write(get_config_path(), config)
+
         from run_agent import AIAgent
         from tools.registry import registry
         from tools.memory_tool import MemoryStore
@@ -86,4 +104,6 @@ if __name__ == "__main__":
         main()
     except Exception as exc:
         # No provider response, prompt or key is emitted as an error diagnostic.
-        print(json.dumps(dict(type="error", code="HERMES_NATIVE_" + type(exc).__name__.upper())), flush=True)
+        fixed = {"HERMES_TOOL_OUTSIDE_ALLOWLIST", "HERMES_TOOLSET_MISMATCH"}
+        code = str(exc) if str(exc) in fixed else "HERMES_NATIVE_" + type(exc).__name__.upper()
+        print(json.dumps(dict(type="error", code=code)), flush=True)

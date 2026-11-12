@@ -8,11 +8,15 @@ def post(store,db,case,sender,text,key):
     message={'id':mid,'case_id':case['id'],'tenant_id':case['tenant_id'],'sender':sender,'text':bounded(text,1,3000),'at':now()}
     store.put(db,'message',message);return message
 
-def conversation(store,db,case):
+def conversation(store,db,case,complaint_only=False):
     result=[{'id':'REPORT-'+case['id'],'sender':'REPORTED_ISSUE','text':case['description'],'at':case['created_at']}]
-    result += [{k:m[k] for k in ('id','sender','text','at')} for m in store.all(db,'message') if m['case_id']==case['id'] and m['tenant_id']==case['tenant_id']]
+    # Use insertion order to break timestamp ties, including immediate replies.
+    audience='' if complaint_only else case['tenant_id']
+    result += [{k:m[k] for k in ('id','sender','text','at')} for m in reversed(store.all(db,'message')) if m['case_id']==case['id'] and m['tenant_id']==audience]
     # Preserve tenant updates from versions that predate the conversation table.
     for row in db.execute("SELECT id,detail,created_at FROM events WHERE entity=? AND action='TENANT_UPDATE'",(case['id'],)):
+        if complaint_only and case['tenant_id']:
+            break
         if not any(m['sender']=='TENANT' and m['text']==row['detail'] for m in result):
             result.append({'id':'HISTORIC-'+str(row['id']),'sender':'TENANT','text':row['detail'],'at':row['created_at']})
     return sorted(result,key=lambda m:m['at'])

@@ -34,6 +34,25 @@ def validate_source(p):
     return {'id':p.get('id') or 'SRC-'+secrets.token_hex(5),'platform':platform,'resource':resource,
             'enabled':p.get('enabled',True) is True,'authorised':True,'last_scan':None,'next_scan':now(),'status':'READY','error':''}
 
+def public_link_platform(value):
+    from urllib.parse import urlsplit
+    if not isinstance(value,str) or len(value)>2000 or re.search(r'\s',value):
+        raise ValueError('Enter a public Google review, Facebook or Threads link')
+    url=urlsplit(value)
+    host=url.netloc.lower()
+    if url.scheme!='https':
+        raise ValueError('Use an HTTPS platform link')
+    if ((host in {'google.com','www.google.com'} and url.path.startswith(('/maps/','/travel/hotels/')))
+            or host in {'maps.app.goo.gl','maps.google.com'}
+            or (host=='g.page' and url.path)):
+        return 'GOOGLE'
+    if host in {'facebook.com','www.facebook.com','m.facebook.com','fb.watch'} and url.path not in {'','/'}:
+        return 'FACEBOOK'
+    if host in {'threads.com','www.threads.com','threads.net','www.threads.net'} and '/post/' in url.path:
+        return 'THREADS'
+    raise ValueError('Only Google review, Facebook and Threads links are supported')
+
+
 def read_source(source):
     platform,resource=source['platform'],source['resource']
     token=os.getenv('BELIVE_'+platform+'_TOKEN','')
@@ -49,6 +68,11 @@ def read_source(source):
     result=request_json('https://graph.threads.net/v1.0/'+resource+'?'+urlencode({'fields':'id,text,timestamp','limit':25}),token)
     return [{'id':item['id'],'text':item.get('text','')} for item in result.get('data',[])[:25] if item.get('text')]
 
+def scan_interval(store,db):
+    settings=store.all(db,'source_schedule')
+    return settings[0]['minutes'] if settings else 15
+
+
 def scan(service,source_id):
     from belive.service import due
     with service.store.connect() as db:source=service.store.get(db,'source',source_id)
@@ -63,13 +87,20 @@ def scan(service,source_id):
             from belive.store import digest
             c=service.command('intake',p,'scan-'+digest(json.dumps(p,sort_keys=True)))
             results.append(c['id'])
-        source.update(status='COMPLETED',error='',last_scan=now(),next_scan=due(15),last_count=len(results))
+        source.update(status='COMPLETED',error='',last_scan=now(),last_count=len(set(results)))
     except Exception as exc:
-        source.update(status='FAILED',error=str(exc) if str(exc) in {'CONNECTOR_NOT_CONFIGURED','FACEBOOK_VERSION_REQUIRED'} else 'CONNECTOR_READ_FAILED',last_scan=now(),next_scan=due(15))
+        source.update(status='FAILED',error=str(exc) if str(exc) in {'CONNECTOR_NOT_CONFIGURED','FACEBOOK_VERSION_REQUIRED'} else 'CONNECTOR_READ_FAILED',last_scan=now(),last_count=0)
         results=[]
     with service.store.connect() as db:
-        service.store.put(db,'source',source);service.store.event(db,source_id,'SOURCE_SCAN_'+source['status'],source.get('error') or str(len(results))+' source results recorded')
-    return results
+        db.execute('BEGIN IMMEDIATE')
+        current=service.store.get(db,'source',source_id)
+        if current['platform']==source['platform'] and current['resource']==source['resource']:
+            for field in ('status','error','last_scan','last_count'):
+                current[field]=source[field]
+            current['next_scan']=due(scan_interval(service.store,db))
+            service.store.put(db,'source',current)
+            service.store.event(db,source_id,'SOURCE_SCAN_'+source['status'],source.get('error') or str(len(set(results)))+' source results recorded')
+    return list(dict.fromkeys(results))
 
 def deliver(service,message_id):
     from belive.service import support_notification

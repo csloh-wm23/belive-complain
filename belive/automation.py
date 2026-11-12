@@ -30,6 +30,84 @@ def unresolved(text):
     return bool(re.search(r"\b(unresolved|not resolved|did not help|didn't help|does not help|doesn't help|did not work|didn't work|still not working|still broken)\b|belum selesai|masih (?:tak|tidak)|还没解决|没有解决|还是不行|仍然", text, re.I))
 
 
+PUBLIC_COMPLAINT_ANSWERS = {
+    'how do i report a wi-fi connection problem': 'In this conversation, tell us which devices are affected, when Wi-Fi disconnects and whether it happens in your room or a shared area. If you need someone to investigate, choose Still unresolved.',
+    'how do i track my complaint': 'On the BeLive complaint page, choose Track an existing complaint and enter your private Complaint Code. Keep that code private.',
+    'how can i add more details to my complaint': 'Open your complaint with your Complaint Code. Type the extra details in Reply or outcome details and send the reply. Keep everything in the same conversation.',
+    '如何查询投诉进度': '在投诉页面选择 Track an existing complaint，输入提交时收到的 Complaint Code，即可查看进度和回复。请保管好这个代码。',
+}
+
+PUBLIC_GUIDANCE = {
+    'track': ('How to check the status or replies of a complaint', PUBLIC_COMPLAINT_ANSWERS['how do i track my complaint']),
+    'recover': ('How to recover a lost Complaint Code or reference', None),
+    'add_details': ('How to add a message or correct details in an existing complaint', PUBLIC_COMPLAINT_ANSWERS['how can i add more details to my complaint']),
+    'report_wifi': ('What information to include when reporting Wi-Fi trouble', PUBLIC_COMPLAINT_ANSWERS['how do i report a wi-fi connection problem']),
+    'wifi_checks': ('How to do a basic Wi-Fi check on the customer’s own device, without requesting maintenance', 'Check that Wi-Fi is on and airplane mode is off. Try reconnecting to the network and checking whether another device is affected. If the problem persists, tell us which devices are affected and choose Still unresolved.'),
+    'location': ('What location information to provide in the complaint form', 'Enter the name of your building or residence. If the problem is in a specific unit, room or shared area, add that location so the team can find it.'),
+    'outcome': ('How to say the issue is resolved or request more help on an existing complaint', 'Open your complaint and choose Issue resolved if it has been fixed, or Still unresolved if you need the BeLive team to review it.'),
+    'privacy': ('What sensitive information to leave out of the complaint form', 'Describe the issue and where it happened. Leave out passwords, payment details, access codes and identity documents. Keep your Complaint Code private.'),
+    'maintenance_details': ('What details to include when reporting a maintenance problem; no repair advice', 'Include the building and unit or shared area, when the issue started, and what you noticed. Say whether it is still happening. For an immediate safety risk, use your building’s emergency channel.'),
+    'cleaning_details': ('How to describe a cleaning or shared-space issue in a report', 'Name the building and shared area, such as the lobby or laundry room. Include the date, time and what needs attention so the team can find it.'),
+    'noise_details': ('What information to include when reporting repeated noise', 'Include the building, where you heard it, approximate times and how often it happens. Describe what you observed. Leave out neighbours’ personal details.'),
+    'recovery_email': ('Whether email is required to submit a complaint and why the form asks for it', 'Recovery email is optional. You can submit without it. Save your Complaint Code and complaint reference after submitting. Email recovery also depends on whether BeLive has enabled email delivery.'),
+    'staff_followup': ('How to ask for further help after an automatic answer', 'Open the complaint with your Complaint Code, add what you tried or what still needs attention, then select Still unresolved to ask the team to review it.'),
+}
+
+
+def acknowledgement_only(text):
+    cleaned = re.sub(r'[\W_]+', ' ', text.casefold()).strip()
+    return bool(re.fullmatch(
+        r'(?:(?:oh )?(?:ok(?:ay)?|got it|understood|noted)(?: (?:thank|thanks|thx|tq|thank you|thank you for the help|thank for the help))?'
+        r'|thank|thx|tq|thanks(?: for (?:the|your) help)?|thank you(?: for (?:the|your) help)?|谢谢(?:你|你的帮助)?|好的 ?谢谢|terima kasih)',
+        cleaned))
+
+
+def recovery_guidance():
+    from belive.complaint_mail import configured
+    if configured():
+        return 'If you saved your complaint reference and entered a recovery email when you submitted, use “Forgot your Complaint Code?” on the complaint page.'
+    return 'Email recovery is currently unavailable. Contact the BeLive team with your original complaint reference, or the approximate submission date and title, so they can help locate it.'
+
+
+def public_guidance_reply(decision, lessons=None):
+    if not isinstance(decision, dict) or decision.get('can_answer') is not True:
+        return ''
+    topics = decision.get('topics')
+    if not isinstance(topics, list) or not 1 <= len(topics) <= 3:
+        return ''
+    guidance={**PUBLIC_GUIDANCE,**(lessons or {})}
+    if not all(isinstance(topic,str) and topic in guidance for topic in topics):
+        return ''
+    return '\n\n'.join(guidance[topic][1] or recovery_guidance() for topic in dict.fromkeys(topics))
+
+
+def publish_public_answer(store, db, case):
+    if case['status'] != 'AI_PENDING' or exception_reason(case['title']):
+        return
+    text = ' '.join(case['description'].casefold().replace('’', "'").split())
+    questions = [part.strip() for part in re.split(r'[?!.。？！]+', text) if part.strip()]
+    if not questions:
+        return
+    replies = []
+    for question in questions:
+        reply = PUBLIC_COMPLAINT_ANSWERS.get(question)
+        if re.fullmatch(r"(?:i )?(?:forgot|forget|lost|can't find|cannot find) (?:my |the )?complaint (?:id|code|reference(?: number)?)", question):
+            reply = recovery_guidance()
+        if not reply:
+            return
+        if reply not in replies:
+            replies.append(reply)
+    publish_public_guidance(store, db, case, '\n\n'.join(replies), 'SYSTEM')
+
+
+def publish_public_guidance(store, db, case, reply, sender, turn_id='initial'):
+    message = post(store, db, case, sender, reply, 'public-complaint-answer-'+turn_id)
+    case.update(status='FOLLOW_UP', severity='LOW',
+                next_action='Customer can accept the answer or request staff help',
+                automatic_answer={'id':'PUBLIC-COMPLAINT-FAQ','version':1,'message_id':message['id']})
+    store.put(db,'case',case)
+
+
 def policy(store, db):
     return next(iter(store.all(db, 'automation')), {'id':'routine', 'enabled':False, 'version':0})
 
@@ -127,7 +205,7 @@ def add_context(store, db, case, context):
 
 
 def handover_receipt(store, db, case):
-    if case.get('automation_requested') and case.get('tenant_id'):
+    if case.get('entrypoint') == 'TENANT_WEBSITE' or (case.get('automation_requested') and case.get('tenant_id')):
         turn = input_turn(store, db, case)
         post(store, db, case, 'SYSTEM', 'Your request needs the support team. It is in the staff queue and remains open. You can add details here.', 'handover-'+turn['id'])
 
