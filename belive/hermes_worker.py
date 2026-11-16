@@ -78,12 +78,23 @@ def main():
                     return json.dumps({"error": "Tool is outside this project's allowlist"})
                 return super()._invoke_tool(function_name, function_args, *args, **kwargs)
 
+        from urllib.parse import urlsplit
+        endpoint = urlsplit(request["base_url"])
+        local_ollama = endpoint.scheme == "http" and endpoint.hostname in {"localhost", "127.0.0.1", "::1"}
+        options = {}
+        if local_ollama:
+            response_format = {"type": "json_object"}
+            if request.get("response_schema"):
+                response_format = {"type": "json_schema", "json_schema": {
+                    "name": "support_response", "strict": True, "schema": request["response_schema"]
+                }}
+            options["request_overrides"] = {"response_format": response_format, "reasoning_effort": "none"}
         agent = BoundedAgent(model=request["model"], provider="custom",
                         api_mode="chat_completions", base_url=request["base_url"],
                         api_key=request["api_key"], max_iterations=request["max_steps"],
                         enabled_toolsets=["belive_support"] if request["tools"] else [],
                         quiet_mode=True, skip_context_files=True, skip_memory=True,
-                        save_trajectories=False, tool_delay=0, max_tokens=2500)
+                        save_trajectories=False, tool_delay=0, max_tokens=2500, **options)
         actual = {tool["function"]["name"] for tool in agent.tools}
         if actual != allowed:
             raise RuntimeError("HERMES_TOOLSET_MISMATCH")

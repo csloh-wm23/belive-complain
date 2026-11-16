@@ -69,6 +69,14 @@ class SupportAI:
            'Do not give electrical, gas, medical or dangerous repair instructions. '
            'Use the tenant message language. Return only the requested JSON object.'},
           {'role':'user','content':json.dumps(context)}]
+        shape = None
+        if role == 'Support Response Agent':
+            types = {'plan':'string','response':'string','requires_human':'boolean','record_ids':'array'}
+            if context.get('automatic'):
+                types.update(approved_answer_id='string',match_confidence='number',request_language='string')
+            props = {name:{'type':kind} for name,kind in types.items()}
+            props['record_ids']['items'] = {'type':'string'}
+            shape = {'type':'object','properties':props,'required':list(types),'additionalProperties':False}
         try:
             runtime_python()
         except RuntimeError:
@@ -80,7 +88,7 @@ class SupportAI:
             if urlsplit(endpoint).hostname not in {'127.0.0.1', 'localhost', '::1'}:
                 raise RuntimeError('AI_NOT_CONFIGURED')
             messages[1]['content'] = json.dumps({'context':context,'reviewed_examples':examples})
-            output_format = 'json'
+            output_format = shape or 'json'
             if role == 'public complaint triage assistant':
                 output_format = {
                     'type':'object',
@@ -97,7 +105,7 @@ class SupportAI:
                 response = {'text':json.load(reply)['message']['content']}
         else:
             response=native_request(messages,self.settings,tools=TOOLS,dispatch=dispatch,
-              examples=[{'version_id':e['id'],'approved_reply':e['text']} for e in examples],home=self.home,max_steps=5)
+              examples=[{'version_id':e['id'],'approved_reply':e['text']} for e in examples],home=self.home,max_steps=5,response_schema=shape)
         raw=response.get('text','').strip()
         raw=re.sub(r'^```(?:json)?\s*|\s*```$','',raw)
         result=json.loads(raw)
@@ -140,12 +148,18 @@ class SupportAI:
         return result
 
     def _analyse(self,context,examples,generate):
+        from urllib.parse import urlsplit
+        local = self.settings.llm_provider == 'ollama' and urlsplit(self.settings.ollama_base_url).hostname in {'localhost','127.0.0.1','::1'}
+        evidence_format = (
+            'evidence (exactly "description" or "title", choosing the field that supports your assessment). '
+            if local else 'evidence (an exact verbatim substring from case.title or case.description, preserving spelling and case). '
+        )
         a=generate('Complaint Analysis Agent',
           'Determine whether this message is a complaint (a reported problem/dissatisfaction), a support enquiry, or unrelated. '
           'Return exactly report_type (COMPLAINT/ENQUIRY/NON_SUPPORT), relevance (SUPPORT/NON_SUPPORT/UNCERTAIN), category '
           '('+'/'.join(CATEGORIES)+'), severity (LOW/MEDIUM/HIGH/CRITICAL), summary (string), '
-          'uncertainty (boolean), evidence (an exact verbatim substring from case.title or case.description, preserving spelling and case). '
-          'Do not paraphrase the evidence or quote records or conversation messages. '
+          'uncertainty (boolean), '+evidence_format+
+          'Use the tenant report as evidence. Do not quote records or conversation messages. '
           'Ordinary missing details may be safely clarified using approved guidance; uncertainty means risk or facts cannot be assessed safely. '
           'Interpret short follow-up messages in the current conversation. A greeting or acknowledgement within an existing support request is still support; retain its category unless the tenant changes the topic. '
           'Use the complaint rubric: LOW means SIMPLE, a routine information or safe self-service request that approved guidance can handle. '
@@ -157,9 +171,14 @@ class SupportAI:
         if (a['report_type']=='NON_SUPPORT') != (a['relevance']=='NON_SUPPORT') and a['relevance']!='UNCERTAIN':raise ValueError('AI_INVALID_VALUES')
         if a['relevance'] not in {'SUPPORT','NON_SUPPORT','UNCERTAIN'} or a['category'] not in CATEGORIES or a['severity'] not in {'LOW','MEDIUM','HIGH','CRITICAL'} or type(a['uncertainty']) is not bool: raise ValueError('AI_INVALID_VALUES')
         a['summary']=bounded(a['summary'],1,1000)
-        if not isinstance(a['evidence'],str) or not 1<=len(a['evidence'])<=400:raise ValueError('AI_UNGROUNDED_EVIDENCE')
-        evidence_field=next((field for field in ('description','title') if a['evidence'] in context['case'].get(field,'')),None)
-        if evidence_field is None:raise ValueError('AI_UNGROUNDED_EVIDENCE')
+        if local and a['evidence'] in ('title','description'):
+            evidence_field = a['evidence']
+            a['evidence'] = context['case'].get(evidence_field, '')[:400]
+        else:
+            evidence_field = next((field for field in ('description','title')
+                                   if isinstance(a['evidence'],str) and a['evidence'] in context['case'].get(field,'')),None)
+        if not isinstance(a['evidence'],str) or not 1<=len(a['evidence'])<=400 or evidence_field is None:
+            raise ValueError('AI_UNGROUNDED_EVIDENCE')
         a['evidence_field']=evidence_field
         if a['severity'] in {'HIGH','CRITICAL'} or a['uncertainty'] or a['relevance']!='SUPPORT': return a
         if not context.get('tenant_verified',True):

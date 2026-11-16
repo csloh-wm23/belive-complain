@@ -38,7 +38,7 @@ def runtime_python():
 
 
 def native_request(messages, settings, *, tools=None, dispatch=None, max_steps=5,
-                   stop_event=None, examples=None, home=None, mode="generate"):
+                   stop_event=None, examples=None, home=None, mode="generate", response_schema=None):
     """Secrets travel through stdin, never arguments, logs or saved request files."""
     if stop_event and stop_event.is_set():
         raise RuntimeError("STOPPED_BY_OPERATOR")
@@ -51,7 +51,7 @@ def native_request(messages, settings, *, tools=None, dispatch=None, max_steps=5
     key = settings.ollama_api_key if settings.llm_provider == "ollama" else settings.llm_api_key
     request = dict(messages=messages, tools=tools or [], max_steps=max_steps,
                    examples=examples or [], mode=mode, model=settings.llm_model,
-                   base_url=base, api_key=key or "local-ollama")
+                   base_url=base, api_key=key or "local-ollama", response_schema=response_schema)
     env = dict(os.environ, HERMES_HOME=str(home), PYTHONIOENCODING="utf-8")
     with _runtime_lock:
         with subprocess.Popen([str(runtime_python()), str(root / "hermes_worker.py")],

@@ -207,7 +207,7 @@ if(!trackingEntry){
 }
 const recoveryEmail=document.createElement('label');
 recoveryEmail.innerHTML='Recovery email (optional)<input name="email" type="email" maxlength="254" autocomplete="email">';
-complaintForm.insertBefore(recoveryEmail,complaintForm.querySelector('p'));
+complaintForm.insertBefore(recoveryEmail, $('sendWebsiteComplaint'));
 const recoveryPanel=document.createElement('details');
 recoveryPanel.hidden=!trackingEntry;
 recoveryPanel.innerHTML='<summary>Forgot your Complaint Code?</summary><form><label>Complaint reference<input name="reference" placeholder="BL-…" required maxlength="13"></label><label>Email used when submitting<input name="email" type="email" required maxlength="254" autocomplete="email"></label><button type="submit">Send my code</button></form>';

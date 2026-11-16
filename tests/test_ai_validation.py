@@ -39,6 +39,13 @@ class AIValidationTests(unittest.TestCase):
                 result=self.ai.analyse(self.context,[])
                 self.assertEqual(result['evidence'],evidence);self.assertEqual(result['evidence_field'],field)
                 self.assertTrue(result['requires_human']);self.assertEqual(generate.call_count,2)
+    def test_local_model_can_select_exact_report_evidence(self):
+        ai = SupportAI(Settings(llm_provider='ollama'), self.root / 'local-memory')
+        with patch.object(ai, 'generate', side_effect=[{**self.triage, 'evidence': 'description'}, dict(self.plan)]):
+            result = ai.analyse(self.context, [])
+        self.assertEqual(result['evidence_field'], 'description')
+        self.assertEqual(result['evidence'], self.context['case']['description'])
+
     def test_quotes_from_other_context_or_paraphrases_are_rejected(self):
         context={**self.context,'verified_records':[{'id':'R','text':'A record-only excerpt.'}]}
         for evidence in ['the pipe is broken','My pipe broke','A record-only excerpt.','A conversation-only excerpt.','',123]:

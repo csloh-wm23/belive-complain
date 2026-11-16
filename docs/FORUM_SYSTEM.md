@@ -191,3 +191,5 @@ The installed local app's real-model comparison `LEARN-6FD369679E` improved from
 
 
 The staff alert button opens urgent, overdue and unassigned staff-review cases. Support operators see their assignments first within each priority and can filter to their own cases. Admins can use the same overdue filter across teams. The reply editor shows the latest tenant message alongside the draft. Reports count newly published staff replies, how many tracked AI drafts were sent unchanged, and distinct previously answered, verified or closed cases reopened after a reply. Older cases contribute only when a tracked action happens after the update.
+
+The local Ollama path asks Hermes to request JSON with thinking disabled. For response drafting, it requests the expected JSON fields explicitly and still validates values and citations. For local triage, the model may select the source field and the server extracts the exact text, preserving source traceability. See [demo rehearsal](THURSDAY_DEMO.md) for local startup and test coverage.
