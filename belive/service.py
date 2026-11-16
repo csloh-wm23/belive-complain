@@ -169,7 +169,19 @@ class Service:
                 'automatic_answers':sum(bool(c.get('automatic_answer')) for c in result['cases']),
                 'accepted_answers':sum(c['status']=='ANSWERED' for c in result['cases']),
                 'verified_closures':sum(c['status']=='CLOSED' and bool(c.get('verification')) for c in result['cases'])}
+            totals = [c.get('reply_outcomes', {}) for c in result['cases']]
+            result['reports']['reply_outcomes'] = {
+                key: sum(outcome.get(key, 0) for outcome in totals)
+                for key in ('staff_replies', 'ai_drafts_sent', 'ai_drafts_unchanged', 'reopened_after_reply')
+            }
             return result
+    def record_reopen(self, db, case):
+        if case['status'] not in {'CLOSED', 'ANSWERED', 'VERIFIED'}:
+            return
+        if any(m['case_id'] == case['id'] and m['sender'] in {'SUPPORT', 'AI_SUPPORT'}
+               for m in self.store.all(db, 'message')):
+            case.setdefault('reply_outcomes', {})['reopened_after_reply'] = 1
+
     def enqueue(self,db,entity,kind,text,target=''):
         require(support_notification({'kind':kind,'entity':entity}),'Notification is outside tenant complaint support')
         if kind=='TENANT_RESPONSE':
@@ -335,8 +347,9 @@ class Service:
             c['tenant_resolution']={'resolved':resolved,'note':note,'at':now()}
             if dangerous:c['severity']='CRITICAL'
             if not resolved:
+                self.record_reopen(db,c)
                 c.pop('closed_at',None)
-                if c.get('entrypoint')=='TENANT_WEBSITE' and not c['tenant_id']:c['owner']=''
+                if c.get('entrypoint')=='TENANT_WEBSITE' and not c['tenant_id']:c.update(owner='',owner_id='')
                 c['verification']='';c['action_due']=None;self.handoff(db,c,'Tenant outcome feedback contains a safety risk' if dangerous else 'Tenant reports the issue is still unresolved')
                 self.store.put(db,'feedback',{'id':uid('STYLE'),'case_id':c['id'],'text':'','verdict':'REJECTED','share':False,'at':now()})
             elif c.get('automatic_answer') and c['status']=='FOLLOW_UP' and not c.get('owner') and not c.get('handoff'):
@@ -410,7 +423,7 @@ class Service:
             if status=='AWAITING_CONTACT':c['status']='AI_PENDING'
         elif action=='acknowledge':
             require(status in {'HUMAN_REVIEW','AI_PENDING','AWAITING_CONTACT'} or (status=='FOLLOW_UP' and c.get('automatic_answer')),'Case is not waiting for acknowledgement')
-            c['owner']=bounded(p.get('owner'),2,80);c['ack_due']=None;c['status']='IN_PROGRESS';note='Staff accepted ownership'
+            c['owner']=bounded(p.get('owner'),2,80);c['owner_id']=p.get('_actor','');c['ack_due']=None;c['status']='IN_PROGRESS';note='Staff accepted ownership'
         elif action=='draft':
             require(status not in {'CLOSED','SKIPPED','ANSWERED'},'Reopen the case before editing');c['draft']=bounded(note,1,2500)
         elif action=='queue_response':
@@ -425,7 +438,17 @@ class Service:
             if 'reviewed_reply' in p:
                 require(bounded(p['reviewed_reply'],1,2500)==c['draft'],'Save the edited reply before sending it')
             from belive.conversations import post
-            post(self.store,db,c,'SUPPORT',c['draft'],'support-'+digest(c['draft']))
+            message_key = 'support-'+digest(c['draft'])
+            message_id = 'CHAT-'+digest(c['id']+':'+message_key)[:24]
+            if not db.execute("SELECT 1 FROM objects WHERE kind='message' AND id=?", (message_id,)).fetchone():
+                outcome = c.setdefault('reply_outcomes', {})
+                outcome['staff_replies'] = outcome.get('staff_replies',0)+1
+                original = c.get('ai_draft_original')
+                if original:
+                    outcome['ai_drafts_sent'] = outcome.get('ai_drafts_sent',0)+1
+                    outcome['ai_drafts_unchanged'] = outcome.get('ai_drafts_unchanged',0)+int(original==c['draft'])
+            c.pop('ai_draft_original',None)
+            post(self.store,db,c,'SUPPORT',c['draft'],message_key)
             note='Reviewed response published to the tenant portal; no external gateway delivery claimed'
         elif action=='assess':
             require(status not in {'CLOSED','SKIPPED','ANSWERED'},'An active case is required')
@@ -476,6 +499,7 @@ class Service:
             c['status']='CLOSED';c['closed_at']=now();note='Operator-verified closure; not an AI resolution claim'
         elif action=='reopen':
             require(status in {'CLOSED','SKIPPED','ANSWERED'},'Only closed or skipped cases can reopen');note=bounded(note,8,2000)
+            self.record_reopen(db,c)
             c['verification']='';self.handoff(db,c,note)
             self.store.put(db,'feedback',{'id':uid('STYLE'),'case_id':c['id'],'text':'','verdict':'REJECTED','share':False,'at':now()})
         else:raise ValueError('Unknown case action')
@@ -544,10 +568,14 @@ class Service:
                     elif public_source and classify_public:
                         self.handoff(db,current,'Public complaint needs investigation or has no matching general guidance')
                     else:current['status']='AI_PENDING' if current['tenant_id'] else 'AWAITING_CONTACT'
-                    if result.get('response'):current['draft']=result['response']
+                    if result.get('response'):
+                        current['draft']=result['response']
+                        current['ai_draft_original']=result['response']
                     if assisted_staff:
                         current.update(status='HUMAN_REVIEW',handoff=True,next_action='Review the AI assessment and proposed response before replying')
                     else:automation.apply_result(self,db,current,result,context)
+                    if current.get('automatic_answer') and current['status']=='FOLLOW_UP':
+                        current.pop('ai_draft_original',None)
                     job['agent_trace']=result.get('agent_trace',[])
                 current['ai_assistance_pending']=False
                 current.pop('public_guidance_turn',None)

@@ -44,6 +44,27 @@ class FypTests(unittest.TestCase):
         self.assertEqual(snapshot['complaint_level'],'MODERATE')
         self.assertTrue(next(x for x in self.s.portal(self.token)['cases'] if x['id']==c['id'])['ai_draft_ready'])
 
+    def test_reply_outcomes_count_unique_sends_and_reopened_cases(self):
+        original = self.ai.analyse
+        self.ai.analyse = lambda ctx, ex: {**original(ctx, ex), 'severity': 'MEDIUM'}
+        case = self.intake()
+        self.s.analyse(case['id'])
+
+        def act(action, **fields):
+            return self.cmd('case_action', dict(id=case['id'], revision=self.current(case)['revision'],
+                                                action=action, **fields))
+
+        act('publish_response', confirmed=True)
+        act('publish_response', confirmed=True)
+        with self.s.store.connect() as db:
+            current = self.current(case)
+            current['status'] = 'CLOSED'
+            self.s.store.put(db, 'case', current)
+        act('reopen', note='Tenant still reports the same issue.')
+        outcomes = self.s.snapshot()['reports']['reply_outcomes']
+        self.assertEqual(outcomes, dict(staff_replies=1, ai_drafts_sent=1,
+                                        ai_drafts_unchanged=1, reopened_after_reply=1))
+
     def test_moderate_physical_case_gets_ai_assistance_without_sending(self):
         c=self.intake('The fan is broken and needs a repair.')
         self.assertEqual(c['status'],'HUMAN_REVIEW');self.assertTrue(c['ai_assistance_pending'])
