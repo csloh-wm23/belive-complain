@@ -24,3 +24,17 @@ BELIVE_OLLAMA_KEY=
 5. In **Self-learning**, open the before/after learning lab. Show a saved comparison, then explain when a reviewed lesson is reused. If running a new comparison, report the actual result, including a tie or a failed check.
 
 The Google, Facebook and Threads regression tests use simulated API responses. A live scan requires authorized source IDs, platform credentials and the matching API permissions. Manual intake from a link can demonstrate case handling, but it does not show an API read. External notifications require their configured delivery service. Use the in-app staff alerts for the local walkthrough.
+
+## Google Maps complaint walkthrough
+
+This is an anonymized paraphrase of a one-star review collected in a browser from the [BeLive Google Maps listing](https://www.google.com/maps/place/?q=place_id:ChIJf2EBIq8fMiARfTvF7ZZhmsM). Use the public complaint link intake in the staff dashboard.
+
+- Title: Google Maps demo - appliance maintenance
+- Source: https://www.google.com/maps/place/?q=place_id:ChIJf2EBIq8fMiARfTvF7ZZhmsM
+- Complaint: A one-star reviewer reported that a water dispenser had no cold water for almost three months, a washing machine was broken, and maintenance complaints received little follow-up.
+
+Open the imported case after assessment. In rehearsal the local AI identified Maintenance and rated the case HIGH, routing it to staff. The model's rating can vary, so show the actual assessment on screen. The HIGH route uses a standard private-contact draft. To show a tailored response, enter and save this staff draft in the case:
+
+> Thanks for reporting the washing machine and water dispenser issues. Could you send us a private support request with your building name and the affected appliances? That will help our team look into it. Please leave your unit number and contact details out of the public review.
+
+This walkthrough uses a browser-collected sample and a staff draft preview. The dashboard saves each imported case in the local database. Jackson should import the sample on his own copy.
