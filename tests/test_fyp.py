@@ -152,6 +152,40 @@ class FypTests(unittest.TestCase):
         self.cmd('lesson_revoke',{'id':final['adopted_lesson_id']})
         with self.s.store.connect() as db:self.assertEqual(self.s.styles(db,condo_id=demo.PROPERTY),[])
 
+    def test_learning_uses_approved_guidance_for_all_support_topics(self):
+        from belive.ai import CATEGORIES
+
+        self.assertEqual({item['category'] for item in self.s.snapshot()['learning_scenarios']}, set(CATEGORIES))
+        for category in CATEGORIES:
+            with self.subTest(category=category):
+                run=self.cmd('learning_start',{'category':category})
+                with self.s.store.connect() as db:
+                    saved=self.s.store.get(db,'learning_run',run['id'])
+                self.assertEqual(saved['category'],category)
+                self.assertEqual(saved['question'],learning.SCENARIOS[category][1])
+                self.assertEqual(saved['context']['approved_answers'][0]['category'],category)
+        with self.assertRaisesRegex(ValueError,'safe informational question'):
+            self.cmd('learning_start',{'category':'UTILITIES','question':'I can smell gas in the building.'})
+        with self.assertRaisesRegex(ValueError,'supported practice topic'):
+            self.cmd('learning_start',{'category':'UNKNOWN'})
+
+    def test_response_agent_gets_only_matching_topic_lessons_after_classification(self):
+        case=self.intake('How should I report a dirty shared kitchen?')
+        with self.s.store.connect() as db:
+            context=self.s.context(db,case)
+        triage=dict(report_type='ENQUIRY',relevance='SUPPORT',category='CLEANING',severity='LOW',
+                    summary='The tenant wants to report a cleaning issue.',uncertainty=False,evidence='dirty shared kitchen')
+        response=dict(plan='Clarify the location.',response='Which part of the kitchen needs attention?',
+                      requires_human=False,record_ids=[],approved_answer_id='',match_confidence=0,request_language='en')
+        lessons=[dict(id='wifi-style',text='Ask which Wi-Fi device is affected.',scope_category='WIFI'),
+                 dict(id='cleaning-style',text='Ask which area is affected.',scope_category='CLEANING')]
+        ai=SupportAI(Settings(),Path(self.tmp.name)/'agents')
+        with patch.object(ai,'generate',side_effect=[triage,response]) as generate:
+            result=ai.analyse(context,lessons)
+        self.assertEqual(generate.call_args_list[0].args[3],[])
+        self.assertEqual(generate.call_args_list[1].args[3],[lessons[1]])
+        self.assertEqual(result['learning_used'],{'count':1,'example_ids':['cleaning-style']})
+
     def test_no_improvement_does_not_invent_a_success_or_save_a_lesson(self):
         self.ai.same=True;run=self.cmd('learning_start',{});learning.execute(self.s,run['id'])
         self.cmd('learning_improve',{'id':run['id'],'lesson':learning.LESSON,'confirmed':True});learning.execute(self.s,run['id'])

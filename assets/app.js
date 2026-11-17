@@ -152,10 +152,19 @@ const groups=[['Properties',['Reference','Name','Verified support guidance'],dat
 $('databaseRecordCount').textContent=`${data.condos.length} properties · ${data.tenants.length} verified tenants · ${(data.records||[]).length} support records`;
 $('databaseRecords').innerHTML=groups.map(([name,columns,items])=>{const visible=items.filter(row=>row.join(' ').toLowerCase().includes(query));return `<section class="saved-record-group"><h3>${name} <small>${visible.length} of ${items.length}</small></h3><div class="table-scroll"><table class="record-table"><thead><tr>${columns.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${visible.map(row=>`<tr>${row.map(cell=>`<td>${esc(cell)}</td>`).join('')}</tr>`).join('')||`<tr><td colspan="${columns.length}" class="empty">No matching records.</td></tr>`}</tbody></table></div></section>`;}).join('');
 }
-async function refresh(){
-    data=await request('status');
-    if(data.operator.role==='ADMIN')data.users=(await request('users')).users;
+async function refresh(watchedCase){
+    const snapshot=await request('status');
+    if(snapshot.operator.role==='ADMIN')snapshot.users=(await request('users')).users;
+    if(watchedCase && (busy||caseEdited||!$('caseDialog').open||selected!==watchedCase.id))return;
+    const pending=assessmentPending(watchedCase);
+    data=snapshot;
     render();
+    if(watchedCase){
+        const current=data.cases.find(c=>c.id===watchedCase.id);
+        if(current && (current.revision!==watchedCase.revision || assessmentPending(current)!==pending)){
+            renderDetail($('caseAssessment').open);
+        }
+    }
     if($('notice').textContent===connectionLostMessage){
         $('notice').textContent='';
         $('notice').hidden=true;
@@ -168,7 +177,14 @@ function openLinkedCase(){
     if(data.cases.some(c=>c.id===id))openCase(id);
     else notice('That case is not available in this workspace.',true);
 }
+let caseEdited=false;
+$('caseDetail').addEventListener('input',()=>{caseEdited=true;});
 function openCase(id){selected=id;renderDetail();$('caseDialog').showModal();}
+function assessmentPending(c,snapshot=data){
+    return c && ((snapshot.tasks||[]).includes('ai-'+c.id) ||
+        (!c.analysis&&!['HIGH','CRITICAL'].includes(c.severity)&&
+            (['AI_PENDING','AWAITING_CONTACT'].includes(c.status)||c.ai_assistance_pending)));
+}
 function complaintNextStep(c){
     if(c.status==='FOLLOW_UP')return c.tenant_resolution?.resolved
         ?'Review the customer’s confirmation, record the evidence, then verify the resolution.'
@@ -185,7 +201,11 @@ function complaintNextStep(c){
     };
     return steps[c.status]||'Review the conversation and the latest case activity.';
 }
-function renderDetail(){const c=data.cases.find(c=>c.id===selected);if(!c)return;const active=!['CLOSED','SKIPPED','ANSWERED'].includes(c.status);
+function renderDetail(keepAssessmentOpen=false){
+const c=data.cases.find(c=>c.id===selected);if(!c)return;
+caseEdited=false;
+const active=!['CLOSED','SKIPPED','ANSWERED'].includes(c.status);
+const checking=assessmentPending(c);
 const publicSource=!c.tenant_id&&c.entrypoint==='PUBLIC_SOURCE'&&['GOOGLE','FACEBOOK','THREADS'].includes(c.platform);
 const preview=c.public_reply_preview?.source_version===c.source_versions.at(-1)?c.public_reply_preview:null;
 const canPreview=active&&c.status!=='VERIFIED'&&c.analysis?.report_type==='COMPLAINT'
@@ -207,7 +227,14 @@ $('caseDetail').innerHTML=`<div class="dialog-heading"><div><span class="eyebrow
 ${c.public_url?`<p><a href="${esc(c.public_url)}" target="_blank" rel="noopener noreferrer">Open original ${esc(c.platform)} source ↗</a></p>`:''}
 ${c.entrypoint==='TENANT_WEBSITE'? `<section class="case-section"><h3>Reported rental location</h3><p>${c.reported_location ? esc([c.reported_location.property,c.reported_location.unit].filter(Boolean).join(' · ')) : 'Location was not provided.'}</p>${c.reported_location?.address?`<p>${esc(c.reported_location.address)}</p>`:''}</section>` : ''}
 <section class="case-section"><h3>Conversation</h3>${chat(c.conversation)}<p class="muted">Only published messages are shown to the tenant.</p></section>
-<details class="case-section" ${publicSource?'open':''}><summary>AI assessment</summary>${!c.analysis&&['AI_PENDING','AWAITING_CONTACT'].includes(c.status)?'<button data-refresh-case>Refresh assessment</button>':''}<p><b>Message:</b> ${esc(c.analysis?.report_type==='COMPLAINT'?'Complaint':c.analysis?.report_type==='ENQUIRY'?'Support question':c.analysis?.report_type==='NON_SUPPORT'?'Not a support request':'Awaiting check')} · <b>Staff destination:</b> ${esc(c.staff_destination||data.routing?.departments?.[c.category]||'Support team')}</p>${agentTrace(c)}${c.analysis?`<p>${esc(c.analysis.summary)}</p><p><b>AI suggestion:</b> ${esc(c.analysis.plan||'Staff handling required')}</p><p class="muted">Reviewed lessons used: ${c.analysis.learning_used?.count||0}</p>`:'<p>No AI assessment yet.</p>'}${c.ai_assistance_pending?'<p>AI is preparing assistance while this case remains in the staff queue.</p>':''}${c.review_reason?`<p class="verification">${esc(c.review_reason)}</p>`:''}${active&&!['HIGH','CRITICAL'].includes(c.severity)&&!['FOLLOW_UP','VERIFIED'].includes(c.status)?`<button data-analyse="${c.id}">Run support agents</button>`:''}</details>
+<details class="case-section" id="caseAssessment" ${publicSource||checking||keepAssessmentOpen?'open':''}><summary>AI assessment</summary>
+${checking?'<p role="status">Assessment is running in the background. This case updates automatically.</p>':''}
+<p><b>Message:</b> ${esc(c.analysis?.report_type==='COMPLAINT'?'Complaint':c.analysis?.report_type==='ENQUIRY'?'Support question':c.analysis?.report_type==='NON_SUPPORT'?'Not a support request':'Awaiting check')} · <b>Staff destination:</b> ${esc(c.staff_destination||data.routing?.departments?.[c.category]||'Support team')}</p>
+${agentTrace(c)}
+${c.analysis?`<p>${esc(c.analysis.summary)}</p><p><b>AI suggestion:</b> ${esc(c.analysis.plan||'Staff handling required')}</p><p class="muted">Reviewed lessons provided to the reply agent: ${c.analysis.learning_used?.count||0}</p>`:checking?'':'<p>No AI assessment recorded.</p>'}
+${c.review_reason?`<p class="verification">${esc(c.review_reason)}</p>`:''}
+${!checking&&active&&!['HIGH','CRITICAL'].includes(c.severity)&&!['FOLLOW_UP','VERIFIED'].includes(c.status)?`<button data-analyse="${c.id}">Retry assessment</button>`:''}
+</details>
 ${publicSource?`<section class="case-section"><h3>Public reply preview</h3>
        <p class="muted">For staff review before any reply on the source platform.</p>
        ${preview?`<p class="source-text">${esc(preview.text)}</p><small>Generated by ${esc(preview.agent)}</small>`
@@ -272,7 +299,7 @@ $('portalIssue').onclick=()=>{$('utilityContent').innerHTML=`<div class="dialog-
 $('export').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='belive-tenant-support.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.close){$(b.dataset.close).close();return;}if(b.dataset.view||b.dataset.go){navigate(b.dataset.view||b.dataset.go);return;}if(b.dataset.case){openCase(b.dataset.case);return;}
 try{
-if(b.id==='reloadCase'||b.hasAttribute('data-refresh-case')){await run('status');renderDetail();}
+if(b.id==='reloadCase'){await run('status');renderDetail($('caseAssessment').open);}
 if(b.id==='revokePortal'){await run('portal_revoke',{tenant_id:$('portalTenant').value,confirmed:true});$('portalKey').textContent='All portal access keys for this tenant have been revoked.';}
 if(b.dataset.act){const handling=b.closest('details');const c=data.cases.find(c=>c.id===selected);await run('case_action',{id:c.id,revision:c.revision,action:b.dataset.act,note:b.dataset.act==='draft'?$('caseDraft').value:$('caseNote').value,reviewed_reply:b.dataset.act==='publish_response'?$('caseDraft').value:undefined,owner:$('caseOwner').value,tenant_id:$('linkTenant')?.value,department:$('department')?.value,category:$('staffCategory')?.value,severity:$('staffSeverity')?.value,due_at:$('caseDue').value?new Date($('caseDue').value).toISOString():null,confirmed:$('caseConfirmed')?.checked??false});renderDetail();if(handling)document.querySelector('#caseDetail [data-handling]').open=true;}
 if(b.dataset.workorder){const c=data.cases.find(c=>c.id===selected);await run('case_action',{id:c.id,revision:c.revision,action:'complete_workorder',workorder_id:b.dataset.workorder,note:$('caseNote').value});renderDetail();}
@@ -287,7 +314,7 @@ if(b.dataset.publicPreview){
     renderDetail();
     notice('Public reply preview saved.');
 }
-if(b.dataset.analyse){await run('analyse',{id:b.dataset.analyse});notice('AI analysis started. Refresh after the task finishes; provider failures route to staff.');}
+if(b.dataset.analyse){await run('analyse',{id:b.dataset.analyse});renderDetail(true);}
 if(b.dataset.approve)await run('approve_message',{id:b.dataset.approve});if(b.dataset.reject)await run('reject_message',{id:b.dataset.reject});
 if(b.dataset.deliver){const r=await run('deliver',{id:b.dataset.deliver});notice('Delivery outcome: '+r.status,r.status!=='DELIVERED');}
 if(b.dataset.scan)await run('scan',{id:b.dataset.scan});
@@ -295,7 +322,19 @@ if(b.dataset.toggleSource){const s=data.sources.find(x=>x.id===b.dataset.toggleS
 }catch(err){if($('caseDialog').open&&$('caseError'))$('caseError').textContent=err.message;notice(err.message,true);}});
 document.querySelector('.brand').onclick=e=>{e.preventDefault();navigate('overview');};
 boot().catch(e=>{$('authGate').hidden=false;$('authError').textContent='Cannot connect to the BeLive server: '+e.message;});
-setInterval(()=>{if(authState?.user&&!busy&&!document.querySelector('dialog[open]')&&!document.querySelector('input:focus,textarea:focus,select:focus'))refresh().catch(()=>boot().catch(error=>notice(error instanceof TypeError?connectionLostMessage:error.message,true)));},5000);
+let polling=false;
+setInterval(async()=>{
+    if(!authState?.user||busy||polling||document.querySelector('input:focus,textarea:focus,select:focus'))return;
+    const dialog=document.querySelector('dialog[open]');
+    const current=data.cases.find(c=>c.id===selected);
+    if(dialog && (dialog.id!=='caseDialog'||caseEdited||!assessmentPending(current)))return;
+    polling=true;
+    try{await refresh(dialog?current:undefined);}
+    catch{
+        try{await boot();}
+        catch(error){notice(error instanceof TypeError?connectionLostMessage:error.message,true);}
+    }finally{polling=false;}
+},5000);
 
 function chat(messages){return `<div class="conversation">${(messages||[]).map(m=>`<article class="chat-message ${['SUPPORT','AI_SUPPORT'].includes(m.sender)?'support':''}"><small>${esc(m.sender.replaceAll('_',' '))} · ${esc(new Date(m.at).toLocaleString())}</small><p>${esc(m.text)}</p></article>`).join('')||'<p>No published messages yet.</p>'}</div>`;}
 function renderAdmin(){

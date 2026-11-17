@@ -22,6 +22,7 @@ FAILURE_MESSAGES = {
     'AI_UNKNOWN_RECORD':'The AI cited a support record outside this case. No assessment was accepted.',
     'AI_UNSAFE_OUTPUT':'The AI response failed a safety check. Staff review is required.',
     'AI_UNGROUNDED_GUIDANCE':'The proposed guidance could not pass the knowledge and safety review. Staff review is required.',
+    'AI_LEARNING_TOPIC_MISMATCH':'The practice question does not match the chosen guide. Choose another topic or edit the question.',
     'AI_INVALID_GUIDANCE_REVIEW':'The guidance review did not return valid checks. Staff review is required.',
     'HERMES_NOT_INSTALLED':'The Hermes runtime could not be found. Staff review is required.',
     'HERMES_PYTHON_NOT_FOUND':'The Hermes Python runtime could not be found. Staff review is required.',
@@ -70,6 +71,24 @@ class SupportAI:
            'Use the tenant message language. Return only the requested JSON object.'},
           {'role':'user','content':json.dumps(context)}]
         shape = None
+        if role == 'Complaint Analysis Agent':
+            props = {
+                'report_type':{'type':'string','enum':['COMPLAINT','ENQUIRY','NON_SUPPORT']},
+                'relevance':{'type':'string','enum':['SUPPORT','NON_SUPPORT','UNCERTAIN']},
+                'category':{'type':'string','enum':CATEGORIES},
+                'severity':{'type':'string','enum':['LOW','MEDIUM','HIGH','CRITICAL']},
+                'summary':{'type':'string'},
+                'uncertainty':{'type':'boolean'},
+                'evidence':{'type':'string'},
+            }
+            from urllib.parse import urlsplit
+            if self.settings.llm_provider=='ollama' and urlsplit(self.settings.ollama_base_url).hostname in {'localhost','127.0.0.1','::1'}:
+                props['evidence']['enum'] = ['description','title']
+            shape = {'type':'object','properties':props,'required':list(props),'additionalProperties':False}
+        if role == 'Safety Review Agent':
+            props = {key:{'type':'boolean'} for key in ('grounded','safe','uncertainty')}
+            props['unsupported_claims'] = {'type':'array','items':{'type':'string'}}
+            shape = {'type':'object','properties':props,'required':list(props),'additionalProperties':False}
         if role == 'Support Response Agent':
             types = {'plan':'string','response':'string','requires_human':'boolean','record_ids':'array'}
             if context.get('automatic'):
@@ -161,7 +180,10 @@ class SupportAI:
 
     def analyse(self,context,examples):
         trace=[]
+        used=[]
         def generate(role,instruction,data,styles):
+            if role in {'Support Response Agent','Learning Reply Agent'}:
+                used.extend(example['id'] for example in styles)
             step={'agent':role,'status':'RUNNING','started_at':now()};trace.append(step)
             try:
                 result=self.generate(role,instruction,data,styles)
@@ -174,7 +196,7 @@ class SupportAI:
             raise AgentFailure(failure_code(exc),trace) from exc
         result['agent_trace']=trace
         result['complaint_level']=complaint_level(result)
-        result['learning_used']={'count':len(examples),'example_ids':[e['id'] for e in examples]}
+        result['learning_used']={'count':len(used),'example_ids':used}
         return result
 
     def _analyse(self,context,examples,generate):
@@ -184,18 +206,23 @@ class SupportAI:
             'evidence (exactly "description" or "title", choosing the field that supports your assessment). '
             if local else 'evidence (an exact verbatim substring from case.title or case.description, preserving spelling and case). '
         )
+        triage_styles=[] if context.get('learning_practice') else [e for e in examples if not e.get('scope_category')][:5]
         a=generate('Complaint Analysis Agent',
           'Determine whether this message is a complaint (a reported problem/dissatisfaction), a support enquiry, or unrelated. '
           'Return exactly report_type (COMPLAINT/ENQUIRY/NON_SUPPORT), relevance (SUPPORT/NON_SUPPORT/UNCERTAIN), category '
           '('+'/'.join(CATEGORIES)+'), severity (LOW/MEDIUM/HIGH/CRITICAL), summary (string), '
           'uncertainty (boolean), '+evidence_format+
           'Use the tenant report as evidence. Do not quote records or conversation messages. '
+          'Choose the topic of the underlying issue, even if the tenant asks how to report it. '
+          'Dirt and hygiene are CLEANING; appliance and fixture faults are MAINTENANCE; '
+          'utility supply or pressure is UTILITIES; entry and keys are ACCESS; '
+          'charges and statements are BILLING; rules about use or conduct are HOUSE_RULES. '
           'Ordinary missing details may be safely clarified using approved guidance; uncertainty means risk or facts cannot be assessed safely. '
           'Interpret short follow-up messages in the current conversation. A greeting or acknowledgement within an existing support request is still support; retain its category unless the tenant changes the topic. '
           'Use the complaint rubric: LOW means SIMPLE, a routine information or safe self-service request that approved guidance can handle. '
           'MEDIUM means MODERATE, a service problem needing investigation, repeated unsuccessful help or a staff action without immediate danger. '
           'HIGH or CRITICAL means HIGH, an urgent safety/security risk. Do not lower a level to make automation possible. '
-          'For MODERATE cases still prepare useful safe assistance for staff review; only SIMPLE replies may be sent automatically.',context,examples)
+          'For MODERATE cases still prepare useful safe assistance for staff review; only SIMPLE replies may be sent automatically.',context,triage_styles)
         if set(a)!= {'report_type','relevance','category','severity','summary','uncertainty','evidence'}: raise ValueError('AI_INVALID_SCHEMA')
         if a['report_type'] not in {'COMPLAINT','ENQUIRY','NON_SUPPORT'}:raise ValueError('AI_INVALID_VALUES')
         if (a['report_type']=='NON_SUPPORT') != (a['relevance']=='NON_SUPPORT') and a['relevance']!='UNCERTAIN':raise ValueError('AI_INVALID_VALUES')
@@ -217,6 +244,8 @@ class SupportAI:
                     'requires_human':False,'record_ids':[]}
         if context.get('learning_practice'):
             guide = context['approved_answers'][0]
+            if a['category']!=guide['category']:
+                raise ValueError('AI_LEARNING_TOPIC_MISMATCH')
             reply = generate('Learning Reply Agent',
                 'Write a short useful practice reply to this question. Use only the approved guidance and ask at most two useful questions. '
                 'Apply any reviewed lesson to wording only. If this guidance cannot help, return an empty reply. Return exactly {"reply":"..."}.',
@@ -225,8 +254,10 @@ class SupportAI:
             if set(reply) != {'reply'} or not isinstance(reply['reply'],str) or not reply['reply'].strip():
                 raise ValueError('AI_UNGROUNDED_GUIDANCE')
             response = bounded(reply['reply'],1,1000)
-            self.review_guidance(context,guide,response,examples,generate)
+            self.review_guidance(context,guide,response,[],generate)
             return {**a,'response':response,'guidance_review_passed':True}
+        examples=[example for example in examples
+                  if example.get('scope_category') in (None,a['category'])][:5]
         automatic=bool(context.get('automatic'))
         routine=(' In automatic mode, also return approved_answer_id (one ID from approved_answers, or empty), match_confidence (number 0 to 1), request_language (en/ms/zh or unknown). '
           'An EXACT entry must directly answer the current question; its exact wording will be sent. A GUIDANCE entry is a reusable support playbook: '
@@ -244,7 +275,7 @@ class SupportAI:
           'Account, payment, security-access changes and physical repairs always require a human. '
           'Requests to arrange move-in/out, inspections or PIC allocation must be handed to staff; do not plan or claim those arrangements. '
           'If there is no safe useful response, set requires_human true.'+routine,
-          {**context,'assessment':a,'reviewed_response_styles':[{'id':e['id'],'text':redact(e['text'])[:320],'use':'style only; never company facts'} for e in examples[:5]]},examples)
+          {**context,'assessment':a,'reviewed_response_styles':[{'id':e['id'],'text':redact(e['text'])[:320],'use':'style only; never company facts'} for e in examples]},examples)
         fields={'plan','response','requires_human','record_ids'} | ({'approved_answer_id','match_confidence','request_language'} if automatic else set())
         if set(p)!=fields or type(p['requires_human']) is not bool or not isinstance(p['record_ids'],list): raise ValueError('AI_INVALID_PLAN')
         if automatic:

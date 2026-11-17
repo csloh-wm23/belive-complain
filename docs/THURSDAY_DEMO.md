@@ -39,9 +39,9 @@ Live collection depends on a saved, enabled resource and platform access. Google
 
 ## Both presenters · learning
 
-1. Open **Self-learning → Open the before/after learning lab**. Select **Generate the first reply** using the default Wi-Fi question. Review and confirm the writing lesson, then generate the second reply with the same question and guide.
+1. Open **Self-learning → Open the before/after learning lab**. Pick a practice topic, then select **Generate the first reply**. Use the default Wi-Fi question to replay the rehearsal or select another topic such as Cleaning to show a separate comparison. Review and confirm the writing lesson, then generate the second reply with the same question and guide.
 2. Compare the recorded scores and word counts. The three checks are two numbered points, one clarifying question and at most 90 words. State the actual outcome if a run improves, ties or fails. Measured improvement can keep the reviewed writing lesson for the fictional demo property.
-3. Submit a new Wi-Fi question as the demo tenant. In the staff case's **AI assessment**, show **Reviewed lessons used** and the response. The count shows retrieval. Check the wording separately to see whether the reply followed the lesson. The comparison measures reply style and uses the same model.
+3. Submit a different question on the same topic as the demo tenant. In the staff case's **AI assessment**, show **Reviewed lessons provided to the reply agent** and the response. The count shows retrieval. Check the wording separately to see whether the reply followed the lesson. The comparison measures reply style and uses the same model.
 
 ### Rehearsal evidence
 

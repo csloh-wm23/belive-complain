@@ -93,7 +93,8 @@ class Service:
         examples=[f for f in latest.values() if f['verdict'] in {'APPROVED','CORRECTED'} and
                 cases.get(f['case_id'],{}).get('status')=='CLOSED' and cases[f['case_id']].get('category') in CATEGORIES and (not shared or f.get('share'))]
         if condo_id and not shared:
-            examples += [x for x in self.store.all(db,'learned_style') if x.get('active') and x.get('scope_condo')==condo_id]
+            examples += [{**x,'scope_category':x.get('scope_category','WIFI')}
+                         for x in self.store.all(db,'learned_style') if x.get('active') and x.get('scope_condo')==condo_id]
         return sorted(examples,key=lambda x:x.get('at',''),reverse=True)
     def public_lessons(self,db):
         lessons={}
@@ -155,6 +156,7 @@ class Service:
             result['demo']=demo.info(self,db)
             result['learning_runs']=[learning.public(x) for x in self.store.all(db,'learning_run')][:10]
             result['learning_lesson']=learning.LESSON
+            result['learning_scenarios']=learning.scenarios(self,db)
             result['learned_styles']=self.store.all(db,'learned_style')
             result['readiness']={'ai':self.ai.readiness(),'scheduler':True,'provider':self.settings.llm_provider,'model':self.settings.llm_model}
             from belive.workspace import selected_database
@@ -540,7 +542,7 @@ class Service:
             require(c['severity'] not in {'HIGH','CRITICAL'} and not risk(c['description']),'High-risk case requires staff handling')
             context=self.context(db,c)
             condo_id=self.store.get(db,'tenant',c['tenant_id'])['condo_id'] if c['tenant_id'] else None
-            examples=self.styles(db,condo_id=condo_id)[:5];revision=c['revision'];job={'id':uid('AI'),'case_id':c['id'],'status':'RUNNING','at':now()}
+            examples=self.styles(db,condo_id=condo_id);revision=c['revision'];job={'id':uid('AI'),'case_id':c['id'],'status':'RUNNING','at':now()}
             public_source=c.get('entrypoint')=='PUBLIC_SOURCE' and not c['tenant_id']
             lessons=self.public_lessons(db) if c.get('entrypoint') in {'TENANT_WEBSITE','PUBLIC_SOURCE'} and not c['tenant_id'] else {}
             assisted_staff=bool(c.get('ai_assistance_pending') and c['status']=='HUMAN_REVIEW')
@@ -579,7 +581,7 @@ class Service:
         with self.lock,self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             current=self.store.get(db,'case',case_id)
-            if (current['revision']!=revision or self.styles(db,condo_id=condo_id)[:5]!=examples or self.context(db,current)!=context
+            if (current['revision']!=revision or self.styles(db,condo_id=condo_id)!=examples or self.context(db,current)!=context
                     or (public_reply and self.public_lessons(db)!=lessons)):
                 job['status']='STALE';job['error']='Case or reviewed guidance changed during AI work; result not applied'
             else:

@@ -1,7 +1,7 @@
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let csrf=document.querySelector('meta[name="csrf-token"]').content;
-let data=null,selected=null,lessonRun=null;
+let data=null,selected=null,lessonRun=null,topicOptions='';
 const attempts=new Map();
 async function send(route,payload){
     const signature=JSON.stringify(payload);let attempt=attempts.get(route);
@@ -31,13 +31,27 @@ function render(status){
     data=status;
     $('demoSetupStatus').textContent=data.demo?.available?'Fictional demo is ready. Tenant sign-in needs no copied key.':'Demo sign-in is off. Prepare fictional data here to enable it.';
     $('toggleDemo').hidden=!data.demo?.available;
+    const scenarios=data.learning_scenarios||[];
+    const topics=$('learningTopic');
+    const options=scenarios.map(topic=>`<option value="${esc(topic.category)}">${esc(topic.label)}</option>`).join('')
+        ||'<option value="">No approved topics</option>';
+    if(options!==topicOptions){
+        const previous=topics.value;
+        topics.innerHTML=options;
+        if(scenarios.some(topic=>topic.category===previous))topics.value=previous;
+        else topics.onchange();
+        topicOptions=options;
+    }
     const runs=data.learning_runs||[];
     if(!runs.some(r=>r.id===selected))selected=runs[0]?.id||null;
-    $('learningRunPicker').innerHTML=runs.length?runs.map(r=>`<option value="${esc(r.id)}" ${r.id===selected?'selected':''}>${esc(new Date(r.at).toLocaleString())} · ${esc(r.status==='COMPLETE'?'Comparison complete':r.status.replaceAll('_',' ').toLowerCase())}</option>`).join(''):'<option value="">No comparisons yet</option>';
+    $('learningRunPicker').innerHTML=runs.length?runs.map(r=>`<option value="${esc(r.id)}" ${r.id===selected?'selected':''}>${esc(r.topic_label||'Wi-Fi')} · ${esc(new Date(r.at).toLocaleString())} · ${esc(r.status==='COMPLETE'?'Comparison complete':r.status.replaceAll('_',' ').toLowerCase())}</option>`).join(''):'<option value="">No comparisons yet</option>';
     const run=runs.find(r=>r.id===selected);
+    $('learningRunQuestion').hidden=!run;
+    $('learningRunQuestion').textContent=run?`${run.topic_label||'Wi-Fi'} · ${run.question}`:'';
     $('approvedLearningLesson').textContent=run?.lesson||'';
     const pending=run&&['BASELINE_QUEUED','BASELINE_RUNNING','IMPROVED_QUEUED','IMPROVED_RUNNING'].includes(run.status);
-    $('learningStart').querySelector('button').disabled=!!pending;
+    topics.disabled=!scenarios.length||!!pending;
+    $('learningStart').querySelector('button').disabled=!data.demo?.available||!scenarios.length||!!pending;
     $('learningLessonCard').hidden=!run||!['BASELINE_READY','IMPROVED_QUEUED','IMPROVED_RUNNING','COMPLETE'].includes(run.status);
     $('learningImprove').hidden=run?.status!=='BASELINE_READY';
     $('learningImprove').querySelector('button').disabled=run?.status!=='BASELINE_READY';
@@ -46,17 +60,27 @@ function render(status){
     }
     const messages={BASELINE_QUEUED:'Starting the first reply…',BASELINE_RUNNING:'The agents are preparing the first reply…',BASELINE_READY:'First reply ready. Review the lesson below, then generate the next reply.',IMPROVED_QUEUED:'Starting the reply with reviewed feedback…',IMPROVED_RUNNING:'The agents are using the reviewed lesson for the next reply…',STALE:'The knowledge changed. Start a fresh comparison.',INTERRUPTED:'This run was interrupted. Start a fresh comparison.'};
     let text=run?messages[run.status]||'':'Prepare the demo in Setup, then generate a reply to begin.';
-    if(run?.status==='FAILED')text='The real AI run could not complete ('+run.error+'). Check the model in Setup, then start a new comparison.';
+    if(run?.status==='FAILED'){
+        const errors={
+            AI_LEARNING_TOPIC_MISMATCH:'The question did not match the chosen guide. Pick a different topic or edit the question.',
+            AI_UNGROUNDED_GUIDANCE:'This reply could not pass the guide and safety checks. Try a routine question that the guide covers.'
+        };
+        text=errors[run.error]||'The real AI run could not complete ('+run.error+'). Check the model in Setup, then start a new comparison.';
+    }
     if(run?.status==='COMPLETE')text=run.change>0?`This test improved by ${run.change} clarity check(s). The reviewed lesson was saved automatically for future demo replies.`:run.improved_clarity?`Both replies passed all checks, and the next reply used ${run.words_saved} fewer words (at least 20% shorter). The reviewed lesson was saved for future demo replies.`:run.change===0?'No improvement measured in this run. The scores stayed the same, so no new lesson was automatically saved.':'The next reply passed fewer checks in this run. No lesson was automatically saved.';
     $('learningStatus').textContent=text;
     $('learningComparison').innerHTML=run?card('Before reviewed feedback',run.baseline)+card('After reviewed feedback',run.improved):'';
-    $('learnedStyles').innerHTML=(data.learned_styles||[]).filter(s=>s.active).map(s=>`<article class="record-card"><strong>Lesson saved for future demo replies</strong><p>${esc(s.text)}</p><button data-revoke-lesson="${esc(s.id)}">Stop using this lesson</button></article>`).join('')||'<p class="muted">No measured improvement has been saved as a demo lesson yet.</p>';
+    $('learnedStyles').innerHTML=(data.learned_styles||[]).filter(s=>s.active).map(s=>`<article class="record-card"><strong>Lesson saved for ${esc(scenarios.find(topic=>topic.category===(s.scope_category||'WIFI'))?.label||s.scope_category||'Wi-Fi')} demo replies</strong><p>${esc(s.text)}</p><button data-revoke-lesson="${esc(s.id)}">Stop using this lesson</button></article>`).join('')||'<p class="muted">No measured improvement has been saved as a demo lesson yet.</p>';
 }
 window.addEventListener('belive:status',event=>render(event.detail));
 $('learningRunPicker').onchange=()=>{selected=$('learningRunPicker').value;if(data)render(data);};
+$('learningTopic').onchange=()=>{
+    const topic=(data?.learning_scenarios||[]).find(item=>item.category===$('learningTopic').value);
+    $('learningQuestion').value=topic?.question||'';
+};
 $('learningStart').onsubmit=async event=>{
     event.preventDefault();const button=event.target.querySelector('button');button.disabled=true;
-    try{const result=await send('learning_start',{question:$('learningQuestion').value});selected=result.id;$('learningStatus').textContent='Starting the first real AI reply…';}
+    try{const result=await send('learning_start',{category:$('learningTopic').value,question:$('learningQuestion').value});selected=result.id;$('learningStatus').textContent='Starting the first real AI reply…';}
     catch(error){$('learningStatus').textContent=error.message;button.disabled=false;}
 };
 $('learningImprove').onsubmit=async event=>{
