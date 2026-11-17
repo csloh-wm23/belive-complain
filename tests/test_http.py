@@ -212,6 +212,11 @@ class HttpTests(unittest.TestCase):
                                      {**headers,'Idempotency-Key':secrets.token_hex(16)})[0],200)
         for platform,resource in [('GOOGLE','accounts/1/locations/2'),('FACEBOOK','1/feed'),('THREADS','2/replies')]:
             self.s.command('source',{'platform':platform,'resource':resource,'authorised':True},secrets.token_hex(16))
+        auth={**headers,'Idempotency-Key':secrets.token_hex(16)}
+        self.assertEqual(self.request('/api/users',dict(username='scan-staff',name='Scan Staff',
+                         password='Support-fixture-only-123',role='SUPPORT'),auth)[0],200)
+        self.assertEqual(self.request('/api/login',dict(username='scan-staff',password='Support-fixture-only-123'),auth)[0],200)
+        self.assertEqual(self.request('/api/source',{},auth)[0],403)
         with patch('belive.connectors.read_source',return_value=[{'id':'123','text':'There is smoke coming from a fictional socket.'}]) as read:
             for _ in range(2):
                 code,body=self.request('/api/scan-all',{},headers)

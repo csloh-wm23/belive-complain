@@ -69,7 +69,7 @@ class Tasks:
 
 def make_handler(service,tasks=None):
     tasks=tasks or Tasks(service);access=Access(service);csrf=secrets.token_urlsafe(32)
-    support_routes={'lesson_revoke','learning_start','learning_improve','intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
+    support_routes={'scan-all','public-preview','lesson_revoke','learning_start','learning_improve','intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
     class Handler(SimpleHTTPRequestHandler):
         extensions_map={**SimpleHTTPRequestHandler.extensions_map,'.js':'text/javascript'}
         def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT),**kwargs)
@@ -169,6 +169,8 @@ def make_handler(service,tasks=None):
                     result=service.command(route,p,key);tasks.learning(result['id'])
                     return self.json(200,result)
                 if route=='case_action' and p.get('action')=='acknowledge':p['owner']=user['name']
+                if route=='public-preview':
+                    return self.json(200,service.prepare_public_preview(p.get('id'),p.get('revision'),user['id']))
                 if route=='analyse':
                     with service.store.connect() as db:c=service.store.get(db,'case',p.get('id'))
                     if c['severity'] in {'HIGH','CRITICAL'}:raise ValueError('Safety risk requires staff handling')

@@ -58,3 +58,10 @@
 .setup-panel>h2{margin:0 0 4px;font-size:21px}
 .setup-description{margin:0 0 18px;color:var(--muted)}
 .setup-panel>.card{margin-bottom:16px}
+
+.operator-tools { display: inline-block; }
+.operator-tools summary, .queue-filters summary { cursor: pointer; }
+.queue-filters[open] { display: flex; flex-wrap: wrap; gap: 8px; }
+.queue-filters select { margin: 4px 0; }
+.command-hero h2 { margin: 0 0 18px; }
+.entry-lane { min-height: 0; }

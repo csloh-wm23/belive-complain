@@ -24,7 +24,7 @@ async function request(route,p){
     return value;
 }
 async function run(route,p){if(busy)throw Error('Wait for the current operation.');busy=true;const locked=[...document.querySelectorAll('button,input,textarea,select')].filter(e=>!e.disabled);locked.forEach(e=>e.disabled=true);try{const value=await request(route,p);await refresh();notice('Saved.');return value;}finally{locked.forEach(e=>e.disabled=false);busy=false;}}
-function navigate(view){if(!document.querySelector(`[data-page="${CSS.escape(view)}"]`))view='overview';if(location.hash!=='#'+view)history.pushState(null,'','#'+view);document.querySelectorAll('[data-page]').forEach(e=>e.hidden=e.dataset.page!==view);document.querySelectorAll('[data-view]').forEach(e=>{e.classList.toggle('active',e.dataset.view===view);e.setAttribute('aria-current',e.dataset.view===view?'page':'false');});const names={overview:'Command center',cases:'Complaints',notifications:'Messages',sources:'Proactive sources',memory:'Self-learning',settings:'AI & knowledge',database:'Data & backups',activity:'Reports & activity'};const nav=document.querySelector(`[data-view="${view}"]`);if(nav?.closest('details'))nav.closest('details').open=true;$('pageTitle').textContent=names[view];$('crumb').textContent=names[view];window.scrollTo(0,0);}
+function navigate(view){if(!document.querySelector(`[data-page="${CSS.escape(view)}"]`))view='overview';if(location.hash!=='#'+view)history.pushState(null,'','#'+view);document.querySelectorAll('[data-page]').forEach(e=>e.hidden=e.dataset.page!==view);document.querySelectorAll('[data-view]').forEach(e=>{e.classList.toggle('active',e.dataset.view===view);e.setAttribute('aria-current',e.dataset.view===view?'page':'false');});const names={overview:'Command center',cases:'Complaints',notifications:'Messages',sources:'Public reviews',memory:'Self-learning',settings:'AI & knowledge',database:'Data & backups',activity:'Reports & activity'};const nav=document.querySelector(`[data-view="${view}"]`);if(nav?.closest('details'))nav.closest('details').open=true;$('pageTitle').textContent=names[view];$('crumb').textContent=names[view];window.scrollTo(0,0);}
 const level=c=>c.complaint_level||({LOW:'SIMPLE',MEDIUM:'MODERATE',HIGH:'HIGH',CRITICAL:'HIGH'}[c.severity]||'CHECKING');
 const side=c=>['GOOGLE','FACEBOOK','THREADS','MANUAL_PUBLIC'].includes(c.platform)?'Proactive discovery':'Reactive support';
 const pill=value=>`<span class="pill ${String(value).toLowerCase()}">${esc(labels[value]||value)}</span>`;
@@ -42,7 +42,7 @@ const staffAlert = c => !complaintQueues.closed(c) && (c.overdue || ['HIGH','CRI
 const alertReason = c => [c.severity==='CRITICAL'?'Immediate safety risk':c.severity==='HIGH'?'High urgency':'',c.overdue?'Overdue':'',!c.owner?'Unassigned':''].filter(Boolean).join(' · ');
 $('staffAlerts').onclick=()=>{
     complaintQueue='all';
-    $('search').value='';$('statusFilter').value='';$('queueFilter').value='ALERTS';
+    $('search').value='';$('statusFilter').value='';$('queueFilter').value='ALERTS';$('queueFilter').closest('details').open=true;
     navigate('cases');renderCases();
 };
 function renderCases(){
@@ -62,7 +62,11 @@ function renderCases(){
 function renderDiscoveries(){
     const platformNames={GOOGLE:'Google Reviews',FACEBOOK:'Facebook',THREADS:'Threads'};
     const matches=data.cases.filter(c=>Object.hasOwn(platformNames,c.platform)&&c.status!=='SKIPPED');
-    const selectedPlatform=$('discoveryPlatform').value;
+    const filter=$('discoveryPlatform');
+    const showFilter=new Set(matches.map(c=>c.platform)).size>1;
+    filter.closest('label').hidden=!showFilter;
+    if(!showFilter)filter.value='';
+    const selectedPlatform=filter.value;
     const signature=c=>c.description.trim().replace(/\s+/g,' ').toLowerCase();
     const platformsByText=new Map();
     for(const c of matches){
@@ -79,8 +83,23 @@ function renderDiscoveries(){
             ${duplicates.size>1?'<p>Possible cross-platform duplicate: identical text was found on another platform.</p>':''}</article>`;
     }).join('')||'<p>No matching discoveries yet.</p>';
     const sources=data.sources.filter(s=>s.enabled);
-    const running=(data.tasks||[]).filter(task=>task.startsWith('source-')).length;
-    $('scanSummary').textContent=sources.length?`${sources.length} enabled source(s) · Every ${data.source_interval_minutes} min${running?` · ${running} scan(s) running`:''}`:'Add an authorised Google Reviews, Facebook or Threads source to start.';
+    const tasks=new Set(data.tasks||[]);
+    const running=sources.some(source=>tasks.has('source-'+source.id));
+    $('scanAllSources').disabled=running||!sources.length;
+    $('scanAllSources').textContent=running?'Collecting…':'Collect reviews now';
+    $('scanSummary').textContent=sources.length
+        ? `${sources.length} enabled source(s). Scheduled checks every ${data.source_interval_minutes} min while BeLive is running.`
+        : 'An administrator needs to connect an authorised Google Reviews, Facebook or Threads source first.';
+    const scanErrors={CONNECTOR_NOT_CONFIGURED:'API token missing',FACEBOOK_VERSION_REQUIRED:'Facebook API version missing',
+        CONNECTOR_READ_FAILED:'Platform read failed. Check API access, token and source ID.'};
+    $('scanResults').hidden=!sources.length;
+    $('scanResults').innerHTML=sources.map(source=>{
+        const result=tasks.has('source-'+source.id)?'Reading recent items…'
+            :source.error?scanErrors[source.error]||'Platform read failed'
+            :source.last_scan?`${source.last_count??0} items checked · ${new Date(source.last_scan).toLocaleString()}`
+            :'Waiting for the first check';
+        return `<li><strong>${esc(platformNames[source.platform])}</strong> · ${esc(result)}</li>`;
+    }).join('');
     if(document.activeElement!==$('scanInterval'))$('scanInterval').value=data.source_interval_minutes;
 }
 document.querySelector('[data-page="cases"]').addEventListener('click',event=>{
@@ -166,7 +185,16 @@ function complaintNextStep(c){
     };
     return steps[c.status]||'Review the conversation and the latest case activity.';
 }
-function renderDetail(){const c=data.cases.find(c=>c.id===selected);if(!c)return;const active=!['CLOSED','SKIPPED','ANSWERED'].includes(c.status);let actions='';
+function renderDetail(){const c=data.cases.find(c=>c.id===selected);if(!c)return;const active=!['CLOSED','SKIPPED','ANSWERED'].includes(c.status);
+const publicSource=!c.tenant_id&&c.entrypoint==='PUBLIC_SOURCE'&&['GOOGLE','FACEBOOK','THREADS'].includes(c.platform);
+const preview=c.public_reply_preview?.source_version===c.source_versions.at(-1)?c.public_reply_preview:null;
+const canPreview=active&&c.status!=='VERIFIED'&&c.analysis?.report_type==='COMPLAINT'
+    &&c.analysis.relevance==='SUPPORT'&&!c.analysis.uncertainty;
+const urgencyReason=c.severity==='CRITICAL'?'Immediate safety concern. Staff handles this case directly.'
+    :c.severity==='HIGH'?'AI flagged this for urgent review. Staff confirms the urgency and decides how to respond.'
+    :c.severity==='MEDIUM'?'The issue needs staff investigation or action.'
+    :c.severity==='LOW'?'Routine issue. Approved guidance may be used when all reply checks pass.':'Awaiting severity assessment.';
+let actions='';
 if(['AI_PENDING','AWAITING_CONTACT','HUMAN_REVIEW'].includes(c.status))actions+='<button data-act="acknowledge">Acknowledge as staff</button>';
 if(c.status==='FOLLOW_UP'&&c.automatic_answer&&!c.owner)actions+='<button data-act="acknowledge">Take over as staff</button>';
 if(['AI_PENDING','IN_PROGRESS'].includes(c.status))actions+='<button data-act="followup">Record action & start follow-up</button>';
@@ -174,17 +202,22 @@ if(c.status==='FOLLOW_UP')actions+='<button data-act="reassess">Unresolved · ha
 if(c.status==='VERIFIED')actions+='<button data-act="close">Close verified case</button>';
 if(!active)actions+='<button data-act="reopen">Reopen for staff</button>';
 $('caseDetail').innerHTML=`<div class="dialog-heading"><div><span class="eyebrow">${esc(c.id)}</span><h2>${esc(c.title)}</h2></div><button data-close="caseDialog" aria-label="Close case">×</button></div>
-<div class="case-tags">${pill(c.status)}${pill(level(c))}${pill(c.category)}</div><button id="reloadCase">Refresh case</button>
+<div class="case-tags">${pill(c.status)}${pill(level(c))}${pill(c.category)}</div><p>${esc(urgencyReason)}</p>${c.staff_destination?`<p><strong>Assigned team</strong> ${esc(c.staff_destination)}</p>`:''}
 <section class="case-next-step"><h3>Next step</h3><p>${esc(complaintNextStep(c))}</p></section>
 ${c.public_url?`<p><a href="${esc(c.public_url)}" target="_blank" rel="noopener noreferrer">Open original ${esc(c.platform)} source ↗</a></p>`:''}
 ${c.entrypoint==='TENANT_WEBSITE'? `<section class="case-section"><h3>Reported rental location</h3><p>${c.reported_location ? esc([c.reported_location.property,c.reported_location.unit].filter(Boolean).join(' · ')) : 'Location was not provided.'}</p>${c.reported_location?.address?`<p>${esc(c.reported_location.address)}</p>`:''}</section>` : ''}
 <section class="case-section"><h3>Conversation</h3>${chat(c.conversation)}<p class="muted">Only published messages are shown to the tenant.</p></section>
-<details class="case-section"><summary>AI assessment</summary><p><b>Message:</b> ${esc(c.analysis?.report_type==='COMPLAINT'?'Complaint':c.analysis?.report_type==='ENQUIRY'?'Support question':c.analysis?.report_type==='NON_SUPPORT'?'Not a support request':'Awaiting check')} · <b>Staff destination:</b> ${esc(c.staff_destination||data.routing?.departments?.[c.category]||'Support team')}</p>${agentTrace(c)}${c.analysis?`<p>${esc(c.analysis.summary)}</p><p><b>AI suggestion:</b> ${esc(c.analysis.plan||'Staff handling required')}</p><p class="muted">Reviewed lessons used: ${c.analysis.learning_used?.count||0}</p>`:'<p>No AI assessment yet.</p>'}${c.ai_assistance_pending?'<p>AI is preparing assistance while this case remains in the staff queue.</p>':''}${c.review_reason?`<p class="verification">${esc(c.review_reason)}</p>`:''}${active&&!['HIGH','CRITICAL'].includes(c.severity)&&!['FOLLOW_UP','VERIFIED'].includes(c.status)?`<button data-analyse="${c.id}">Run support agents</button>`:''}</details>
-<section class="case-section"><h3>Reply to customer</h3>${c.conversation?.length? `<div class="muted"><strong>Latest customer message</strong><p>${esc([...c.conversation].reverse().find(m=>['TENANT','REPORTED_ISSUE'].includes(m.sender))?.text||'')}</p></div>`:''}${c.automatic_answer?'<p class="verification">A SIMPLE informational reply was sent automatically. This does not verify physical repairs.</p>':'<p>AI drafts remain private until staff reviews and publishes them.</p>'}<label>Response draft<textarea id="caseDraft" maxlength="2500" ${!active?'readonly':''}>${esc(c.draft)}</textarea></label><label><input id="caseConfirmed" type="checkbox"> I reviewed the reply or checked the outcome evidence.</label>${active?'<div class="case-actions"><button data-act="draft">Save edited reply</button><button class="primary" data-act="publish_response">Send saved reply to tenant</button></div>':''}</section>
-<details class="case-section" open><summary>Handle and close complaint</summary>${c.tenant_resolution?`<p>Tenant feedback: ${c.tenant_resolution.resolved?'Reported answered/resolved; check evidence':'Still unresolved'}</p><p>${esc(c.tenant_resolution.note)}</p>`:''}
+<details class="case-section" ${publicSource?'open':''}><summary>AI assessment</summary>${!c.analysis&&['AI_PENDING','AWAITING_CONTACT'].includes(c.status)?'<button data-refresh-case>Refresh assessment</button>':''}<p><b>Message:</b> ${esc(c.analysis?.report_type==='COMPLAINT'?'Complaint':c.analysis?.report_type==='ENQUIRY'?'Support question':c.analysis?.report_type==='NON_SUPPORT'?'Not a support request':'Awaiting check')} · <b>Staff destination:</b> ${esc(c.staff_destination||data.routing?.departments?.[c.category]||'Support team')}</p>${agentTrace(c)}${c.analysis?`<p>${esc(c.analysis.summary)}</p><p><b>AI suggestion:</b> ${esc(c.analysis.plan||'Staff handling required')}</p><p class="muted">Reviewed lessons used: ${c.analysis.learning_used?.count||0}</p>`:'<p>No AI assessment yet.</p>'}${c.ai_assistance_pending?'<p>AI is preparing assistance while this case remains in the staff queue.</p>':''}${c.review_reason?`<p class="verification">${esc(c.review_reason)}</p>`:''}${active&&!['HIGH','CRITICAL'].includes(c.severity)&&!['FOLLOW_UP','VERIFIED'].includes(c.status)?`<button data-analyse="${c.id}">Run support agents</button>`:''}</details>
+${publicSource?`<section class="case-section"><h3>Public reply preview</h3>
+       <p class="muted">For staff review before any reply on the source platform.</p>
+       ${preview?`<p class="source-text">${esc(preview.text)}</p><small>Generated by ${esc(preview.agent)}</small>`
+         :c.draft?`<p class="source-text">${esc(c.draft)}</p><small>${c.public_guidance_prepared?'Approved SIMPLE guidance · saved as a draft':'Current suggested wording'}</small>`:''}
+       ${canPreview?`<div class="case-actions"><button class="primary" data-public-preview="${esc(c.id)}">${preview?'Regenerate preview':'Generate tailored preview'}</button></div>`:''}
+     </section>`:`<section class="case-section"><h3>Reply to customer</h3>${c.conversation?.length? `<div class="muted"><strong>Latest customer message</strong><p>${esc([...c.conversation].reverse().find(m=>['TENANT','REPORTED_ISSUE'].includes(m.sender))?.text||'')}</p></div>`:''}${c.automatic_answer?'<p class="verification">A SIMPLE informational reply was sent automatically. This does not verify physical repairs.</p>':'<p>AI drafts remain private until staff reviews and publishes them.</p>'}<label>Response draft<textarea id="caseDraft" maxlength="2500" ${!active?'readonly':''}>${esc(c.draft)}</textarea></label><label><input id="caseConfirmed" type="checkbox"> I reviewed the reply or checked the outcome evidence.</label>${active?'<div class="case-actions"><button data-act="draft">Save edited reply</button><button class="primary" data-act="publish_response">Send saved reply to tenant</button></div>':''}</section>`}
+<details class="case-section" data-handling><summary>Handle and close complaint</summary>${c.tenant_resolution?`<p>Tenant feedback: ${c.tenant_resolution.resolved?'Reported answered/resolved; check evidence':'Still unresolved'}</p><p>${esc(c.tenant_resolution.note)}</p>`:''}
 <label>Staff member<input id="caseOwner" maxlength="80" readonly value="${esc(c.owner||data.operator.name)}"></label><label>Action or evidence<textarea id="caseNote" maxlength="2000"></textarea></label><label>Next-action deadline<input id="caseDue" type="datetime-local" value="${localDateTime(c.action_due)}" ${!active?'disabled':''}></label>
 <div class="case-actions">${actions}</div>
-<details class="case-section"><summary>More staff actions</summary>
+<details class="case-section"><summary>More staff actions</summary><button id="reloadCase">Refresh case</button>
 ${active?`<div class="form-grid"><label>Category<select id="staffCategory">${Object.keys(data.reports.categories).map(k=>`<option value="${k}" ${k===c.category?'selected':''}>${esc(k.replaceAll('_',' '))}</option>`).join('')}</select></label><label>Complaint level<select id="staffSeverity">${['LOW','MEDIUM','HIGH','CRITICAL'].map(k=>`<option value="${k}" ${k===c.severity?'selected':''}>${k==='LOW'?'SIMPLE':k==='MEDIUM'?'MODERATE':k==='CRITICAL'?'HIGH — immediate danger':'HIGH'}</option>`).join('')}</select></label></div><button data-act="assess">Save staff assessment</button>`:''}
 <div class="case-actions"><button data-act="plan" ${!active?'disabled':''}>Save next action</button><button data-act="note">Add private note</button></div>
 ${!c.tenant_id?`<label>Verified tenant<select id="linkTenant"><option value="">Choose tenant…</option>${data.tenants.map(t=>`<option value="${esc(t.id)}">${esc(t.id)}</option>`).join('')}</select></label><button data-act="link_tenant">Link after checking identity</button>`:''}
@@ -194,7 +227,7 @@ ${(data.workorders||[]).filter(w=>w.case_id===c.id).map(w=>`<p>${esc(w.departmen
 </details>
 </details>
 ${c.status==='CLOSED'?'<section class="case-section"><h3>Teach future replies</h3><label>Reply as the customer should see it<textarea id="correctedExample" maxlength="2000" placeholder="Write directly to the customer. For example: Please tell us when the connection drops."></textarea></label><label>General question this answers (for public reuse)<input id="publicLessonQuestion" maxlength="240"></label><label><input id="publishPublicLesson" type="checkbox"> I reviewed this as general guidance safe for any customer. It contains no private, property-specific or account information.</label><label><input id="shareExample" type="checkbox"> Allow this style example through the protected shared-memory API</label><div class="case-actions"><button data-feedback="APPROVED">Use saved wording as a lesson</button><button data-feedback="CORRECTED">Save corrected lesson</button><button data-feedback="REJECTED">Reject lesson</button></div></section>':''}
-<details class="case-section"><summary>Source evidence and activity</summary><p>${esc(c.description)}</p><p>Source: ${esc(c.platform)} / ${esc(c.source_id)}. Saved versions: ${esc(c.source_versions.join(', '))}</p>${c.analysis?`<p>Exact source quote: ${esc(c.analysis.evidence)}</p>`:''}${(c.analysis?.record_refs||[]).map(r=>`<p><b>${esc(r.id)} · v${r.version}</b> ${esc(r.source)}<br>${esc(r.text)}</p>`).join('')}${(c.activity||[]).map(a=>`<p><b>${esc(a.action)}</b> · ${esc(new Date(a.created_at).toLocaleString())}<br>${esc(a.detail)}</p>`).join('')}</details><p id="caseError" role="alert" class="error"></p>`;}
+<details class="case-section"><summary>Source evidence and activity</summary><p>${esc(c.description)}</p><p>Platform ${esc(c.platform)} · Saved versions ${esc(c.source_versions.join(', '))}</p>${c.public_url?`<p><a href="${esc(c.public_url)}" target="_blank" rel="noopener noreferrer">Open original listing ↗</a></p>`:''}${c.analysis?`<p>Exact source quote: ${esc(c.analysis.evidence)}</p>`:''}${(c.analysis?.record_refs||[]).map(r=>`<p><b>${esc(r.id)} · v${r.version}</b> ${esc(r.source)}<br>${esc(r.text)}</p>`).join('')}${(c.activity||[]).map(a=>`<p><b>${esc(a.action)}</b> · ${esc(new Date(a.created_at).toLocaleString())}<br>${esc(a.detail)}</p>`).join('')}</details><p id="caseError" role="alert" class="error"></p>`;}
 
 
 function formData(form){const p=Object.fromEntries(new FormData(form));form.querySelectorAll('[type="checkbox"]').forEach(e=>p[e.name]=e.checked);return p;}
@@ -207,10 +240,16 @@ $('sourceScheduleForm').onsubmit=async event=>{
     catch(error){notice(error.message,true);}
 };
 $('scanAllSources').onclick=async()=>{
+    const button=$('scanAllSources');
+    button.disabled=true;
+    button.textContent='Collecting…';
     try{
-        const result=await run('scan-all',{});
-        notice(`Started ${result.started} scan(s). ${result.already_running} already running.`);
-    }catch(error){notice(error.message,true);}
+        await request('scan-all',{});
+        await refresh();
+    }catch(error){
+        renderDiscoveries();
+        notice(error.message,true);
+    }
 };
 const publicComplaintForm=$('publicComplaintForm');
 if(publicComplaintForm)publicComplaintForm.onsubmit=async event=>{
@@ -233,12 +272,21 @@ $('portalIssue').onclick=()=>{$('utilityContent').innerHTML=`<div class="dialog-
 $('export').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='belive-tenant-support.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.close){$(b.dataset.close).close();return;}if(b.dataset.view||b.dataset.go){navigate(b.dataset.view||b.dataset.go);return;}if(b.dataset.case){openCase(b.dataset.case);return;}
 try{
-if(b.id==='reloadCase'){await run('status');renderDetail();}
+if(b.id==='reloadCase'||b.hasAttribute('data-refresh-case')){await run('status');renderDetail();}
 if(b.id==='revokePortal'){await run('portal_revoke',{tenant_id:$('portalTenant').value,confirmed:true});$('portalKey').textContent='All portal access keys for this tenant have been revoked.';}
-if(b.dataset.act){const c=data.cases.find(c=>c.id===selected);await run('case_action',{id:c.id,revision:c.revision,action:b.dataset.act,note:b.dataset.act==='draft'?$('caseDraft').value:$('caseNote').value,reviewed_reply:b.dataset.act==='publish_response'?$('caseDraft').value:undefined,owner:$('caseOwner').value,tenant_id:$('linkTenant')?.value,department:$('department')?.value,category:$('staffCategory')?.value,severity:$('staffSeverity')?.value,due_at:$('caseDue').value?new Date($('caseDue').value).toISOString():null,confirmed:$('caseConfirmed').checked});renderDetail();}
+if(b.dataset.act){const handling=b.closest('details');const c=data.cases.find(c=>c.id===selected);await run('case_action',{id:c.id,revision:c.revision,action:b.dataset.act,note:b.dataset.act==='draft'?$('caseDraft').value:$('caseNote').value,reviewed_reply:b.dataset.act==='publish_response'?$('caseDraft').value:undefined,owner:$('caseOwner').value,tenant_id:$('linkTenant')?.value,department:$('department')?.value,category:$('staffCategory')?.value,severity:$('staffSeverity')?.value,due_at:$('caseDue').value?new Date($('caseDue').value).toISOString():null,confirmed:$('caseConfirmed')?.checked??false});renderDetail();if(handling)document.querySelector('#caseDetail [data-handling]').open=true;}
 if(b.dataset.workorder){const c=data.cases.find(c=>c.id===selected);await run('case_action',{id:c.id,revision:c.revision,action:'complete_workorder',workorder_id:b.dataset.workorder,note:$('caseNote').value});renderDetail();}
 if(b.dataset.feedback){await run('feedback',{id:selected,verdict:b.dataset.feedback,text:$('correctedExample').value,share:$('shareExample').checked,publish_public:$('publishPublicLesson').checked,public_question:$('publicLessonQuestion').value});renderDetail();}
 if(b.dataset.revoke)await run('feedback',{id:b.dataset.revoke,verdict:'REJECTED'});
+if(b.dataset.publicPreview){
+    const c=data.cases.find(item=>item.id===b.dataset.publicPreview);
+    const buttonLabel=b.textContent;
+    b.textContent='Preparing preview…';
+    try{await run('public-preview',{id:c.id,revision:c.revision});}
+    finally{b.textContent=buttonLabel;}
+    renderDetail();
+    notice('Public reply preview saved.');
+}
 if(b.dataset.analyse){await run('analyse',{id:b.dataset.analyse});notice('AI analysis started. Refresh after the task finishes; provider failures route to staff.');}
 if(b.dataset.approve)await run('approve_message',{id:b.dataset.approve});if(b.dataset.reject)await run('reject_message',{id:b.dataset.reject});
 if(b.dataset.deliver){const r=await run('deliver',{id:b.dataset.deliver});notice('Delivery outcome: '+r.status,r.status!=='DELIVERED');}

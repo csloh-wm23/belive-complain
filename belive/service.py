@@ -505,6 +505,34 @@ class Service:
         else:raise ValueError('Unknown case action')
         c['revision']+=1;c['updated_at']=now();self.store.put(db,'case',c);self.store.event(db,c['id'],action.upper(),p.get('_actor','operator')+': '+str(note))
         return c
+    def prepare_public_preview(self, case_id, revision, actor):
+        with self.lock, self.store.connect() as db:
+            case = self.store.get(db, 'case', case_id)
+            require(case['revision'] == revision, 'Case changed. Refresh it before preparing a preview.')
+            require(case['entrypoint'] == 'PUBLIC_SOURCE' and case['platform'] in {'GOOGLE', 'FACEBOOK', 'THREADS'},
+                    'Choose a public platform complaint')
+            assessment = case.get('analysis') or {}
+            require(assessment.get('report_type') == 'COMPLAINT' and assessment.get('relevance') == 'SUPPORT'
+                    and not assessment.get('uncertainty') and case['status'] not in {'CLOSED', 'SKIPPED', 'VERIFIED', 'ANSWERED'},
+                    'A confirmed, active public complaint assessment is required')
+            context = {'title': case['title'], 'report': case['description'], 'category': case['category']}
+        try:
+            reply = self.ai.public_reply_preview(context)
+        except Exception as exc:
+            raise ValueError(FAILURE_MESSAGES[failure_code(exc)]) from exc
+        with self.lock, self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            current = self.store.get(db, 'case', case_id)
+            require(current['revision'] == revision, 'Case changed. Refresh it before preparing a preview.')
+            current['public_reply_preview'] = {
+                'text': reply, 'agent': 'Public Reply Preview Agent', 'at': now(),
+                'source_version': current['source_versions'][-1],
+            }
+            current['revision'] += 1
+            self.store.put(db, 'case', current)
+            self.store.event(db, case_id, 'PUBLIC_REPLY_PREVIEW', actor + ' generated a local preview for staff review')
+        return current['public_reply_preview']
+
     def analyse(self,case_id):
         with self.lock,self.store.connect() as db:
             c=self.store.get(db,'case',case_id)
@@ -521,9 +549,20 @@ class Service:
         public_turn=c.get('public_guidance_turn')
         question=public_turn['text'] if public_turn else c['description']
         classify_public=getattr(self.ai,'classify_public_guidance',None)
+        result = None
+        error = ''
+        if public_source:
+            try:
+                result = self.ai.analyse(context,examples)
+            except Exception as exc:
+                error = failure_code(exc)
+                job['agent_trace'] = getattr(exc,'agent_trace',[])
+        simple_public = bool(result and result.get('report_type') == 'COMPLAINT'
+                             and result.get('relevance') == 'SUPPORT' and result.get('severity') == 'LOW'
+                             and not result.get('uncertainty') and not result.get('requires_human'))
         if (classify_public and not c['tenant_id']
                 and ((c.get('entrypoint')=='TENANT_WEBSITE' and c['status']=='AI_PENDING')
-                     or (public_source and c['status']=='AWAITING_CONTACT'))
+                     or (simple_public and c['status']=='AWAITING_CONTACT'))
                 and not c.get('owner') and not c.get('handoff') and not c.get('automation_paused')
                 and not automation.exception_reason(c['title']+' '+question)):
             try:
@@ -531,9 +570,12 @@ class Service:
                 public_reply=automation.public_guidance_reply(decision,lessons)
             except Exception:
                 pass  # The existing assessment path handles model and parsing failures.
-        try: result=None if public_reply or public_turn else self.ai.analyse(context,examples);error=''
-        except Exception as exc:
-            result=None;error=failure_code(exc);job['agent_trace']=getattr(exc,'agent_trace',[])
+        if not public_source and not public_reply and not public_turn:
+            try:
+                result = self.ai.analyse(context,examples)
+            except Exception as exc:
+                error = failure_code(exc)
+                job['agent_trace'] = getattr(exc,'agent_trace',[])
         with self.lock,self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             current=self.store.get(db,'case',case_id)
@@ -545,8 +587,8 @@ class Service:
                     if public_source:
                         current.update(status='AWAITING_CONTACT',severity='LOW',draft=public_reply,
                                        next_action='Public guidance prepared; no reply posted to the source',
-                                       analysis={'category':'OTHER','severity':'LOW','relevance':'SUPPORT',
-                                                 'summary':'Matched general public guidance','record_ids':[]})
+                                       category=result['category'], analysis=result, public_guidance_prepared=True)
+                        job['agent_trace']=result.get('agent_trace',[])
                         self.store.event(db,case_id,'PUBLIC_GUIDANCE_PREPARED','Draft prepared locally; no external reply sent')
                     else:
                         automation.publish_public_guidance(self.store,db,current,public_reply,'AI_SUPPORT',public_turn['id'] if public_turn else 'initial')

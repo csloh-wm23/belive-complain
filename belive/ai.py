@@ -75,8 +75,20 @@ class SupportAI:
             if context.get('automatic'):
                 types.update(approved_answer_id='string',match_confidence='number',request_language='string')
             props = {name:{'type':kind} for name,kind in types.items()}
+            record_ids = [record['id'] for record in context['verified_records']]
             props['record_ids']['items'] = {'type':'string'}
+            if record_ids:
+                props['record_ids']['items']['enum'] = record_ids
+            else:
+                props['record_ids']['maxItems'] = 0
+            if context.get('automatic'):
+                props['approved_answer_id']['enum'] = ['', *[answer['id'] for answer in context['approved_answers']]]
+                props['match_confidence'].update(minimum=0, maximum=1)
+                props['request_language']['enum'] = ['en', 'ms', 'zh', 'unknown']
             shape = {'type':'object','properties':props,'required':list(types),'additionalProperties':False}
+        if role in {'Public Reply Preview Agent', 'Learning Reply Agent'}:
+            shape = {'type':'object','properties':{'reply':{'type':'string'}},
+                     'required':['reply'],'additionalProperties':False}
         try:
             runtime_python()
         except RuntimeError:
@@ -111,6 +123,24 @@ class SupportAI:
         result=json.loads(raw)
         if not isinstance(result,dict): raise ValueError('AI_INVALID_JSON')
         return result
+    def public_reply_preview(self, context):
+        result = self.generate(
+            'Public Reply Preview Agent',
+            'Draft a public reply for staff review. Return exactly {"reply":"..."}. '
+            'Write exactly one sentence thanking the reviewer for reporting their specific concerns. '
+            'Keep the wording about what was reported, without implying findings or adding durations. '
+            'The interface adds the instruction to contact support privately. '
+            'Do not request any information or give instructions, links, guarantees, timelines or promises of action.',
+            context, [],
+        )
+        if set(result) != {'reply'}:
+            raise ValueError('AI_INVALID_PLAN')
+        acknowledgement = bounded(result['reply'], 20, 420)
+        acknowledgement = re.split(r'(?<=[.!?。！？])\s+', acknowledgement, maxsplit=1)[0]
+        if re.search(r'https?://|www\.|\[(?:email|number) removed\]|\b(?:password|otp|guarantee)\b', acknowledgement, re.I):
+            raise ValueError('AI_UNSAFE_OUTPUT')
+        return acknowledgement + ' Please contact BeLive tenant support privately so the team can review your report.'
+
     def classify_public_guidance(self, title, description, original_report=None, lessons=None):
         from belive.automation import PUBLIC_GUIDANCE
         return self.generate(
@@ -185,6 +215,18 @@ class SupportAI:
             return {**a,'plan':'Verify tenancy through an authorised private channel before personal assistance.',
                     'response':'Please contact the official BeLive tenant-support channel privately so staff can verify your tenancy and review the issue. Do not share private details publicly.',
                     'requires_human':False,'record_ids':[]}
+        if context.get('learning_practice'):
+            guide = context['approved_answers'][0]
+            reply = generate('Learning Reply Agent',
+                'Write a short useful practice reply to this question. Use only the approved guidance and ask at most two useful questions. '
+                'Apply any reviewed lesson to wording only. If this guidance cannot help, return an empty reply. Return exactly {"reply":"..."}.',
+                {'question':context['case']['description'],'approved_guidance':guide['answer'],
+                 'reviewed_lesson':examples[0]['text'] if examples else ''},examples)
+            if set(reply) != {'reply'} or not isinstance(reply['reply'],str) or not reply['reply'].strip():
+                raise ValueError('AI_UNGROUNDED_GUIDANCE')
+            response = bounded(reply['reply'],1,1000)
+            self.review_guidance(context,guide,response,examples,generate)
+            return {**a,'response':response,'guidance_review_passed':True}
         automatic=bool(context.get('automatic'))
         routine=(' In automatic mode, also return approved_answer_id (one ID from approved_answers, or empty), match_confidence (number 0 to 1), request_language (en/ms/zh or unknown). '
           'An EXACT entry must directly answer the current question; its exact wording will be sent. A GUIDANCE entry is a reusable support playbook: '
@@ -217,24 +259,28 @@ class SupportAI:
         selected=next((x for x in context.get('approved_answers',[]) if x['id']==p.get('approved_answer_id')),None)
         if selected and selected.get('kind')=='GUIDANCE' and not p['requires_human']:
             if selected['id'] not in p['record_ids']:raise ValueError('AI_UNGROUNDED_GUIDANCE')
-            review=generate('Safety Review Agent',
-                'Check the proposed tenant response against only the selected approved guidance and the tenant conversation. '
-                'Return exactly grounded (boolean), safe (boolean), uncertainty (boolean), unsupported_claims (array of strings). '
-                'Grounded means every factual statement and instruction is supported by the guidance or clearly attributed to the tenant. '
-                'Relevant clarifying questions are allowed. Reject invented fees, schedules, property rules, diagnoses, promises, completed actions, '
-                'physical repairs, electrical/gas instructions, access bypasses, account changes or financial decisions. '
-                'Reject repetition of a failed suggestion as a claimed solution and requests for details already clearly answered. Mark uncertainty true whenever unsure. Do not rewrite the response.',
-                {'case':context['case'],'conversation':context.get('conversation',[]),
-                 'approved_guidance':selected,'proposed_response':p['response']},examples)
-            if (set(review)!={'grounded','safe','uncertainty','unsupported_claims'}
-                or any(type(review[k]) is not bool for k in ['grounded','safe','uncertainty'])
-                or not isinstance(review['unsupported_claims'],list)
-                or any(not isinstance(x,str) for x in review['unsupported_claims'])):
-                raise ValueError('AI_INVALID_GUIDANCE_REVIEW')
-            if not review['grounded'] or not review['safe'] or review['uncertainty'] or review['unsupported_claims']:
-                raise ValueError('AI_UNGROUNDED_GUIDANCE')
+            self.review_guidance(context,selected,p['response'],examples,generate)
             p['guidance_review_passed']=True
         return {**a,**p}
+    @staticmethod
+    def review_guidance(context,guide,response,examples,generate):
+        review=generate('Safety Review Agent',
+            'Check the proposed tenant response against only the selected approved guidance and the tenant conversation. '
+            'Return exactly grounded (boolean), safe (boolean), uncertainty (boolean), unsupported_claims (array of strings). '
+            'Grounded means every factual statement and instruction is supported by the guidance or clearly attributed to the tenant. '
+            'Relevant clarifying questions are allowed. Reject invented fees, schedules, property rules, diagnoses, promises, completed actions, '
+            'physical repairs, electrical/gas instructions, access bypasses, account changes or financial decisions. '
+            'Reject repetition of a failed suggestion as a claimed solution and requests for details already clearly answered. Mark uncertainty true whenever unsure. Do not rewrite the response.',
+            {'case':context['case'],'conversation':context.get('conversation',[]),
+             'approved_guidance':guide,'proposed_response':response},examples)
+        if (set(review)!={'grounded','safe','uncertainty','unsupported_claims'}
+            or any(type(review[k]) is not bool for k in ['grounded','safe','uncertainty'])
+            or not isinstance(review['unsupported_claims'],list)
+            or any(not isinstance(x,str) for x in review['unsupported_claims'])):
+            raise ValueError('AI_INVALID_GUIDANCE_REVIEW')
+        if not review['grounded'] or not review['safe'] or review['uncertainty'] or review['unsupported_claims']:
+            raise ValueError('AI_UNGROUNDED_GUIDANCE')
+
     def sync(self,examples):
         return native_request([],self.settings,mode='memory',home=self.home,
             examples=[{'version_id':e['id'],'approved_reply':e['text']} for e in examples])

@@ -60,7 +60,9 @@ def execute(service,run_id):
     # The comparison has its own native memory and never overwrites operational examples.
     ai=SupportAI(service.settings,service.store.path.parent/'hermes_memory/learning-demo'/run_id/stage) if isinstance(service.ai,SupportAI) else service.ai
     try:
-        result=ai.analyse(deepcopy(run['context']),examples)
+        context=deepcopy(run['context'])
+        context['learning_practice']=True
+        result=ai.analyse(context,examples)
         if not result.get('guidance_review_passed') or not result.get('response'):
             raise ValueError('AI_UNGROUNDED_GUIDANCE')
         value={'response':result['response'],'score':score(result['response']),
