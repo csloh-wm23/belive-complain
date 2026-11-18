@@ -17,6 +17,10 @@ def check(condition, message):
 
 
 def exception_reason(text):
+    if re.search(r'\b(?:maintenance|support)\s+(?:team|person|guy)\b|'
+                 r'\b(?:send|call|ask|contact|bring)\b.{0,30}\b(?:maintenance|technician)\b|'
+                 r'叫.{0,6}(?:维修|客服|员工)|安排.{0,6}(?:维修|人员)',text,re.I):
+        return 'Tenant requests staff assistance'
     if re.search(r'\b(human|person|agent|staff|staf)\b|人工|真人', text, re.I):
         return 'Tenant requests staff assistance'
     if re.search(r'\b(refund|rent|payment|balance|bank|otp|password|unlock|locked out|broken|broke|repair|injur\w*|leak\w*|sparks?|smoke|fire|gas|electric\w*|inspect\w*|compensat\w*)\b|退款|付款|密码|漏水|维修|受伤|煤气|kebakaran|bayaran|rosak|bocor', text, re.I):
@@ -42,7 +46,7 @@ PUBLIC_GUIDANCE = {
     'recover': ('How to recover a lost Complaint Code or reference', None),
     'add_details': ('How to add a message or correct details in an existing complaint', PUBLIC_COMPLAINT_ANSWERS['how can i add more details to my complaint']),
     'report_wifi': ('What information to include when reporting Wi-Fi trouble', PUBLIC_COMPLAINT_ANSWERS['how do i report a wi-fi connection problem']),
-    'wifi_checks': ('How to do a basic Wi-Fi check on the customer’s own device, without requesting maintenance', 'Check that Wi-Fi is on and airplane mode is off. Try reconnecting to the network and checking whether another device is affected. If the problem persists, tell us which devices are affected and choose Still unresolved.'),
+    'wifi_checks': ('How to do a basic Wi-Fi check on the customer’s own device, without requesting maintenance', 'Check that Wi-Fi is on and airplane mode is off. Try reconnecting to the network and checking whether another device is affected. Comparing devices helps distinguish a phone-specific connection issue from a network issue, but is optional if no other device is available. Reconnecting refreshes the connection. Airplane mode can disable wireless connections. If the problem persists, tell us which devices are affected and choose Still unresolved.'),
     'location': ('What location information to provide in the complaint form', 'Enter the name of your building or residence. If the problem is in a specific unit, room or shared area, add that location so the team can find it.'),
     'outcome': ('How to say the issue is resolved or request more help on an existing complaint', 'Open your complaint and choose Issue resolved if it has been fixed, or Still unresolved if you need the BeLive team to review it.'),
     'privacy': ('What sensitive information to leave out of the complaint form', 'Describe the issue and where it happened. Leave out passwords, payment details, access codes and identity documents. Keep your Complaint Code private.'),

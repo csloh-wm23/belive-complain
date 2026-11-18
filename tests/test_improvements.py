@@ -117,10 +117,12 @@ class ImprovementsTests(unittest.TestCase):
         with Path(backup['path']).open('ab') as handle:handle.write(b'tampered')
         with self.assertRaises(ValueError):operation(self.s,'restore',{'id':backup['id'],'confirmed':True},secrets.token_hex(16))
     def test_portal_revocation_preserves_conversation_and_blocks_access(self):
+        complaint=self.s.website_submit({'title':'Anonymous fixture','description':'A fictional public complaint for access testing.'},secrets.token_hex(16))
         c=self.case();self.action(c,'draft',note='Reviewed support response in the portal.')
         self.action(c,'publish_response',confirmed=True)
         self.cmd('portal_revoke',{'tenant_id':'T-A','confirmed':True})
         with self.assertRaises(ValueError):self.s.portal(self.token)
+        self.assertEqual(self.s.portal(complaint['complaint_code'])['cases'][0]['id'],complaint['id'])
         replacement=self.cmd('portal_issue',{'tenant_id':'T-A'})['token']
         self.assertIn('Reviewed support response',str(self.s.portal(replacement)))
     def test_real_connection_status_does_not_claim_success_without_configuration(self):

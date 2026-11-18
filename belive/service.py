@@ -365,7 +365,7 @@ class Service:
         if name=='portal_revoke':
             tenant=self.store.get(db,'tenant',p.get('tenant_id'))
             require(p.get('confirmed') is True,'Confirm revocation of this tenant access')
-            keys=[x for x in self.store.all(db,'portal') if x['tenant_id']==tenant['id']]
+            keys=[x for x in self.store.all(db,'portal') if x.get('tenant_id')==tenant['id']]
             for item in keys:db.execute("DELETE FROM objects WHERE kind='portal' AND id=?",(item['id'],))
             self.store.event(db,tenant['id'],'PORTAL_ACCESS_REVOKED',str(len(keys))+' access keys revoked')
             return {'revoked':len(keys)}
@@ -568,8 +568,13 @@ class Service:
                 and not c.get('owner') and not c.get('handoff') and not c.get('automation_paused')
                 and not automation.exception_reason(c['title']+' '+question)):
             try:
-                decision=classify_public(c['title'],question,c['description'] if public_turn else None,lessons)
-                public_reply=automation.public_guidance_reply(decision,lessons)
+                composer=getattr(self.ai,'conversational_reply',None)
+                if composer and not public_source:
+                    public_reply,topics=composer(context['conversation'],question,lessons)
+                    decision={'can_answer':bool(public_reply),'topics':topics}
+                else:
+                    decision=classify_public(c['title'],question,c['description'] if public_turn else None,lessons)
+                    public_reply=automation.public_guidance_reply(decision,lessons)
             except Exception:
                 pass  # The existing assessment path handles model and parsing failures.
         if not public_source and not public_reply and not public_turn:
@@ -696,9 +701,10 @@ class Service:
                     case['reported_location']=directory_location(payload['reported_location'])
                     self.store.put(db,'case',case)
                 post(self.store,db,case,'SYSTEM','We received your complaint. You can follow replies and add details here.','website-receipt')
-                automation.publish_public_answer(self.store,db,case)
+                if not hasattr(self.ai,'conversational_reply'):
+                    automation.publish_public_answer(self.store,db,case)
                 if email:
-                    self.store.put(db,'complaint_recovery',{'id':case['id'],'email_hash':digest(email),'retry_after':''})
+                    self.store.put(db,'complaint_recovery',{'id':case['id'],'email_hash':digest(email),'retry_after':'','verified':False})
                 result={'id':case['id'],'status':case['status'],'received_at':case['created_at']}
                 db.execute('INSERT INTO requests VALUES(?,?)',(key,json.dumps({'fingerprint':fingerprint,'result':result})))
             code=self._complaint_code(db,case['id'])
@@ -715,7 +721,7 @@ class Service:
             db.execute('BEGIN IMMEDIATE')
             try: item=self.store.get(db,'complaint_recovery',case_id)
             except ValueError: return
-            if not hmac.compare_digest(item['email_hash'],digest(email)) or item['retry_after']>now():
+            if not item.get('verified') or not hmac.compare_digest(item['email_hash'],digest(email)) or item['retry_after']>now():
                 return
             code=self._complaint_code(db,case_id)
             try: self._portal_scope(db,code)
@@ -723,6 +729,36 @@ class Service:
             item['retry_after']=due(5)
             self.store.put(db,'complaint_recovery',item)
         send_code(email,code)
+
+    def verify_recovery_email(self,token,p):
+        from belive.complaint_mail import address,configured,send_verification
+        require(configured(),'Email verification is unavailable until BeLive configures email delivery')
+        email=address(p.get('email',''))
+        require(bool(email),'Enter the recovery email used at submission')
+        with self.lock,self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            scope=self._portal_scope(db,token)
+            require(bool(scope.get('case_id')),'Use your Complaint Code to verify recovery email')
+            item=self.store.get(db,'complaint_recovery',scope['case_id'])
+            require(hmac.compare_digest(item['email_hash'],digest(email)),'Enter the recovery email used at submission')
+            if p.get('code') is not None:
+                require(item.get('verification_expires','')>now() and item.get('attempts',0)<5,'Request a new verification code')
+                item['attempts']=item.get('attempts',0)+1
+                valid=hmac.compare_digest(item.get('verification_hash',''),digest(str(p['code'])))
+                if valid:
+                    item['verified']=True
+                    item.pop('verification_hash',None)
+                self.store.put(db,'complaint_recovery',item)
+            else:
+                require(item.get('send_after','')<=now(),'Wait one minute before requesting another code')
+                code=f'{secrets.randbelow(1000000):06d}'
+                item.update(verification_hash=digest(code),verification_expires=due(10),send_after=due(1),attempts=0)
+                self.store.put(db,'complaint_recovery',item)
+        if p.get('code') is not None:
+            require(valid,'Incorrect email verification code')
+            return {'verified':True}
+        send_verification(email,code)
+        return {'sent':True}
     def portal(self,token):
         with self.store.connect() as db:
             item=self._portal_scope(db,token)
@@ -734,7 +770,9 @@ class Service:
                 case['conversation']=conversation(self.store,db,full,complaint_only=bool(case_id))
                 case['resolution_confirmed']=bool(full.get('tenant_resolution',{}).get('resolved'))
                 case['informational_answer']=bool(full.get('automatic_answer') and not full.get('handoff'))
-                case['automatic_pending']=bool(full['status']=='AI_PENDING' and not full.get('analysis') and automation.eligible(self.store,db,full))
+                case['automatic_pending']=bool(full['status']=='AI_PENDING' and not full.get('analysis') and (
+                    automation.eligible(self.store,db,full) or (full.get('entrypoint')=='TENANT_WEBSITE'
+                    and not full.get('owner') and not full.get('handoff'))))
                 case['complaint_level']=complaint_level(full)
                 case['ai_assistance_pending']=bool(full.get('ai_assistance_pending'))
                 case['ai_draft_ready']=bool(full['status']=='HUMAN_REVIEW' and full.get('analysis') and full.get('draft'))

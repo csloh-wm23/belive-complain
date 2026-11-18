@@ -129,7 +129,7 @@ def make_handler(service,tasks=None):
             if origin and origin not in {f'http://127.0.0.1:{self.server.server_port}',f'http://localhost:{self.server.server_port}'}:return self.json(403,{'error':'Foreign origin rejected'})
             path=urlsplit(self.path).path;route=path.removeprefix('/api/')
             website=path=='/api/website/complaints'
-            portal=website or path in {'/api/demo/session','/api/portal/intake','/api/portal/update','/api/portal/feedback','/api/website/complaint-recovery'}
+            portal=website or path in {'/api/demo/session','/api/portal/intake','/api/portal/update','/api/portal/feedback','/api/website/complaint-recovery','/api/portal/verify-email'}
             if not portal and not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),csrf):return self.json(403,{'error':'Invalid operator token','code':'STALE_CSRF'})
             try:
                 size=int(self.headers.get('Content-Length','0'))
@@ -137,6 +137,8 @@ def make_handler(service,tasks=None):
                 p=json.loads(self.rfile.read(size));key=self.headers.get('Idempotency-Key','')
                 if not isinstance(p,dict):raise ValueError('JSON object required')
                 if portal:
+                    if path=='/api/portal/verify-email':
+                        return self.json(200,service.verify_recovery_email(self.token(),p))
                     if path=='/api/website/complaint-recovery':
                         service.recover_complaint(p)
                         return self.json(200,{'accepted':True})

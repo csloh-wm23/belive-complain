@@ -315,6 +315,18 @@ class HttpTests(unittest.TestCase):
         code,body=self.request('/api/website/complaints',payload,{'Idempotency-Key':secrets.token_hex(16)})
         self.assertEqual(code,200)
         receipt=json.loads(body)
+        with patch('belive.complaint_mail.configured',return_value=True),patch('belive.complaint_mail.send_verification') as mail:
+            payload_email={'email':payload['email']}
+            headers={'Authorization':'Bearer '+receipt['complaint_code']}
+            with patch('belive.complaint_mail.send_code') as recovery:
+                self.request('/api/website/complaint-recovery',{'reference':receipt['id'],'email':payload['email']})
+                recovery.assert_not_called()
+            status,_=self.request('/api/portal/verify-email',payload_email,headers)
+            self.assertEqual(status,200)
+            sent_code=mail.call_args.args[1]
+            wrong='000000' if sent_code!='000000' else '111111'
+            self.assertEqual(self.request('/api/portal/verify-email',{**payload_email,'code':wrong},headers)[0],400)
+            self.assertEqual(self.request('/api/portal/verify-email',{**payload_email,'code':sent_code},headers)[0],200)
         with patch('belive.complaint_mail.configured',return_value=True),patch('belive.complaint_mail.send_code') as send:
             for email in ('wrong@example.test',payload['email'],payload['email']):
                 code,body=self.request('/api/website/complaint-recovery',{'reference':receipt['id'],'email':email})

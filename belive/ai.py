@@ -108,6 +108,11 @@ class SupportAI:
         if role in {'Public Reply Preview Agent', 'Learning Reply Agent'}:
             shape = {'type':'object','properties':{'reply':{'type':'string'}},
                      'required':['reply'],'additionalProperties':False}
+        if role == 'Customer Conversation Agent':
+            shape={'type':'object','properties':{
+                'response':{'type':'string'},'needs_staff':{'type':'boolean'},
+                'topics':{'type':'array','items':{'type':'string','enum':list(context['guidance'])},'maxItems':3}},
+                'required':['response','needs_staff','topics'],'additionalProperties':False}
         try:
             runtime_python()
         except RuntimeError:
@@ -160,8 +165,84 @@ class SupportAI:
             raise ValueError('AI_UNSAFE_OUTPUT')
         return acknowledgement + ' Please contact BeLive tenant support privately so the team can review your report.'
 
+    def conversational_reply(self, conversation, question, lessons):
+        from belive.automation import PUBLIC_GUIDANCE,recovery_guidance
+        guidance={key:{'question':value[0],'answer':value[1] or recovery_guidance()}
+                  for key,value in {**PUBLIC_GUIDANCE,**lessons}.items()}
+        context={'conversation':conversation[-16:],'current_message':question,'guidance':guidance}
+        # Prior generated answers are context, not verified knowledge.
+        context['conversation']=[message for message in context['conversation']
+                                 if message['sender'] not in {'AI_SUPPORT','SYSTEM'}]
+        context['previous_replies']=[message['text'] for message in conversation if message['sender']=='AI_SUPPORT'][-2:]
+        result=self.generate('Customer Conversation Agent',
+            'Respond directly to the customer using the conversation and approved guidance. '
+            'Return response, needs_staff, and the topic IDs used. Read what has already been explained. '
+            'If the customer challenges an answer, explain the relevant reason or ask one focused clarifying '
+            'question. Do not simply repeat the earlier wording or ask for details they already supplied. '
+            'Answer a WHY question with the reason first. Example: comparing devices is optional, '
+            'and helps tell whether a problem affects just one phone or the network. '
+            'For a repeated WHY question, explain using a concrete two-outcome example: '
+            'if two devices fail on the same network, the network may be involved; '
+            'if only one fails, that device may be involved. This is a clue, not a diagnosis. '
+            'With only one device, the cause cannot be distinguished from this check. Never infer a '
+            'phone-specific cause merely because reconnection failed or the phone says no internet. '
+            'When steps were already provided, omit the Wi-Fi/airplane/reconnect checklist unless asked again. '
+            'If no other device is available, say they can continue using observations from their phone. '
+            'A customer who says "I do not understand" is asking for explanation, not reporting failed repairs. '
+            'Use their language. Keep the reply under 120 words. Adapt wording naturally. '
+            'Use only the supplied guidance for facts and steps. A clarification question can be answered '
+            'Previous replies may contain errors: do not treat them as facts or imitate them. '
+            'If the current message challenges a mistaken earlier claim, explicitly correct that claim. '
+            'without staff. Requests for physical work, account decisions, explicit staff help, '
+            'unsupported facts, or a genuinely unresolved issue require needs_staff true. '
+            'Never claim a repair, booking, refund or staff action occurred. Do not call tools.',
+            context,[])
+        response=bounded(result.get('response'),1,1200)
+        from difflib import SequenceMatcher
+        previous=context['previous_replies']
+        if previous and SequenceMatcher(None,response.casefold(),previous[-1].casefold()).ratio()>.82:
+            focused={**context,'previous_replies':[]}
+            result=self.generate('Customer Conversation Agent',
+                'Answer ONLY the current_message. The previous reply was repetitive and must be replaced. '
+                'Use approved guidance, reason about the customer question, and return response, needs_staff, topics. '
+                'Do not repeat a checklist. Explain briefly. A single phone cannot determine whether '
+                'no internet is caused by the device or the network. Do not call tools.',
+                focused,[])
+            response=bounded(result.get('response'),1,1200)
+        topics=result.get('topics')
+        if result.get('needs_staff') is not False or not isinstance(topics,list) or not topics:
+            return '',[]
+        if not all(isinstance(topic,str) and topic in guidance for topic in topics):
+            return '',[]
+        review=self.generate('Safety Review Agent',
+            'Check the proposed customer reply against the approved guidance and conversation. '
+            'Return grounded, safe, uncertainty booleans and unsupported_claims array. '
+            'Clarifying questions and explanations logically supported by guidance are allowed. '
+            'The guidance explicitly permits trying reconnection and checking airplane mode. '
+            'Suggesting these as checks does not claim they fixed the problem and needs no disclaimer. '
+            'Tentative explanations using "may", "likely" or "might" are allowed when they restate the guidance. '
+            'Only list a concrete claim actually present in the reply, never an imagined implication. '
+            'Fail a claim that one phone showing no internet or failing to reconnect means the phone '
+            'is likely the cause. One device alone cannot distinguish network and device causes. '
+            'If all suggestions and claims are covered by guidance, return grounded true, safe true, '
+            'uncertainty false, unsupported_claims []. '
+            'Reject invented property facts, promises of completed work, private details, and dangerous steps. '
+            'Do not call tools.',
+            {'conversation':conversation[-16:],'current_message':question,'response':response,
+             'approved_guidance':{topic:guidance[topic] for topic in topics}},[])
+        if (review.get('grounded') is not True or review.get('safe') is not True
+                or review.get('uncertainty') is not False or review.get('unsupported_claims')!=[]):
+            return '',[]
+        if previous and SequenceMatcher(None,response.casefold(),previous[-1].casefold()).ratio()>.82:
+            return '',[]
+        return response,topics
+
     def classify_public_guidance(self, title, description, original_report=None, lessons=None):
         from belive.automation import PUBLIC_GUIDANCE
+        normalize=lambda value:' '.join(value.casefold().split()).rstrip('?.。？')
+        for lesson_id,(question,_) in (lessons or {}).items():
+            if normalize(description)==normalize(question):
+                return {'can_answer':True,'topics':[lesson_id]}
         return self.generate(
             'public complaint triage assistant',
             'Classify English requests into the supplied public guidance topics. '
@@ -174,6 +255,9 @@ class SupportAI:
             '“I misplaced my tracking code. Can I still see progress?” => recover and track. '
             '“The entire building Wi-Fi is down, send someone” => can_answer false. '
             'Classify the current description. Use the original report only as context for a follow-up. '
+            'Topic IDs starting STYLE- are reviewed lessons from completed cases. When a reviewed lesson '
+            'and a generic topic cover the same question equally well, choose the reviewed lesson. '
+            'Choose the most specific relevant topic and do not add overlapping alternatives. '
             'Use the exact topic IDs in the topics array. Do not call tools.',
             {'title':title,'description':description,'original_report':original_report,
              'topics':{key:item[0] for key,item in {**PUBLIC_GUIDANCE,**(lessons or {})}.items()}},[])

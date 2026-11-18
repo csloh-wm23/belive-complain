@@ -206,7 +206,7 @@ if(!trackingEntry){
     }).catch(()=>{});
 }
 const recoveryEmail=document.createElement('label');
-recoveryEmail.innerHTML='Recovery email (optional)<input name="email" type="email" maxlength="254" autocomplete="email">';
+recoveryEmail.innerHTML='Recovery email (optional)<input name="email" type="email" maxlength="254" autocomplete="email"><small>Email format is checked. Recovery requires verification by email after submission.</small>';
 complaintForm.insertBefore(recoveryEmail, $('sendWebsiteComplaint'));
 const recoveryPanel=document.createElement('details');
 recoveryPanel.hidden=!trackingEntry;
@@ -248,6 +248,23 @@ complaintForm.onsubmit=event=>{
             catch{$('portalNotice').textContent='Select and copy the displayed code manually.';}
         };
         complaintReceipt.hidden=false;
+        if(payload.email){
+            const verification=document.createElement('form');
+            verification.innerHTML='<p>Recovery email is not verified yet.</p><button type="button">Send verification code</button><label>Email verification code<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label><button type="submit">Verify email</button><p role="status"></p>';
+            const status=verification.querySelector('[role="status"]');
+            const verify=async code=>{
+                try{
+                    const response=await fetch('/api/portal/verify-email',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+savedCode},body:JSON.stringify({email:payload.email,...(code?{code}:{})})});
+                    const result=await response.json();
+                    if(!response.ok)throw Error(result.error||'Email verification failed');
+                    status.textContent=result.verified?'Recovery email verified.':'Verification code sent. Check your inbox.';
+                    if(result.verified)verification.querySelectorAll('input,button').forEach(el=>el.disabled=true);
+                }catch(error){status.textContent=error.message;}
+            };
+            verification.querySelector('button').onclick=()=>verify();
+            verification.onsubmit=e=>{e.preventDefault();verify(verification.elements.code.value);};
+            complaintReceipt.append(verification);
+        }
         event.target.reset();
         await refresh();showView('conversations');complaintReceipt.scrollIntoView({block:'nearest'});
     });
