@@ -2,6 +2,7 @@
 import sys
 import tempfile
 import threading
+import secrets
 from unittest.mock import patch
 from pathlib import Path
 from http.server import ThreadingHTTPServer
@@ -25,6 +26,10 @@ def main():
                 browser=pw.chromium.launch(channel='chrome',headless=True)
                 context=browser.new_context(viewport={'width':1440,'height':1100},timezone_id='Asia/Kuala_Lumpur')
                 page=context.new_page();errors=[];external=[]
+                def refresh_case():
+                    if not page.locator('[data-more]').evaluate('(el)=>el.open'):
+                        page.locator('[data-more] > summary').click()
+                    page.locator('#reloadCase').click()
                 page.on('pageerror',lambda e:errors.append(str(e)))
                 page.on('request',lambda r:external.append(r.url) if not r.url.startswith(url) else None)
                 page.goto(url);expect(page.locator('#authGate')).to_be_visible()
@@ -86,20 +91,22 @@ def main():
                 form.locator('[name="description"]').fill('My room Wi-Fi drops each evening. This is a QA fixture.')
                 form.locator('[name="tenant_id"]').select_option('T-QA');form.locator('button.primary').click()
                 expect(page.locator('#caseDialog')).to_be_visible()
-                page.locator('#reloadCase').click()
+                refresh_case()
                 expect(page.locator('#caseDraft')).to_have_value('Could you confirm whether other devices have the same issue?')
                 page.locator('[data-act="acknowledge"]').click()
                 expect(page.locator('#caseDetail .case-tags')).to_contain_text('Staff handling')
                 page.locator('#caseNote').fill('PRIVATE internal support note: fixture audit only.')
+                page.locator('[data-more] > summary').click()
                 page.locator('[data-act="note"]').click()
-                page.locator('#caseConfirmed').check();page.locator('[data-act="publish_response"]').click()
+                page.locator('#caseConfirmed').check();page.locator('[data-act="send_reply"]').click()
                 expect(page.locator('#caseDetail .conversation')).to_contain_text('Could you confirm whether other devices')
-                page.locator('#caseConfirmed').check();page.locator('[data-act="queue_response"]').click()
+                # External delivery is tested as a legacy integration, outside the daily staff UI.
+                with service.store.connect() as db:c=service.store.all(db,'case')[0]
+                service.command('case_action',dict(id=c['id'],revision=c['revision'],action='queue_response',confirmed=True),secrets.token_hex(16))
                 page.locator('#caseNote').fill('Fictional investigation recorded and awaiting tenant confirmation.')
                 page.locator('[data-act="followup"]').click();expect(page.locator('#caseDetail .case-tags')).to_contain_text('Follow-up')
                 page.locator('#caseNote').fill('Fictional tenant confirmed the issue no longer occurs.')
-                page.locator('#caseConfirmed').check();page.locator('[data-act="verify"]').click()
-                expect(page.locator('[data-act="close"]')).to_be_visible();page.locator('[data-act="close"]').click()
+                page.locator('#caseResolutionConfirmed').check();page.locator('[data-act="verify_close"]').click()
                 expect(page.locator('[data-feedback="APPROVED"]')).to_be_visible();page.locator('[data-feedback="APPROVED"]').click()
                 page.locator('[data-close="caseDialog"]').click();page.locator('[data-view="memory"]').click()
                 expect(page.locator('#memoryExamples')).to_contain_text('Could you confirm')
@@ -126,8 +133,8 @@ def main():
                 page.locator('[data-act="acknowledge"]').click();page.locator('#caseNote').fill('Fixture support action completed; awaiting tenant feedback.');page.locator('[data-act="followup"]').click()
                 portal.locator('#refreshPortal').click();expect(portal.locator('[data-resolved]')).to_be_visible()
                 portal.locator('[data-resolved]').click();expect(portal.locator('#portalNotice')).to_contain_text('outcome feedback')
-                page.locator('#reloadCase').click();expect(page.locator('#caseDetail')).to_contain_text('Reported resolved')
-                page.locator('#caseNote').fill('Support verified the new tenant outcome feedback.');page.locator('#caseConfirmed').check();page.locator('[data-act="verify"]').click();page.locator('[data-act="close"]').click()
+                refresh_case();expect(page.locator('#caseDetail')).to_contain_text('Confirmed resolved')
+                page.locator('#caseNote').fill('Support verified the new tenant outcome feedback.');page.locator('#caseResolutionConfirmed').check();page.locator('[data-act="verify_close"]').click()
                 page.screenshot(path=str(output/'tenant-case-conversation-desktop.png'),full_page=True)
                 portal.locator('#refreshPortal').click();expect(portal.locator('#tenantCases')).to_contain_text('CLOSED')
                 portal.screenshot(path=str(output/'tenant-portal-conversation-desktop.png'),full_page=True)

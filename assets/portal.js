@@ -82,6 +82,7 @@ async function send(action,route,payload){
 }
 
 function status(c){
+    if(c.status==='CLOSED'&&c.closure_reason==='CUSTOMER_INACTIVE')return ['Closed after no reply','We did not receive a reply within the waiting period. The outcome is unconfirmed. Send a message or choose Still unresolved to reopen this complaint.'];
     if(c.status==='FOLLOW_UP'&&c.resolution_confirmed)return ['You confirmed the issue is resolved','The BeLive team will check your confirmation before closing the complaint. Choose Still unresolved if the problem returns.'];
     if(c.automatic_pending)return ['AI is reviewing your request','Your message was received. SIMPLE requests can receive an automatic reply.'];
     if(c.ai_assistance_pending)return ['AI is preparing help for staff','Your request is already in the staff queue. AI is checking the details and preparing a draft for the team.'];
@@ -120,7 +121,8 @@ function renderCase(c){
         <div class="portal-case-state" data-case-state="${esc(c.status)}"><strong>${esc(label)}</strong><p>${esc(explanation)}</p></div>
         <div class="conversation complaint-chat" role="region" aria-label="Complaint conversation">${c.conversation.map(renderChatMessage).join('')}</div>
         <label>Reply or outcome details<textarea data-note="${esc(c.id)}">${esc(drafts.get(c.id)||'')}</textarea></label>
-        <div class="case-actions">${active?`<button data-update="${esc(c.id)}">Send reply to support</button><button data-resolved="${esc(c.id)}">${c.informational_answer?'This answers my question':'Issue resolved'}</button>`:''}<button data-unresolved="${esc(c.id)}">Still unresolved</button></div>
+        ${c.auto_close_at?`<p class="muted">Please reply by ${esc(new Date(c.auto_close_at).toLocaleString())}. Without a reply, this complaint closes automatically. You can reopen it later with the same Complaint Code.</p>`:''}
+        <div class="case-actions">${active||c.status==='CLOSED'?`<button data-update="${esc(c.id)}">${c.status==='CLOSED'?'Send reply · reopen complaint':'Send reply to support'}</button>`:''}${active?`<button data-resolved="${esc(c.id)}">${c.informational_answer?'This answers my question':'Issue resolved'}</button>`:''}<button data-unresolved="${esc(c.id)}">Still unresolved</button></div>
         <p class="portal-case-notice ${notice?.error?'error':''}" data-case-notice="${esc(c.id)}" role="status" aria-live="polite" tabindex="-1" ${notice?'':'hidden'}>${esc(notice?.text||'')}</p>
         <p class="muted">${c.informational_answer?'Accepting a routine answer records that your question was answered. It does not confirm repairs or close a maintenance case.':'Still unresolved saves your message and asks the support team to handle the request. Staff checks the outcome before closing it.'}</p>
     </article>`;

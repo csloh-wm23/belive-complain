@@ -278,9 +278,17 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(staff('publish_response',confirmed=False)[0],400)
         self.assertEqual(staff('publish_response',confirmed=True,reviewed_reply='Different unsaved reply.')[0],400)
         self.assertEqual(staff('publish_response',confirmed=True,reviewed_reply=reply)[0],200)
+        edited='Please avoid that socket. The maintenance team is handling the report.'
+        self.assertEqual(staff('send_reply',confirmed=False,reviewed_reply=edited)[0],400)
+        self.assertNotIn(edited.encode(),customer()[1])
+        self.assertEqual(staff('send_reply',confirmed=True,reviewed_reply='')[0],400)
+        self.assertEqual(staff('send_reply',confirmed=True,reviewed_reply=edited)[0],200)
+        self.assertEqual(staff('send_reply',confirmed=True,reviewed_reply=edited)[0],200)
         status,body=customer()
         self.assertEqual(status,200)
-        self.assertEqual(json.loads(body)['cases'][0]['conversation'][-1]['text'],reply)
+        messages=json.loads(body)['cases'][0]['conversation']
+        self.assertEqual(messages[-1]['text'],edited)
+        self.assertEqual(sum(m['text']==edited for m in messages),1)
         note='It is near the shared laundry room.'
         self.assertEqual(customer('/api/portal/update',{'id':cid,'note':note})[0],200)
         status,body=self.request('/api/status',headers={'X-CSRF-Token':self.csrf})
@@ -291,6 +299,7 @@ class HttpTests(unittest.TestCase):
         evidence='Staff recorded the action and checked the customer feedback.'
         self.assertEqual(staff('followup',note=evidence)[0],200)
         self.assertEqual(staff('verify',note=evidence,confirmed=True)[0],400)
+        self.assertEqual(staff('verify_close',note=evidence,confirmed=True)[0],400)
         self.assertEqual(customer('/api/portal/feedback',{'id':cid,'resolved':False})[0],200)
         self.assertEqual(json.loads(customer()[1])['cases'][0]['status'],'HUMAN_REVIEW')
         self.assertEqual(staff('acknowledge')[0],200)
@@ -299,8 +308,9 @@ class HttpTests(unittest.TestCase):
         case=json.loads(customer()[1])['cases'][0]
         self.assertTrue(case['resolution_confirmed'])
         self.assertEqual(case['status'],'FOLLOW_UP')
-        self.assertEqual(staff('verify',note=evidence,confirmed=True)[0],200)
-        self.assertEqual(staff('close')[0],200)
+        self.assertEqual(staff('verify_close',note=evidence,confirmed=False)[0],400)
+        self.assertEqual(staff('verify_close',note='short',confirmed=True)[0],400)
+        self.assertEqual(staff('verify_close',note=evidence,confirmed=True)[0],200)
         self.assertEqual(json.loads(customer()[1])['cases'][0]['status'],'CLOSED')
         self.assertEqual(customer('/api/portal/feedback',{'id':cid,'resolved':False})[0],200)
         self.assertEqual(json.loads(customer()[1])['cases'][0]['status'],'HUMAN_REVIEW')

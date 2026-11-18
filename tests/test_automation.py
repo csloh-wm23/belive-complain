@@ -152,7 +152,7 @@ class AutomationTests(unittest.TestCase):
             with self.s.store.connect() as db:
                 current=self.s.store.get(db,'case',c['id']);current['followup_due']='2000-01-01T00:00:00+00:00';self.s.store.put(db,'case',current)
             self.s.tick()
-        self.assertEqual(self.case(c)['status'],'HUMAN_REVIEW')
+        self.assertEqual(self.case(c)['status'],'FOLLOW_UP')
         self.assertTrue(any('Did this answer' in m['text'] for m in self.messages(c)))
     def test_no_permission_or_conflicting_version_cannot_approve_knowledge(self):
         with self.assertRaises(ValueError):self.cmd('answer',{**self.answer,'confirmed':False})

@@ -61,9 +61,13 @@ if(memory){
 
 const settings=document.querySelector('[data-page="settings"]');
 if(settings){
+  const closureCard=document.createElement('section');
+  closureCard.className='card';closureCard.dataset.admin='';
+  closureCard.innerHTML='<h2>Close after no customer reply</h2><p>Only complaints waiting for the customer are closed automatically. This records an unconfirmed outcome. Customers can reopen with the same Complaint Code. BeLive must be running for scheduled checks.</p><form id="closureForm"><label>Waiting period (days)<input id="closureDays" name="days" type="number" min="1" max="90" required value="7"></label><button type="submit">Save waiting period</button></form><p id="closureStatus" role="status"></p>';
+  settings.append(closureCard);
   const groups=[
     {label:'AI & replies',intro:'Test the AI connection, manage automatic replies and edit approved knowledge.',ids:['checkAi','knowledgeForm']},
-    {label:'Staff routing',intro:'Choose which team receives a complaint when it needs staff attention.',ids:['routingForm']},
+    {label:'Staff routing',intro:'Choose which team receives a complaint and how long to wait for customer feedback.',ids:['routingForm','closureForm']},
     {label:'Properties & tenant access',intro:'Manage verified property and tenant records. Customers can submit and track complaints without a tenant account.',ids:['condoForm','tenantForm','recordForm','portalIssue','resources']},
     {label:'Staff accounts',intro:'Manage operator accounts and staff access.',ids:['usersList']},
     {label:'Demo',intro:'Set up a fictional account for testing.',ids:['prepareDemo']}

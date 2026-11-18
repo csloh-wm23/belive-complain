@@ -104,7 +104,7 @@ class BackendTests(unittest.TestCase):
             with self.s.store.connect() as db:
                 cur=self.s.store.get(db,'case',c['id']);cur['followup_due']='2000-01-01T00:00:00+00:00';self.s.store.put(db,'case',cur)
             self.s.tick()
-        self.assertEqual(self.case(c)['status'],'HUMAN_REVIEW')
+        self.assertEqual(self.case(c)['status'],'FOLLOW_UP')
         self.assertEqual(sum(m['kind']=='TENANT_FOLLOWUP' for m in self.s.snapshot()['outbox']),2)
     def test_removed_operations_are_rejected_even_with_cached_success(self):
         for name in ['move','move_complete','staff']:

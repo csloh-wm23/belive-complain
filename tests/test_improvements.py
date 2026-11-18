@@ -52,6 +52,23 @@ class ImprovementsTests(unittest.TestCase):
         self.cmd('feedback',{'id':c['id'],'verdict':'APPROVED'});self.assertTrue(self.s.snapshot()['examples'])
         self.s.portal_feedback(self.token,{'id':c['id'],'resolved':False},secrets.token_hex(16))
         self.assertEqual(self.current(c)['status'],'HUMAN_REVIEW');self.assertEqual(self.s.snapshot()['examples'],[])
+
+    def test_combined_close_preserves_workorder_guard_and_rolls_back(self):
+        c=self.case();self.action(c,'acknowledge',owner='QA support')
+        self.action(c,'workorder',department='Maintenance',note='Investigate the fictional shared Wi-Fi outage.')
+        self.action(c,'followup',note='Staff recorded a workaround pending a permanent repair.')
+        self.s.portal_feedback(self.token,{'id':c['id'],'resolved':True},secrets.token_hex(16))
+        revision=self.current(c)['revision']
+        with self.assertRaisesRegex(ValueError,'outstanding work orders'):
+            self.action(c,'verify_close',note='Customer confirmed a temporary workaround.',confirmed=True)
+        self.assertEqual(self.current(c)['status'],'FOLLOW_UP')
+        self.assertEqual(self.current(c)['revision'],revision)
+        self.assertFalse(self.current(c).get('verification'))
+        with self.s.store.connect() as db:
+            workorder=next(w for w in self.s.store.all(db,'workorder') if w['case_id']==c['id'])
+        self.action(c,'complete_workorder',workorder_id=workorder['id'],note='Permanent repair was completed and checked by staff.')
+        self.action(c,'verify_close',note='Repair checked against the customer confirmation.',confirmed=True)
+        self.assertEqual(self.current(c)['status'],'CLOSED')
     def test_record_versions_deactivation_and_stale_ai_result(self):
         r=self.cmd('record',dict(tenant_id='T-A',text='Fixture verified context for Wi-Fi support.',source='Fixture policy',confirmed=True))
         c=self.case();self.s.analyse(c['id']);self.assertEqual(self.current(c)['analysis']['record_refs'][0]['version'],1)

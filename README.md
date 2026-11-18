@@ -50,6 +50,7 @@ Staff sees the same case in **Cases**, with actual agent activity, complaint lev
 - Use only the tenant's verified support records and verified house rules for personal assistance. Unverified public reports receive a private-contact invitation draft.
 - Hand uncertain, risky or failed AI cases to staff; show critical and overdue cases first, record the next action/deadline, maintain internal notes and require evidence for closure.
 - Publish reviewed responses to a tenant-scoped conversation. Tenants can reply and report resolved/unresolved outcomes; their confirmation never automatically closes a case.
+- Complaints waiting for a customer reply close after 7 days by default (editable in Staff routing). These closures have unconfirmed outcomes, do not count as verified resolutions and cannot become learning examples. Customers can reopen with the same Complaint Code. Scheduled checks run while the server is running and catch up after restart.
 - Correct, expire or deactivate verified support context with immutable version history. AI citations show the exact record version used; changes during generation discard the result.
 - Review notifications before sending through a configured gateway. Store uncertain delivery as `UNKNOWN` without automatic retry.
 - Review response wording after closure. Latest rejection/reopening revokes future reuse. Examples are style guidance, never verified facts or model retraining.
@@ -128,12 +129,15 @@ python -m unittest discover -s tests -p "test_*.py" -v
 # Equivalent: npm test
 ```
 
-There are 89 backend/HTTP/native-memory/database/automation checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
+There are 113 backend/HTTP/native-memory/database/automation checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
 
 ```sh
 python -m pip install -r requirements-dev.txt
 python tests/browser_check.py
+python tests/browser_complaint_flow.py
 ```
+
+Simplified daily complaint handling: take ownership → send reply → mark handled → customer confirms → close complaint. See the [Chinese step-by-step guide](docs/COMPLAINT_STEPS_ZH.md). The simplified-flow browser check uses anonymous Complaint Codes and temporary data, including unresolved reopening after closure.
 
 Browser QA covers first-admin setup and Support login, role-restricted controls, reviewed portal replies, private-note isolation, tenant unresolved/resolved feedback, verified closure, versioned-record correction, backups, a test-double connection check, database selection/persistence, source controls and eight responsive views. The native file-picker result is substituted during browser QA so tests do not open a dialog or change the real workspace. Screenshots go into ignored `artifacts/`.
 

@@ -166,7 +166,7 @@ Automation defaults off for existing databases and affects only new private tena
 
 Portal follow-ups schedule a fresh assessment automatically. A maximum of three automatic answers prevents endless loops. Explicit human requests, failed answers, missing knowledge, policy/record uncertainty, dangerous content and unsupported actions go to staff. Handover creates a private portal receipt and the existing local staff alert, without claiming external delivery or staff acknowledgement.
 
-The new ANSWERED state means a tenant accepted an informational answer. It is separate from CLOSED, physical repair completion and verified-closure metrics. Unresolved feedback reopens staff handling. Automatic check-ins remain private portal messages and never close a case by timeout. Recovery pauses automation and deactivates knowledge pending review. No live company facts or automatic public/external messages were seeded or sent by this change.
+The ANSWERED state means a tenant accepted an informational answer. It is separate from CLOSED, physical repair completion and verified-closure metrics. Unresolved feedback reopens staff handling. Customer-facing follow-up cases now close after 7 days without a reply by default, with an unconfirmed inactivity reason rather than a verified resolution. This does not create learning examples, and the original Complaint Code can reopen the case. Automatic check-ins remain private portal messages. Recovery pauses automation and deactivates knowledge pending review. No live company facts or automatic public/external messages were seeded or sent by this change.
 
 ## Tenant feedback visibility and fresh requests
 

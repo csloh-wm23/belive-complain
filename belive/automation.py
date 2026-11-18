@@ -106,7 +106,7 @@ def publish_public_answer(store, db, case):
 
 def publish_public_guidance(store, db, case, reply, sender, turn_id='initial'):
     message = post(store, db, case, sender, reply, 'public-complaint-answer-'+turn_id)
-    case.update(status='FOLLOW_UP', severity='LOW',
+    case.update(status='FOLLOW_UP', severity='LOW', waiting_since=now(),
                 next_action='Customer can accept the answer or request staff help',
                 automatic_answer={'id':'PUBLIC-COMPLAINT-FAQ','version':1,'message_id':message['id']})
     store.put(db,'case',case)
@@ -243,7 +243,7 @@ def apply_result(service, db, case, result, context):
     key = 'automatic-'+context['automatic']['input_id']
     reply=result['response'] if guided else answer['answer']
     message = post(service.store, db, case, 'AI_SUPPORT', reply, key)
-    case.update(draft=reply, status='FOLLOW_UP', followup_due=due(service.settings.followup_minutes),
+    case.update(draft=reply, status='FOLLOW_UP', waiting_since=now(), followup_due=due(service.settings.followup_minutes),
                 followup_count=0, next_action='Tenant can ask a follow-up or accept this informational answer',
                 automatic_reply_count=turns+1, automatic_answer={'id':answer['id'], 'version':answer['version'],
                 'message_id':message['id'], 'input_id':context['automatic']['input_id']})

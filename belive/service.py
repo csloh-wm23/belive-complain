@@ -12,11 +12,13 @@ from belive.store import Store, bounded, digest, now, redact
 from belive.settings import load_settings
 from belive.ai import SupportAI, CATEGORIES, FAILURE_MESSAGES, failure_code
 from belive import automation
+from belive import closure
 from belive.workflow import complaint_level
 
 COMMANDS = {'routing_settings','lesson_revoke','demo_prepare','demo_settings','learning_start','learning_improve','automation_settings','answer','answer_deactivate','intake','tenant','condo','record','portal_issue','source','approve_message','reject_message','feedback','case_action','database_location','record_update','tenant_feedback','portal_revoke'}
 NOTIFICATION_KINDS = {'STAFF_ALERT','TENANT_RESPONSE','STAFF_WORK_ORDER','ACK_TIMEOUT','TENANT_FOLLOWUP'}
 COMMANDS.add('source_schedule')
+COMMANDS.add('closure_settings')
 
 PROPERTY_DIRECTORY = Path(__file__).resolve().parents[1] / 'assets' / 'property-directory.json'
 
@@ -91,7 +93,7 @@ class Service:
         for f in reversed(self.store.all(db,'feedback')): latest[f['case_id']]=f
         cases={c['id']:c for c in self.store.all(db,'case')}
         examples=[f for f in latest.values() if f['verdict'] in {'APPROVED','CORRECTED'} and
-                cases.get(f['case_id'],{}).get('status')=='CLOSED' and cases[f['case_id']].get('category') in CATEGORIES and (not shared or f.get('share'))]
+                cases.get(f['case_id'],{}).get('status')=='CLOSED' and cases[f['case_id']].get('closure_reason')!='CUSTOMER_INACTIVE' and cases[f['case_id']].get('category') in CATEGORIES and (not shared or f.get('share'))]
         if condo_id and not shared:
             examples += [{**x,'scope_category':x.get('scope_category','WIFI')}
                          for x in self.store.all(db,'learned_style') if x.get('active') and x.get('scope_condo')==condo_id]
@@ -105,7 +107,7 @@ class Service:
             seen.add(cid)
             if feedback.get('public_question') and feedback['verdict']=='CORRECTED':
                 case=self.store.get(db,'case',cid)
-                if case['status']=='CLOSED':
+                if case['status']=='CLOSED' and case.get('closure_reason')!='CUSTOMER_INACTIVE':
                     lessons[feedback['id']]=(feedback['public_question'],feedback['text'])
                     if len(lessons)==12:break
         return lessons
@@ -135,6 +137,9 @@ class Service:
             from belive import routing
             result['routing']=routing.settings(self.store,db)
             result['automation']=automation.policy(self.store,db)
+            result['closure_policy']=closure.policy(self.store,db)
+            for case in result['cases']:
+                case['auto_close_at']=closure.deadline(case,result['closure_policy']['days']) if closure.waiting(case) else None
             result['answers']=[{**a,'history':self.store.history(db,'answer',a['id'])} for a in self.store.all(db,'answer')]
             result['backups']=self.store.all(db,'backup');result['health']=self.store.all(db,'health')
             result['examples']=self.styles(db);result['audit']=self.store.audit(db)
@@ -196,6 +201,7 @@ class Service:
         self.store.event(db,entity,'NOTIFICATION_QUEUED',kind+'; no external message sent')
         return item
     def handoff(self,db,c,reason):
+        c.pop('waiting_since',None);c.pop('closure_reason',None)
         c.update(status='HUMAN_REVIEW',handoff=True,review_reason=reason,next_action='Staff assessment required',action_due=None,followup_due=None,ack_due=due(self.settings.acknowledgement_minutes),escalation=0)
         from belive.routing import destination
         c['staff_destination']=destination(self.store,db,c['category'])
@@ -281,6 +287,10 @@ class Service:
             return command(self,db,name,p)
         if name in {'automation_settings','answer','answer_deactivate'}:
             return automation.command(self,db,name,p)
+        if name=='closure_settings':
+            days=p.get('days');require(type(days) is int and 1<=days<=90,'Choose 1–90 days')
+            item={'id':'customer-inactivity','days':days,'changed_at':now()}
+            self.store.put(db,'closure_policy',item);self.store.event(db,item['id'],'CLOSURE_POLICY_UPDATED',str(days)+' days; '+p.get('_actor','operator'));return item
         if name=='intake':
             if 'public_url' not in p:
                 return self.create(db,p)
@@ -396,6 +406,7 @@ class Service:
             self.store.event(db,m['entity'],name.upper(),m['id']);return m
         if name=='feedback':
             c=self.store.get(db,'case',p.get('id'));require(c['status']=='CLOSED','Evaluate learning after verified closure')
+            require(c.get('closure_reason')!='CUSTOMER_INACTIVE','A no-reply closure has no verified outcome; reopen and verify before teaching Hermes')
             verdict=p.get('verdict');require(verdict in {'APPROVED','CORRECTED','REJECTED'},'Invalid feedback')
             text='' if verdict=='REJECTED' else bounded(p.get('text') if verdict=='CORRECTED' else c['draft'],1,2000)
             f={'id':uid('STYLE'),'case_id':c['id'],'text':text,'verdict':verdict,'share':p.get('share') is True,'at':now()}
@@ -433,10 +444,11 @@ class Service:
             require(bool(c['tenant_id']),'Verify/link the tenant before queuing a private response')
             require(p.get('confirmed') is True,'Review the exact saved response before queueing')
             self.enqueue(db,c['id'],'TENANT_RESPONSE',c['draft'],c['tenant_id']);note='Saved response queued; approval still required'
-        elif action=='publish_response':
+        elif action in {'publish_response','send_reply'}:
+            if action=='send_reply':c['draft']=bounded(p.get('reviewed_reply'),1,2500)
             require(status not in {'CLOSED','SKIPPED','ANSWERED'} and c['draft'],'An active complaint and saved response are required')
             require(c['tenant_id'] or self.has_complaint_access(db,c),'This case needs an active Complaint Code or verified tenant access')
-            require(p.get('confirmed') is True,'Review the exact saved response before publishing to the tenant portal')
+            require(p.get('confirmed') is True,'Review the reply before sending it to the customer')
             if 'reviewed_reply' in p:
                 require(bounded(p['reviewed_reply'],1,2500)==c['draft'],'Save the edited reply before sending it')
             from belive.conversations import post
@@ -451,6 +463,7 @@ class Service:
                     outcome['ai_drafts_unchanged'] = outcome.get('ai_drafts_unchanged',0)+int(original==c['draft'])
             c.pop('ai_draft_original',None)
             post(self.store,db,c,'SUPPORT',c['draft'],message_key)
+            if c['status']=='FOLLOW_UP':c['waiting_since']=now()
             note='Reviewed response published to the tenant portal; no external gateway delivery claimed'
         elif action=='assess':
             require(status not in {'CLOSED','SKIPPED','ANSWERED'},'An active case is required')
@@ -482,19 +495,23 @@ class Service:
             require(c['tenant_id'] or self.has_complaint_access(db,c),'An active Complaint Code or verified tenant is required')
             note=bounded(note,8,2000)
             c['action_due']=None;c['status']='FOLLOW_UP';c['followup_due']=due(self.settings.followup_minutes);c['followup_count']=0
+            c['waiting_since']=now();c.pop('tenant_resolution',None);c.pop('closure_reason',None)
             if not c['tenant_id']:
                 from belive.conversations import post
                 c.pop('tenant_resolution',None)
-                post(self.store,db,c,'SYSTEM','The BeLive team has recorded an action. Please choose Issue resolved or Still unresolved.','staff-followup-'+str(c['revision']))
+                post(self.store,db,c,'SYSTEM',f'The BeLive team has recorded an action. Please choose Issue resolved or Still unresolved. If you do not reply within {closure.policy(self.store,db)["days"]} days, this complaint will close without a confirmed resolution. You can reopen it later with the same Complaint Code.','staff-followup-'+str(c['revision']))
         elif action=='reassess':
             require(status=='FOLLOW_UP','Only follow-up cases can be reassessed');note=bounded(note,8,2000);self.handoff(db,c,note)
-        elif action=='verify':
+        elif action in {'verify','verify_close'}:
             require(status=='FOLLOW_UP','Start follow-up before verifying resolution')
             if not c['tenant_id']:
                 require(c.get('entrypoint')=='TENANT_WEBSITE' and c.get('tenant_resolution',{}).get('resolved') is True,
                         'Wait for the customer to confirm the issue is resolved')
             require(p.get('confirmed') is True,'Confirm resolution against evidence or tenant feedback')
             c['verification']=bounded(note,8,2000);c['status']='VERIFIED';c['followup_due']=None
+            if action=='verify_close':
+                require(not any(w['case_id']==c['id'] and w['status']=='OPEN' for w in self.store.all(db,'workorder')),'Complete outstanding work orders before closure')
+                c['status']='CLOSED';c['closed_at']=now()
         elif action=='close':
             require(status=='VERIFIED' and c['verification'],'Record resolution evidence before closure')
             require(not any(w['case_id']==c['id'] and w['status']=='OPEN' for w in self.store.all(db,'workorder')),'Complete outstanding work orders before closure')
@@ -502,6 +519,7 @@ class Service:
         elif action=='reopen':
             require(status in {'CLOSED','SKIPPED','ANSWERED'},'Only closed or skipped cases can reopen');note=bounded(note,8,2000)
             self.record_reopen(db,c)
+            c.pop('closure_reason',None);c.pop('waiting_since',None)
             c['verification']='';self.handoff(db,c,note)
             self.store.put(db,'feedback',{'id':uid('STYLE'),'case_id':c['id'],'text':'','verdict':'REJECTED','share':False,'at':now()})
         else:raise ValueError('Unknown case action')
@@ -634,6 +652,7 @@ class Service:
         return job
     def tick(self):
         with self.lock,self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
             moment=now()
             for c in self.store.all(db,'case'):
                 changed=False
@@ -642,10 +661,14 @@ class Service:
                     target='backup-support' if c['escalation']==1 else 'management'
                     self.enqueue(db,c['id'],'ACK_TIMEOUT','Unacknowledged support case requires attention.',target);changed=True
                     self.store.event(db,c['id'],'ESCALATED',target)
-                if c['status']=='FOLLOW_UP' and c.get('followup_due') and c['followup_due']<=moment:
+                if closure.waiting(c):
+                    had_wait=c.get('waiting_since')
+                    closed=closure.tick(self,db,c,moment)
+                    changed=changed or closed or not had_wait
+                if c['status']=='FOLLOW_UP' and c.get('followup_due') and c['followup_due']<=moment and not c.get('tenant_resolution',{}).get('resolved'):
                     n=c.get('followup_count',0)+1;c['followup_count']=n
                     if c.get('automatic_answer') and not c.get('owner'):
-                        if n>=2 or not automation.policy(self.store,db)['enabled']:
+                        if not closure.waiting(c) and (n>=2 or not automation.policy(self.store,db)['enabled']):
                             self.handoff(db,c,'Informational answer needs staff follow-up; no resolution claimed')
                         else:
                             from belive.conversations import post
@@ -657,7 +680,7 @@ class Service:
                         elif c.get('entrypoint')=='TENANT_WEBSITE':
                             from belive.conversations import post
                             post(self.store,db,c,'SYSTEM','Please confirm whether the reported issue is still present. Your case remains open.','complaint-reminder-'+str(c['revision']))
-                        if n>=2:self.handoff(db,c,'Follow-up overdue after two recorded reminder cycles')
+                        if n>=2 and not closure.waiting(c):self.handoff(db,c,'Follow-up overdue after two recorded reminder cycles')
                         else:c['followup_due']=due(self.settings.followup_minutes)
                     changed=True
                 if changed:c['revision']+=1;self.store.put(db,'case',c)
@@ -776,6 +799,8 @@ class Service:
                 case['complaint_level']=complaint_level(full)
                 case['ai_assistance_pending']=bool(full.get('ai_assistance_pending'))
                 case['ai_draft_ready']=bool(full['status']=='HUMAN_REVIEW' and full.get('analysis') and full.get('draft'))
+                case['closure_reason']=full.get('closure_reason','')
+                case['auto_close_at']=closure.deadline(full,closure.policy(self.store,db)['days']) if closure.waiting(full) else None
             if case_id:
                 return {'tenant_id':'','cases':cases,'property_name':'BeLive complaint','unit_ref':case_id,
                         'demo_only':False,'access_scope':'COMPLAINT'}
@@ -792,7 +817,6 @@ class Service:
             scope=self._portal_scope(db,token);tenant=scope.get('tenant_id','')
             c=self.store.get(db,'case',p.get('id'))
             require(c['id']==scope.get('case_id') if scope.get('case_id') else c['tenant_id']==tenant,'Case is outside this access code')
-            require(c['status']!='CLOSED','Contact staff to reopen a closed case')
             raw_note=p.get('note')
             short_ack=(c.get('entrypoint')=='TENANT_WEBSITE' and c['status']=='FOLLOW_UP'
                        and (c.get('automatic_answer') or {}).get('id')=='PUBLIC-COMPLAINT-FAQ'
@@ -803,6 +827,12 @@ class Service:
                 saved=json.loads(old[0]);require(saved['fingerprint']==fingerprint,'Idempotency mismatch');return saved['result']
             from belive.conversations import post
             message=post(self.store,db,c,'TENANT',note,'update-'+key)
+            if c['status']=='CLOSED':
+                self.record_reopen(db,c)
+                c.pop('closed_at',None);c.pop('closure_reason',None);c.pop('waiting_since',None)
+                c.update(verification='',owner='',owner_id='')
+                self.handoff(db,c,'Customer returned with a message after closure')
+                self.store.put(db,'feedback',{'id':uid('STYLE'),'case_id':c['id'],'text':'','verdict':'REJECTED','share':False,'at':now()})
             self.store.event(db,c['id'],'TENANT_UPDATE',note)
             c['tenant_update']=note;c['revision']+=1
             public_answer=(c.get('entrypoint')=='TENANT_WEBSITE' and not c['tenant_id']
@@ -815,6 +845,7 @@ class Service:
             elif c.get('automatic_answer') and automation.unresolved(note):
                 self.handoff(db,c,'Tenant says the automatic answer did not help')
             elif public_answer and automation.acknowledgement_only(note):
+                c['waiting_since']=now()
                 post(self.store,db,c,'SYSTEM','You’re welcome. If your question was answered, choose “This answers my question”. You can still ask for help here.','ack-'+key)
             elif public_answer:
                 c.update(status='AI_PENDING',analysis=None,followup_due=None,
@@ -823,6 +854,9 @@ class Service:
                 c.update(status='AI_PENDING',analysis=None,followup_due=None)
             elif c.get('automatic_answer') and not c.get('handoff') and not c.get('owner'):
                 self.handoff(db,c,'Customer added details after an automatic answer; staff follow-up required')
+            elif c['status']=='FOLLOW_UP':
+                c.update(status='IN_PROGRESS',followup_due=None,next_action='Customer replied; staff response required')
+                c.pop('waiting_since',None);c.pop('tenant_resolution',None)
             self.store.put(db,'case',c)
             db.execute('INSERT INTO requests VALUES(?,?)',(key,json.dumps({'fingerprint':fingerprint,'result':{'saved':True}})))
             return {'saved':True}
