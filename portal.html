@@ -2,11 +2,11 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BeLive · Make a complaint</title><link rel="stylesheet" href="/assets/style.css"><link rel="stylesheet" href="/assets/fyp.css"></head>
 <body><main class="tenant-portal">
   <nav class="portal-nav"><a href="/belive" class="portal-back">← BeLive home</a><a id="switchComplaintEntry" href="/portal?view=track">Track complaint</a></nav>
-  <div class="page-heading"><div><span class="eyebrow">SPEAK UP, WE WILL FOLLOW UP</span><h1>Make a complaint</h1><p>No tenant code is needed. Tell us what happened and keep the Complaint Code we give you.</p></div><button id="portalSignOut" hidden>Close complaint</button></div>
+  <div class="page-heading"><div><span class="eyebrow">SPEAK UP, WE WILL FOLLOW UP</span><h1>Make a complaint</h1><p>Tell us what happened. Return to this browser to see replies.</p></div><button id="portalSignOut" hidden>Exit demo</button></div>
   <section class="card" id="portalAccessCard">
     <div id="publicComplaint"><span class="eyebrow">NEW COMPLAINT</span><h2>Tell us what happened</h2><form id="websiteComplaint"><label>Short title<input name="title" required minlength="4" maxlength="120" placeholder="e.g. Wi-Fi keeps disconnecting"></label><label>What happened?<textarea name="description" required minlength="10" maxlength="6000" placeholder="Describe the problem and anything you have already tried."></textarea></label><p class="muted">Do not include passwords, payment details or identity documents. For immediate danger, use the appropriate emergency or building-safety channel.</p><button id="sendWebsiteComplaint" type="submit" class="primary">Submit complaint</button></form></div>
     <div id="demoEntry" hidden><span class="eyebrow">TRY THE UNIVERSITY PROTOTYPE</span><h2>No sign-up needed for the demo.</h2><p>Use a fictional tenant to try AI replies and staff handover.</p><button class="primary" id="tryDemoTenant">Try demo tenant</button><p class="muted">Demo records only. This does not open any real tenant's requests.</p></div>
-    <details id="privateAccess"><summary>Track an existing complaint</summary><form id="portalAccess"><label>Complaint Code<input id="accessKey" type="text" required autocomplete="off" autocapitalize="characters" placeholder="CMP-XXXX-XXXX-XXXX-XXXX"></label><button id="connect" type="submit" class="primary">Open complaint</button></form><p class="muted">Enter the Complaint Code shown after submission. A verified Tenant Access key issued by staff also continues to work for full tenant history.</p></details>
+    <p id="privateAccess" hidden>Use the browser you submitted the complaint from to see its replies.</p>
   </section>
   <div id="portalNotice" role="status" aria-live="polite"></div>
   <section id="tenantArea" hidden>
@@ -16,4 +16,4 @@
     <section class="card" id="conversations" hidden><div class="card-heading"><div><span class="eyebrow">YOUR COMPLAINT</span><h2 id="conversationHeading" tabindex="-1">My complaint</h2></div><button id="refreshPortal">Refresh</button></div><div id="requestList"></div><button id="allRequests" class="text-button" hidden>← All my complaints</button><div id="tenantCases"></div></section>
   </section>
   <div class="portal-bottom"><a href="/belive">← Return to BeLive home</a><p>Independent university prototype · Customer complaint management</p></div>
-</main><script src="/assets/portal.js" type="module"></script></body></html>
+</main><script src="/assets/portal.js?v=2" type="module"></script></body></html>

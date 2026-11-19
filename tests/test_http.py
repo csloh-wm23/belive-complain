@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+from http.cookies import SimpleCookie
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -32,7 +33,11 @@ class HttpTests(unittest.TestCase):
         h={'Content-Type':'application/json','Cookie':self.cookie,**(headers or {})}
         try:
             with urlopen(Request(self.url+path,data=json.dumps(body).encode() if body is not None else None,headers=h)) as r:
-                if r.headers.get('Set-Cookie') is not None:self.cookie=r.headers['Set-Cookie'].split(';',1)[0]
+                if r.headers.get('Set-Cookie') is not None:
+                    cookies=SimpleCookie(self.cookie)
+                    for header in r.headers.get_all('Set-Cookie'):
+                        cookies.load(header)
+                    self.cookie='; '.join(f'{k}={v.value}' for k,v in cookies.items())
                 return r.status,r.read()
         except HTTPError as e:
             with e:return e.code,e.read()
@@ -89,7 +94,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(code,200);admin_cookie=self.cookie
         self.assertEqual(self.request('/api/logout',{},auth)[0],200)
         code,_=self.request('/api/login',dict(username='qa-support',password='Support-test-password-123'),auth);self.assertEqual(code,200)
-        for route in ['backup','restore','users','source','record_update','select-database','ai-check','answer','answer_deactivate','automation_settings']:
+        for route in ['backup','restore','users','source','record_update','select-database','ai-check','review-chrome-sign-in','answer','answer_deactivate','automation_settings']:
             self.assertEqual(self.request('/api/'+route,{},auth)[0],403,route)
         self.assertEqual(self.request('/api/users',headers=auth)[0],403)
         with self.s.store.connect() as db:
@@ -124,17 +129,19 @@ class HttpTests(unittest.TestCase):
         headers={'Idempotency-Key':secrets.token_hex(16)}
         code,body=self.request('/api/website/complaints',payload,headers)
         self.assertEqual(code,200);receipt=json.loads(body)
-        self.assertRegex(receipt['complaint_code'],r'^CMP-(?:[A-Z2-7]{4}-){3}[A-Z2-7]{4}$')
+        self.assertNotIn('complaint_code',receipt)
         self.assertEqual(self.request('/api/website/complaints',payload,headers)[1],body)
         with self.s.store.connect() as db:
             cases=self.s.store.all(db,'case');self.assertEqual(len(cases),1)
             self.assertEqual(cases[0]['id'],receipt['id']);self.assertEqual(cases[0]['tenant_id'],'')
             self.assertEqual(cases[0]['entrypoint'],'TENANT_WEBSITE')
             self.assertEqual(cases[0]['reported_location'],{'property':'Fixture Residence','unit':'Block B, 12-03'})
-            self.assertNotIn(receipt['complaint_code'],str([tuple(x) for x in db.execute('SELECT * FROM requests')]))
-        code,portal=self.request('/api/portal',headers={'Authorization':'Bearer '+receipt['complaint_code'].lower()})
+            browser=SimpleCookie(self.cookie)['belive_complaints'].value
+            self.assertNotIn(browser,str([tuple(x) for x in db.execute('SELECT * FROM requests')]))
+            self.assertNotIn(browser,str(self.s.store.all(db,'portal')))
+        code,portal=self.request('/api/portal')
         self.assertEqual(code,200);portal=json.loads(portal)
-        self.assertEqual(portal['access_scope'],'COMPLAINT');self.assertEqual([c['id'] for c in portal['cases']],[receipt['id']])
+        self.assertEqual(portal['access_scope'],'BROWSER');self.assertEqual([c['id'] for c in portal['cases']],[receipt['id']])
         code,body=self.request('/api/status',headers={'X-CSRF-Token':self.csrf})
         self.assertEqual(code,200);self.assertIn(receipt['id'],[c['id'] for c in json.loads(body)['cases']])
         self.assertEqual(self.request('/api/status',headers={'X-CSRF-Token':self.csrf,'Cookie':''})[0],401)
@@ -147,7 +154,7 @@ class HttpTests(unittest.TestCase):
         code,body=self.request('/api/website/complaints',payload,{'Idempotency-Key':secrets.token_hex(16)})
         self.assertEqual(code,200);self.assertEqual(json.loads(body)['status'],'HUMAN_REVIEW')
         receipt=json.loads(body)
-        code,body=self.request('/api/portal',headers={'Authorization':'Bearer '+receipt['complaint_code']})
+        code,body=self.request('/api/portal')
         self.assertEqual(code,200)
         messages=json.loads(body)['cases'][0]['conversation']
         self.assertTrue(any(m['sender']=='SYSTEM' and 'staff queue' in m['text'] for m in messages))
@@ -178,12 +185,12 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(status,200)
         receipt=json.loads(body)
         self.assertEqual(receipt['status'],'FOLLOW_UP')
-        headers={'Authorization':'Bearer '+receipt['complaint_code'],'Idempotency-Key':secrets.token_hex(16)}
+        headers={'Idempotency-Key':secrets.token_hex(16)}
         status,body=self.request('/api/portal',headers=headers)
         self.assertEqual(status,200)
         complaint=json.loads(body)['cases'][0]
         self.assertTrue(complaint['informational_answer'])
-        self.assertTrue(any('Track an existing complaint' in m['text'] for m in complaint['conversation']))
+        self.assertTrue(any('Track complaint' in m['text'] for m in complaint['conversation']))
         self.assertTrue(any('original complaint reference' in m['text'] or 'recovery email' in m['text'] for m in complaint['conversation']))
         self.assertEqual(self.request('/api/portal/update',{'id':receipt['id'],'note':'ok thank'},headers)[0],200)
         status,body=self.request('/api/portal',headers=headers)
@@ -253,7 +260,90 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(case['status'],'HUMAN_REVIEW')
             self.assertEqual(json.loads(submit(url)[1])['id'],case['id'])
 
-    def test_staff_reply_visible_to_unverified_complaint_code(self):
+    def test_api_free_review_import_reuses_an_existing_google_case(self):
+        from belive.browser_reviews import read_browser_review
+
+        headers={'X-CSRF-Token':self.csrf,'Idempotency-Key':secrets.token_hex(16)}
+        link='https://www.google.com/maps/contrib/123456789/place/ExamplePlace'
+        captured={'source_id':'google-browser-test','rating':1,'review_url':link,
+                  'description':'The washing machine stopped working and shared laundry could not be used.'}
+        with self.assertRaisesRegex(ValueError,'individual Google Maps review link'):
+            read_browser_review('https://www.google.com/maps/place/Fictional+Residence')
+        with patch('belive.browser_reviews.read_browser_review',return_value=captured):
+            first=json.loads(self.request('/api/import-review',{'url':link},headers)[1])
+            changed=link+'/@1.2,3.4,8z?hl=en'
+            second=json.loads(self.request('/api/import-review',{'url':changed},headers)[1])
+        self.assertTrue(first['created'])
+        self.assertFalse(second['created'])
+        self.assertEqual(first['id'],second['id'])
+        with self.s.store.connect() as db:
+            self.assertEqual(len(self.s.store.all(db,'case')),1)
+            case=self.s.store.get(db,'case',first['id'])
+            self.assertEqual((case['review_url'],case['source_id']),(link,captured['source_id']))
+
+    def test_review_chrome_sign_in_requires_admin(self):
+        headers={'X-CSRF-Token':self.csrf,'Idempotency-Key':secrets.token_hex(16)}
+        with patch('belive.browser_reviews.open_review_chrome_sign_in') as open_window:
+            self.assertEqual(self.request('/api/review-chrome-sign-in',{},dict(headers,Cookie=''))[0],401)
+            open_window.assert_not_called()
+            code,body=self.request('/api/review-chrome-sign-in',{},headers)
+            self.assertEqual(code,200)
+            self.assertEqual(json.loads(body),{'opened':True})
+            open_window.assert_called_once_with()
+
+    def test_browser_batch_caps_imports_and_deduplicates_by_review_id(self):
+        listing='https://www.google.com/maps/place/Fictional+Residence'
+        captured=[
+            {'source_id':f'google-browser-fixture-{number}', 'rating':1, 'listing_url':listing,
+             'description':f'Smoke and sparks were reported from a socket in fictional room {number}.'}
+            for number in range(12)
+        ]
+        with patch('belive.browser_reviews.read_browser_review_batch',return_value=(captured,0)):
+            headers={'X-CSRF-Token':self.csrf,'Idempotency-Key':secrets.token_hex(16)}
+            status,body=self.request('/api/import-review-batch',{'links':listing},headers)
+            first=json.loads(body)
+            headers['Idempotency-Key']=secrets.token_hex(16)
+            again=json.loads(self.request('/api/import-review-batch',{'links':listing},headers)[1])
+        self.assertEqual(status,200)
+        self.assertEqual(len(first['created']),10)
+        self.assertEqual(first['created'],again['duplicates'])
+        self.assertEqual(again['created'],[])
+        cases=self.s.snapshot()['cases']
+        self.assertEqual(len(cases),10)
+        self.assertTrue(all(c['public_url']==listing and c['review_rating']==1
+                            and not c['can_contact_customer'] for c in cases))
+
+    def test_save_individual_google_review_link_preserves_source_evidence(self):
+        headers={'X-CSRF-Token':self.csrf}
+        def post(route,data):
+            return self.request('/api/'+route,data,{**headers,'Idempotency-Key':secrets.token_hex(16)})
+        listing='https://www.google.com/maps/place/?q=place_id:example'
+        code,body=post('intake',{'title':'Review link fixture','description':'Smoke and sparks from the socket.','public_url':listing})
+        self.assertEqual(code,200)
+        case=json.loads(body)
+        update={'id':case['id'],'revision':case['revision'],'action':'review_link'}
+        for invalid in (listing,'https://g.page/r/Example/review','https://maps.app.goo.gl.example.org/Example'):
+            self.assertEqual(post('case_action',{**update,'review_url':invalid})[0],400)
+        direct='https://maps.app.goo.gl/ExampleReviewLink'
+        code,body=post('case_action',{**update,'review_url':direct})
+        self.assertEqual(code,200)
+        saved=json.loads(body)
+        self.assertEqual(saved['review_url'],direct)
+        for name in ('public_url','source_id','source_versions','status','analysis'):
+            self.assertEqual(saved.get(name),case.get(name))
+        self.assertEqual(saved.get('automation_paused'),case.get('automation_paused'))
+        self.assertEqual(post('case_action',{**update,'review_url':direct})[0],400)
+        code,body=self.request('/api/status',headers=headers)
+        self.assertEqual(code,200)
+        self.assertEqual(next(c for c in json.loads(body)['cases'] if c['id']==case['id'])['review_url'],direct)
+        full='https://www.google.com/maps/contrib/123456789/place/Place-ID/@1.2,3.4,8z/data=!4m6?hl=en'
+        code,body=post('case_action',{**update,'revision':saved['revision'],'review_url':full})
+        self.assertEqual(code,200)
+        self.assertEqual(json.loads(body)['review_url'],full)
+        profile='https://www.google.com/maps/contrib/123456789/reviews/'
+        self.assertEqual(post('case_action',{**update,'revision':json.loads(body)['revision'],'review_url':profile})[0],400)
+
+    def test_staff_reply_and_closure_remain_available_in_the_submitting_browser(self):
         code,body=self.request('/api/website/complaints',{
             'title':'Electrical concern','description':'Smoke and sparks from the socket.',
             'rental_property':'Fixture Residence'}, {'Idempotency-Key':secrets.token_hex(16),'Cookie':''})
@@ -268,8 +358,9 @@ class HttpTests(unittest.TestCase):
             case=next(c for c in json.loads(snapshot)['cases'] if c['id']==cid)
             self.assertFalse(case['tenant_id'])
             return self.request('/api/case_action',dict(id=cid,revision=case['revision'],action=action,**fields),headers)
+        browser_cookie='belive_complaints='+SimpleCookie(self.cookie)['belive_complaints'].value
         def customer(path='/api/portal',payload=None):
-            return self.request(path,payload,{'Cookie':'','Authorization':'Bearer '+receipt['complaint_code'],
+            return self.request(path,payload,{'Cookie':browser_cookie,
                                               'Idempotency-Key':secrets.token_hex(16)})
         reply='We received your report. Please tell us which shared area is affected.'
         self.assertEqual(staff('acknowledge')[0],200)
@@ -297,6 +388,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(case['conversation'][-1]['text'],note)
         self.assertEqual(case['status'],'IN_PROGRESS')
         evidence='Staff recorded the action and checked the customer feedback.'
+        self.assertEqual(staff('verify_staff_close',note=evidence,confirmed=True)[0],400)
         self.assertEqual(staff('followup',note=evidence)[0],200)
         self.assertEqual(staff('verify',note=evidence,confirmed=True)[0],400)
         self.assertEqual(staff('verify_close',note=evidence,confirmed=True)[0],400)
@@ -322,9 +414,7 @@ class HttpTests(unittest.TestCase):
 
     def test_complaint_email_recovery_only_sends_to_matching_address(self):
         payload={'title':'Safety test','description':'Smoke from a fictional socket.','email':'fixture@example.test'}
-        code,body=self.request('/api/website/complaints',payload,{'Idempotency-Key':secrets.token_hex(16)})
-        self.assertEqual(code,200)
-        receipt=json.loads(body)
+        receipt=self.s.website_submit(payload,secrets.token_hex(16))
         with patch('belive.complaint_mail.configured',return_value=True),patch('belive.complaint_mail.send_verification') as mail:
             payload_email={'email':payload['email']}
             headers={'Authorization':'Bearer '+receipt['complaint_code']}
@@ -344,18 +434,55 @@ class HttpTests(unittest.TestCase):
                 self.assertEqual(json.loads(body),{'accepted':True})
             send.assert_called_once_with(payload['email'],receipt['complaint_code'])
 
-    def test_complaint_code_cannot_open_or_update_another_complaint(self):
-        def submit(title,description):
-            code,body=self.request('/api/website/complaints',{'title':title,'description':description},{'Idempotency-Key':secrets.token_hex(16)})
-            self.assertEqual(code,200);return json.loads(body)
-        first=submit('First private complaint','The first fictional complaint has enough detail for testing.')
-        second=submit('Second private complaint','The second fictional complaint must remain isolated from the first.')
-        code,body=self.request('/api/portal',headers={'Authorization':'Bearer '+first['complaint_code']})
-        self.assertEqual(code,200);self.assertEqual([c['id'] for c in json.loads(body)['cases']],[first['id']])
-        code,body=self.request('/api/portal/update',{'id':second['id'],'note':'Trying to change a complaint outside this code.'},{'Authorization':'Bearer '+first['complaint_code'],'Idempotency-Key':secrets.token_hex(16)})
-        self.assertEqual(code,400);self.assertIn('outside this access code',json.loads(body)['error'])
-        same_text=submit('First private complaint','The first fictional complaint has enough detail for testing.')
-        self.assertNotEqual(same_text['id'],first['id']);self.assertNotEqual(same_text['complaint_code'],first['complaint_code'])
+    def test_browser_scope_isolates_complaints_and_keeps_multiple_cases(self):
+        def submit(title, cookie=None, key=None):
+            headers={'Idempotency-Key':key or secrets.token_hex(16)}
+            if cookie is not None:
+                headers['Cookie']=cookie
+            code,body=self.request('/api/website/complaints',{
+                'title':title,'description':'A fictional complaint with enough details for the isolation test.'},headers)
+            return code,json.loads(body)
+
+        key=secrets.token_hex(16)
+        code,first=submit('First private complaint',key=key)
+        self.assertEqual(code,200)
+        first_browser=self.cookie
+        self.assertEqual(submit('First private complaint',cookie='',key=key)[0],400)
+        code,second=submit('Second private complaint',cookie='')
+        self.assertEqual(code,200)
+        self.assertNotEqual(first['id'],second['id'])
+        code,body=self.request('/api/portal',headers={'Cookie':first_browser})
+        self.assertEqual(code,200)
+        self.assertEqual([c['id'] for c in json.loads(body)['cases']],[first['id']])
+        code,body=self.request('/api/portal/update',{'id':second['id'],'note':'A message to another browser’s case.'},
+                               {'Cookie':first_browser,'Idempotency-Key':secrets.token_hex(16)})
+        self.assertEqual(code,400)
+        self.assertIn('unavailable in this browser session',json.loads(body)['error'])
+        code,third=submit('Third private complaint',cookie=first_browser)
+        self.assertEqual(code,200)
+        code,body=self.request('/api/portal',headers={'Cookie':first_browser})
+        self.assertEqual(code,200)
+        self.assertEqual({c['id'] for c in json.loads(body)['cases']},{first['id'],third['id']})
+
+    def test_staff_can_close_public_case_with_checked_evidence(self):
+        case=self.s.command('intake',{
+            'title':'Fictional public review','description':'The shared washer stopped working and no one came to repair it.',
+            'public_url':'https://www.google.com/maps/place/Fictional+Residence'},secrets.token_hex(16))
+        def action(name,**payload):
+            with self.s.store.connect() as db:
+                current=self.s.store.get(db,'case',case['id'])
+            return self.request('/api/case_action',dict(id=case['id'],revision=current['revision'],action=name,**payload),
+                                {'X-CSRF-Token':self.csrf,'Idempotency-Key':secrets.token_hex(16)})
+        evidence='Maintenance work order confirmed the washer works after repair.'
+        self.assertEqual(action('verify_staff_close',note=evidence,confirmed=True)[0],400)
+        self.assertEqual(action('acknowledge')[0],200)
+        self.assertEqual(action('verify_staff_close',note=evidence,confirmed=False)[0],400)
+        code,body=action('verify_staff_close',note=evidence,confirmed=True)
+        self.assertEqual(code,200)
+        self.assertEqual(json.loads(body)['status'],'CLOSED')
+        self.assertEqual(json.loads(body)['verification'],evidence)
+        self.assertEqual(self.request('/api/portal_issue',{},{
+            'X-CSRF-Token':self.csrf,'Idempotency-Key':secrets.token_hex(16)})[0],404)
 
     def test_portal_cannot_choose_another_tenant_on_intake(self):
         def cmd(name,p):return self.s.command(name,p,secrets.token_hex(16))

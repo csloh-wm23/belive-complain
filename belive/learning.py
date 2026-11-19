@@ -10,7 +10,7 @@ LESSON=('Use two short numbered points, starting with 1. and 2. Put one useful n
         'Keep the whole reply below 90 words. Use only the approved facts and safe steps. Never claim the issue is fixed.')
 SCENARIOS = {
     'WIFI': ('Wi-Fi', 'How can I check a Wi-Fi connection problem on my device?'),
-    'MAINTENANCE': ('Maintenance', 'What details should I include if the air conditioner makes an unusual noise?'),
+    'MAINTENANCE': ('Maintenance', 'What details should I include when reporting a refrigerator that is no longer cooling?'),
     'CLEANING': ('Cleaning', 'There are crumbs and spills in the shared kitchen. What information helps describe the cleaning issue?'),
     'ACCESS': ('Building access', 'I had trouble opening the lobby entrance door this morning. What details should I include about the entrance?'),
     'UTILITIES': ('Water and utilities', 'What should I include in a report about weak water pressure?'),
@@ -56,7 +56,8 @@ def command(service,db,name,p):
         label,default_question=SCENARIOS[category]
         question=bounded(p.get('question') or default_question,10,1000)
         from belive.service import risk,uid
-        if risk(question) or automation.exception_reason(question):raise ValueError('Use a safe informational question for this fictional learning test')
+        if risk(question) or automation.exception_reason(question):
+            raise ValueError('Use a safe informational question for this comparison. Repair requests and danger reports go to staff. For Maintenance practice, ask what details to include when reporting a refrigerator that is no longer cooling.')
         guide=available_guides(service,db).get(category)
         if not guide:raise ValueError(f'An approved English demo guide is needed for {label}')
         run_id=uid('LEARN')

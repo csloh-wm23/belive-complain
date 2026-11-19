@@ -36,25 +36,25 @@ def unresolved(text):
 
 PUBLIC_COMPLAINT_ANSWERS = {
     'how do i report a wi-fi connection problem': 'In this conversation, tell us which devices are affected, when Wi-Fi disconnects and whether it happens in your room or a shared area. If you need someone to investigate, choose Still unresolved.',
-    'how do i track my complaint': 'On the BeLive complaint page, choose Track an existing complaint and enter your private Complaint Code. Keep that code private.',
-    'how can i add more details to my complaint': 'Open your complaint with your Complaint Code. Type the extra details in Reply or outcome details and send the reply. Keep everything in the same conversation.',
-    '如何查询投诉进度': '在投诉页面选择 Track an existing complaint，输入提交时收到的 Complaint Code，即可查看进度和回复。请保管好这个代码。',
+    'how do i track my complaint': 'Open Track complaint in the browser you used to submit. Select your complaint to see the latest replies.',
+    'how can i add more details to my complaint': 'Open Track complaint in the browser you used to submit. Select the complaint, enter the extra details and send the reply.',
+    '如何查询投诉进度': '使用提交投诉时的浏览器打开 Track complaint，然后选择投诉，即可查看进度和回复。',
 }
 
 PUBLIC_GUIDANCE = {
     'track': ('How to check the status or replies of a complaint', PUBLIC_COMPLAINT_ANSWERS['how do i track my complaint']),
-    'recover': ('How to recover a lost Complaint Code or reference', None),
+    'recover': ('How to find a complaint when tracking is unavailable', None),
     'add_details': ('How to add a message or correct details in an existing complaint', PUBLIC_COMPLAINT_ANSWERS['how can i add more details to my complaint']),
     'report_wifi': ('What information to include when reporting Wi-Fi trouble', PUBLIC_COMPLAINT_ANSWERS['how do i report a wi-fi connection problem']),
     'wifi_checks': ('How to do a basic Wi-Fi check on the customer’s own device, without requesting maintenance', 'Check that Wi-Fi is on and airplane mode is off. Try reconnecting to the network and checking whether another device is affected. Comparing devices helps distinguish a phone-specific connection issue from a network issue, but is optional if no other device is available. Reconnecting refreshes the connection. Airplane mode can disable wireless connections. If the problem persists, tell us which devices are affected and choose Still unresolved.'),
     'location': ('What location information to provide in the complaint form', 'Enter the name of your building or residence. If the problem is in a specific unit, room or shared area, add that location so the team can find it.'),
     'outcome': ('How to say the issue is resolved or request more help on an existing complaint', 'Open your complaint and choose Issue resolved if it has been fixed, or Still unresolved if you need the BeLive team to review it.'),
-    'privacy': ('What sensitive information to leave out of the complaint form', 'Describe the issue and where it happened. Leave out passwords, payment details, access codes and identity documents. Keep your Complaint Code private.'),
+    'privacy': ('What sensitive information to leave out of the complaint form', 'Describe the issue and where it happened. Leave out passwords, payment details and identity documents.'),
     'maintenance_details': ('What details to include when reporting a maintenance problem; no repair advice', 'Include the building and unit or shared area, when the issue started, and what you noticed. Say whether it is still happening. For an immediate safety risk, use your building’s emergency channel.'),
     'cleaning_details': ('How to describe a cleaning or shared-space issue in a report', 'Name the building and shared area, such as the lobby or laundry room. Include the date, time and what needs attention so the team can find it.'),
     'noise_details': ('What information to include when reporting repeated noise', 'Include the building, where you heard it, approximate times and how often it happens. Describe what you observed. Leave out neighbours’ personal details.'),
-    'recovery_email': ('Whether email is required to submit a complaint and why the form asks for it', 'Recovery email is optional. You can submit without it. Save your Complaint Code and complaint reference after submitting. Email recovery also depends on whether BeLive has enabled email delivery.'),
-    'staff_followup': ('How to ask for further help after an automatic answer', 'Open the complaint with your Complaint Code, add what you tried or what still needs attention, then select Still unresolved to ask the team to review it.'),
+    'recovery_email': ('Whether email is required to submit or track a complaint', 'You can submit a complaint without email. Use Track complaint in the submitting browser, and keep the reference for conversations with support.'),
+    'staff_followup': ('How to ask for further help after an automatic answer', 'Open the complaint from Track complaint, add what still needs attention, then select Still unresolved to ask the team to review it.'),
 }
 
 
@@ -67,13 +67,20 @@ def acknowledgement_only(text):
 
 
 def recovery_guidance():
-    from belive.complaint_mail import configured
-    if configured():
-        return 'If you saved your complaint reference and entered a recovery email when you submitted, use “Forgot your Complaint Code?” on the complaint page.'
-    return 'Email recovery is currently unavailable. Contact the BeLive team with your original complaint reference, or the approximate submission date and title, so they can help locate it.'
+    return 'Use Track complaint in your original browser. If the complaint is unavailable there, contact the BeLive team with your original complaint reference, or the approximate submission date and title, so they can help locate it.'
 
 
-def public_guidance_reply(decision, lessons=None):
+PUBLIC_SOURCE_WORDING = {
+    'wifi_checks': 'Check that Wi-Fi is on and airplane mode is off. Try reconnecting to the network and checking whether another device is affected. If the problem persists, contact BeLive tenant support privately.',
+    'report_wifi': 'When contacting BeLive tenant support privately, describe the devices affected, when Wi-Fi disconnects and whether it happens in your room or a shared area.',
+    'location': 'Include your building and the affected room, unit or shared area when you report the issue privately to BeLive tenant support.',
+    'maintenance_details': 'Contact BeLive tenant support privately with the affected location, when the issue started and whether it is still happening. For an immediate safety risk, use your building’s emergency channel.',
+    'cleaning_details': 'Contact BeLive tenant support privately with the affected building or shared area, when you noticed the issue and what needs attention.',
+    'noise_details': 'Contact BeLive tenant support privately with where you noticed the noise, approximate times and how often it happens. Describe what you observed and leave out neighbours’ personal details.',
+}
+
+
+def public_guidance_reply(decision, lessons=None, *, public_source=False):
     if not isinstance(decision, dict) or decision.get('can_answer') is not True:
         return ''
     topics = decision.get('topics')
@@ -82,7 +89,10 @@ def public_guidance_reply(decision, lessons=None):
     guidance={**PUBLIC_GUIDANCE,**(lessons or {})}
     if not all(isinstance(topic,str) and topic in guidance for topic in topics):
         return ''
-    return '\n\n'.join(guidance[topic][1] or recovery_guidance() for topic in dict.fromkeys(topics))
+    wording = {topic: item[1] for topic, item in guidance.items()}
+    if public_source:
+        wording.update(PUBLIC_SOURCE_WORDING)
+    return '\n\n'.join(wording[topic] or recovery_guidance() for topic in dict.fromkeys(topics))
 
 
 def publish_public_answer(store, db, case):

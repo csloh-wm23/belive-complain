@@ -47,28 +47,16 @@ if(overview)overview.innerHTML=`
     </aside>
   </div>`;
 
-const memory=document.querySelector('[data-page="memory"]');
-if(memory){
-  memory.insertAdjacentHTML('afterbegin',`<section class="learning-hero"><span class="eyebrow">CONTROLLED SELF-LEARNING</span><h2>Learn from verified outcomes, not from every AI answer.</h2><p>Only a closed case with reviewed feedback can become a lesson. Rejected or reopened cases are revoked immediately, and property facts remain separate from writing-style memory.</p><div class="learning-steps"><div><b>01</b><strong>Close with evidence</strong><span>Staff verifies the real outcome.</span></div><div><b>02</b><strong>Review the lesson</strong><span>Approve or correct reusable wording.</span></div><div><b>03</b><strong>Test improvement</strong><span>Compare before and after outputs.</span></div><div><b>04</b><strong>Reuse or revoke</strong><span>Keep only measured, reviewed value.</span></div></div></section>`);
-  const children=[...memory.children].filter(x=>!x.classList.contains('learning-hero'));
-  const reviewed=children.at(-1);
-  if(reviewed?.tagName==='DETAILS')reviewed.open=false;
-  const lab=document.createElement('details');lab.className='learning-lab';lab.open=false;
-  lab.innerHTML='<summary>Open the before/after learning lab</summary>';
-  children.slice(0,-1).forEach(child=>lab.appendChild(child));
-  memory.insertBefore(lab,reviewed);
-}
-
 const settings=document.querySelector('[data-page="settings"]');
 if(settings){
   const closureCard=document.createElement('section');
   closureCard.className='card';closureCard.dataset.admin='';
-  closureCard.innerHTML='<h2>Close after no customer reply</h2><p>Only complaints waiting for the customer are closed automatically. This records an unconfirmed outcome. Customers can reopen with the same Complaint Code. BeLive must be running for scheduled checks.</p><form id="closureForm"><label>Waiting period (days)<input id="closureDays" name="days" type="number" min="1" max="90" required value="7"></label><button type="submit">Save waiting period</button></form><p id="closureStatus" role="status"></p>';
+  closureCard.innerHTML='<h2>Close after no customer reply</h2><p>Only complaints waiting for the customer are closed automatically. This records an unconfirmed outcome. Customers can reopen from Track complaint. BeLive must be running for scheduled checks.</p><form id="closureForm"><label>Waiting period (days)<input id="closureDays" name="days" type="number" min="1" max="90" required value="7"></label><button type="submit">Save waiting period</button></form><p id="closureStatus" role="status"></p>';
   settings.append(closureCard);
   const groups=[
     {label:'AI & replies',intro:'Test the AI connection, manage automatic replies and edit approved knowledge.',ids:['checkAi','knowledgeForm']},
     {label:'Staff routing',intro:'Choose which team receives a complaint and how long to wait for customer feedback.',ids:['routingForm','closureForm']},
-    {label:'Properties & tenant access',intro:'Manage verified property and tenant records. Customers can submit and track complaints without a tenant account.',ids:['condoForm','tenantForm','recordForm','portalIssue','resources']},
+    {label:'Properties & tenants',intro:'Manage verified property and tenant records. Customers can submit and track complaints without a tenant account.',ids:['condoForm','tenantForm','recordForm','resources']},
     {label:'Staff accounts',intro:'Manage operator accounts and staff access.',ids:['usersList']},
     {label:'Demo',intro:'Set up a fictional account for testing.',ids:['prepareDemo']}
   ];
@@ -108,11 +96,7 @@ if(settings){
   });
   const oldGrid=settings.querySelector(':scope > .settings-grid');
   if(oldGrid&&!oldGrid.children.length)oldGrid.remove();
-  const accessCard=document.getElementById('portalIssue')?.closest('.card');
-  const accessTitle=accessCard?.querySelector('h2');
-  if(accessTitle)accessTitle.textContent='Verified tenant access';
-  const accessNote=accessCard?.querySelector('p.muted');
-  if(accessNote)accessNote.textContent='Issue a private access key only after verifying a tenant who needs their full complaint history.';
+
 }
 
 const sourceHeading=document.querySelector('[data-page="sources"] h2');
@@ -131,11 +115,33 @@ if(sourcesPage){
       <label>Check every (minutes)<input name="minutes" id="scanInterval" type="number" min="1" max="1440" required value="15"></label>
       <button type="submit">Save interval</button>
     </form></details>`;
-  sourcesPage.prepend(monitor);
+  const importer=document.createElement('section');
+  importer.className='card';
+  importer.innerHTML=`<h2>Import a Google review from a link</h2>
+    <p>Copy the link from <strong>Share</strong> on the individual review. BeLive saves the visible review as a case and starts assessment.</p>
+    <form id="reviewImportForm">
+      <label>Google review link<input name="url" type="url" placeholder="https://maps.app.goo.gl/…" required maxlength="2000"></label>
+      <button type="submit" class="primary">Import review</button>
+    </form>
+    <p id="reviewImportStatus" role="status"></p>`;
+  const apiScans=document.createElement('details');
+  apiScans.className='card';
+  apiScans.innerHTML='<summary>Scheduled collection with API access</summary>';
+  apiScans.append(monitor);
+  const batch=document.createElement('section');
+  batch.className='card';
+  batch.innerHTML=`<h2>Collect Google reviews</h2>
+    <p>Read up to 10 written 1–2 star reviews. Already saved reviews are skipped.</p>
+    <form id="reviewBatchForm"><label>Google Maps listing link<textarea name="links" rows="2" required maxlength="20010">https://www.google.com/maps/place/BeLive+Co-Living/@3.0787464,101.5791608,17z/data=!4m8!3m7!1s0x20321faf2201617f:0xc39a6196edc53b7d!8m2!3d3.0787464!4d101.5791608!9m1!1b1!16s%2Fg%2F11vqnn65b7?entry=ttu</textarea></label>
+    <p class="muted">You can also paste individual review links, one per line.</p>
+    <button class="primary" type="submit">Collect up to 10 reviews</button></form>
+    <button type="button" id="reviewChromeSignIn" class="text-button" data-admin>Google sign-in for collector</button>
+    <p id="reviewBatchStatus" role="status"></p><div class="case-actions" id="reviewBatchResults"></div>`;
+  sourcesPage.prepend(batch,importer,apiScans);
   const findings=document.createElement('section');
   findings.className='card';
   findings.innerHTML='<h2>Discovered complaints</h2><label>Platform<select id="discoveryPlatform"><option value="">All platforms</option><option value="GOOGLE">Google Reviews</option><option value="FACEBOOK">Facebook</option><option value="THREADS">Threads</option></select></label><div id="discoveryFindings"></div>';
-  monitor.after(findings);
+  apiScans.after(findings);
   const search=document.createElement('details');
   search.className='card';
   search.innerHTML=`<summary>Record a public complaint</summary>

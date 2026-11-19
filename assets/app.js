@@ -59,6 +59,17 @@ function renderCases(){
         button.querySelector('span').textContent=data.cases.filter(complaintQueues[queue]).length;
     });
 }
+function publicSourceLink(c){
+    const href=c.review_url||c.public_url;
+    if(!href)return '';
+    let label='Open original source';
+    if(c.platform==='GOOGLE'){
+        if(c.review_url||/^https:\/\/(?:www\.)?google\.com\/maps\/(?:reviews\/|contrib\/\d+\/place\/[^/?#]+)/i.test(href))label='Open original Google review';
+        else if(/^https:\/\/(?:www\.)?google\.com\/maps\/place\//i.test(href))label='Open Google Maps listing';
+        else label='Open Google Maps source';
+    }
+    return `<p><a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${label} ↗</a></p>`;
+}
 function renderDiscoveries(){
     const platformNames={GOOGLE:'Google Reviews',FACEBOOK:'Facebook',THREADS:'Threads'};
     const matches=data.cases.filter(c=>Object.hasOwn(platformNames,c.platform)&&c.status!=='SKIPPED');
@@ -79,7 +90,7 @@ function renderDiscoveries(){
         return `<article class="record-card"><div class="card-heading"><strong>${esc(platformNames[c.platform])}</strong>${pill(c.status)}</div>
             <button class="case-link" data-case="${esc(c.id)}">${esc(c.title)} · ${esc(c.id)}</button>
             <p>${esc(c.description)}</p><small>Source: ${esc(c.source_id)} · Found ${esc(new Date(c.created_at).toLocaleString())}</small>
-            ${c.public_url?`<p><a href="${esc(c.public_url)}" target="_blank" rel="noopener noreferrer">Open original source ↗</a></p>`:''}
+            ${publicSourceLink(c)}
             ${duplicates.size>1?'<p>Possible cross-platform duplicate: identical text was found on another platform.</p>':''}</article>`;
     }).join('')||'<p>No matching discoveries yet.</p>';
     const sources=data.sources.filter(s=>s.enabled);
@@ -191,9 +202,11 @@ function complaintNextStep(c){
         :'Wait for the customer to confirm the outcome. Reply here if they have questions.';
     const steps={
         HUMAN_REVIEW:'Read the conversation, then choose Take ownership to handle this complaint.',
-        IN_PROGRESS:'Send a reply below. When the work is done, record the outcome and choose Mark handled · ask customer to confirm.',
+        IN_PROGRESS:c.can_contact_customer
+            ?'Send a reply below. When the work is done, record the outcome and choose Mark handled · ask customer to confirm.'
+            :'Record what staff checked and close the complaint once the outcome is verified.',
         VERIFIED:'Review the outcome and outstanding work, then close the case.',
-        CLOSED:c.closure_reason==='CUSTOMER_INACTIVE'?'Closed because the customer did not reply. Resolution was not confirmed. The customer can reopen with the same Complaint Code.':'Save reusable guidance under Teach future replies if this complaint has a useful lesson.',
+        CLOSED:c.closure_reason==='CUSTOMER_INACTIVE'?'Closed because the customer did not reply. Resolution was not confirmed. The customer can reopen from Track complaint.':'Save reusable guidance under Teach future replies if this complaint has a useful lesson.',
         AI_PENDING:'AI is checking the complaint. Acknowledge it if staff needs to take over.',
         AWAITING_CONTACT:'Review the source and check whether the customer has contacted BeLive.',
         ANSWERED:'The customer accepted the informational answer.',
@@ -201,11 +214,14 @@ function complaintNextStep(c){
     };
     return steps[c.status]||'Review the conversation and the latest case activity.';
 }
+const caseActivityLabels = {ACKNOWLEDGE:'Staff took ownership', ESCALATED:'Escalated after waiting for staff'};
 function renderDetail(keepAssessmentOpen=false){
 const c=data.cases.find(c=>c.id===selected);if(!c)return;
 caseEdited=false;
 const active=!['CLOSED','SKIPPED','ANSWERED'].includes(c.status);
 const checking=assessmentPending(c);
+const exampleIds=c.analysis?.learning_used?.example_ids||[];
+const approvedReplies=(data.examples||[]).filter(example=>exampleIds.includes(example.id));
 const publicSource=!c.tenant_id&&c.entrypoint==='PUBLIC_SOURCE'&&['GOOGLE','FACEBOOK','THREADS'].includes(c.platform);
 const preview=c.public_reply_preview?.source_version===c.source_versions.at(-1)?c.public_reply_preview:null;
 const canPreview=active&&c.status!=='VERIFIED'&&c.analysis?.report_type==='COMPLAINT'
@@ -217,14 +233,15 @@ const urgencyReason=c.severity==='CRITICAL'?'Immediate safety concern. Staff han
 let actions='';
 if(['AI_PENDING','AWAITING_CONTACT','HUMAN_REVIEW'].includes(c.status))actions+='<button class="primary" data-act="acknowledge">Take ownership</button>';
 if(c.status==='FOLLOW_UP'&&c.automatic_answer&&!c.owner)actions+='<button data-act="acknowledge">Take ownership</button>';
-if(c.status==='IN_PROGRESS')actions+='<button class="primary" data-act="followup">Mark handled · ask customer to confirm</button>';
+if(c.status==='IN_PROGRESS'&&c.can_contact_customer)actions+='<button class="primary" data-act="followup">Mark handled · ask customer to confirm</button>';
 if(c.status==='FOLLOW_UP'&&(c.tenant_resolution?.resolved||c.tenant_id))actions+='<label><input id="caseResolutionConfirmed" type="checkbox"> I checked the customer confirmation and resolution evidence.</label><button class="primary" data-act="verify_close">Close complaint</button>';
+if(c.status==='IN_PROGRESS'&&!c.can_contact_customer)actions+='<label><input id="caseResolutionConfirmed" type="checkbox"> I checked the evidence and confirmed the outcome.</label><button class="primary" data-act="verify_staff_close">Close complaint</button>';
 if(c.status==='VERIFIED')actions+='<button class="primary" data-act="close">Close complaint</button>';
 if(!active)actions+='<button data-act="reopen">Reopen for staff</button>';
 $('caseDetail').innerHTML=`<div class="dialog-heading"><div><span class="eyebrow">${esc(c.id)}</span><h2>${esc(c.title)}</h2></div><button data-close="caseDialog" aria-label="Close case">×</button></div>
 <div class="case-tags">${pill(c.status)}${pill(level(c))}${pill(c.category)}</div><p>${esc(urgencyReason)}</p>${c.staff_destination?`<p><strong>Assigned team</strong> ${esc(c.staff_destination)}</p>`:''}
 <section class="case-next-step"><h3>Next step</h3><p>${esc(complaintNextStep(c))}</p></section>
-${c.public_url?`<p><a href="${esc(c.public_url)}" target="_blank" rel="noopener noreferrer">Open original ${esc(c.platform)} source ↗</a></p>`:''}
+${publicSourceLink(c)}
 ${c.entrypoint==='TENANT_WEBSITE'? `<section class="case-section"><h3>Reported rental location</h3><p>${c.reported_location ? esc([c.reported_location.property,c.reported_location.unit].filter(Boolean).join(' · ')) : 'Location was not provided.'}</p>${c.reported_location?.address?`<p>${esc(c.reported_location.address)}</p>`:''}</section>` : ''}
 <section class="case-section"><h3>Conversation</h3>${chat(c.conversation)}<p class="muted">Only published messages are shown to the tenant.</p></section>
 <details class="case-section" id="caseAssessment" ${publicSource||checking||keepAssessmentOpen?'open':''}><summary>AI assessment</summary>
@@ -232,19 +249,24 @@ ${checking?'<p role="status">Assessment is running in the background. This case 
 <p><b>Message:</b> ${esc(c.analysis?.report_type==='COMPLAINT'?'Complaint':c.analysis?.report_type==='ENQUIRY'?'Support question':c.analysis?.report_type==='NON_SUPPORT'?'Not a support request':'Awaiting check')} · <b>Staff destination:</b> ${esc(c.staff_destination||data.routing?.departments?.[c.category]||'Support team')}</p>
 ${agentTrace(c)}
 ${c.analysis?`<p>${esc(c.analysis.summary)}</p><p><b>AI suggestion:</b> ${esc(c.analysis.plan||'Staff handling required')}</p><p class="muted">Reviewed lessons provided to the reply agent: ${c.analysis.learning_used?.count||0}</p>`:checking?'':'<p>No AI assessment recorded.</p>'}
+${approvedReplies.length?`<details class="case-section"><summary>Approved replies sent to the agent</summary>
+    ${approvedReplies.map(example=>`<div class="record-card"><p class="source-text">${esc(example.text)}</p>
+    <button class="text-button" data-case="${esc(example.case_id)}">Source case ${esc(example.case_id)} ↗</button></div>`).join('')}
+</details>`:''}
 ${c.review_reason?`<p class="verification">${esc(c.review_reason)}</p>`:''}
 ${!checking&&active&&!['HIGH','CRITICAL'].includes(c.severity)&&!['FOLLOW_UP','VERIFIED'].includes(c.status)?`<button data-analyse="${c.id}">Retry assessment</button>`:''}
 </details>
+<details class="case-section" id="caseSourceEvidence"><summary>Source evidence and activity</summary><p>${esc(c.description)}</p><p>Platform ${esc(c.platform)} · Saved versions ${esc(c.source_versions.join(', '))}</p>${c.platform==='GOOGLE'&&c.entrypoint==='PUBLIC_SOURCE'?`<label>Individual Google review link<input id="caseReviewLink" type="url" maxlength="2000" value="${esc(c.review_url||'')}"></label><p class="muted">In Google Maps, select Share on the review itself and copy its link.</p><button type="button" data-save-review-link>Save review link</button>`:''}${c.analysis?`<p>Exact source quote: ${esc(c.analysis.evidence)}</p>`:''}${(c.analysis?.record_refs||[]).map(r=>`<p><b>${esc(r.id)} · v${r.version}</b> ${esc(r.source)}<br>${esc(r.text)}</p>`).join('')}${(c.activity||[]).map(a=>`<p><b>${esc(caseActivityLabels[a.action] ?? a.action)}</b> · ${esc(new Date(a.created_at).toLocaleString())}<br>${esc(a.detail)}</p>`).join('')}</details>
 ${publicSource?`<section class="case-section"><h3>Public reply preview</h3>
        <p class="muted">For staff review before any reply on the source platform.</p>
        ${preview?`<p class="source-text">${esc(preview.text)}</p><small>Generated by ${esc(preview.agent)}</small>`
          :c.draft?`<p class="source-text">${esc(c.draft)}</p><small>${c.public_guidance_prepared?'Approved SIMPLE guidance · saved as a draft':'Current suggested wording'}</small>`:''}
        ${canPreview?`<div class="case-actions"><button class="primary" data-public-preview="${esc(c.id)}">${preview?'Regenerate preview':'Generate tailored preview'}</button></div>`:''}
-     </section>`:`<section class="case-section"><h3>Reply to customer</h3>${c.conversation?.length? `<div class="muted"><strong>Latest customer message</strong><p>${esc([...c.conversation].reverse().find(m=>['TENANT','REPORTED_ISSUE'].includes(m.sender))?.text||'')}</p></div>`:''}${c.automatic_answer?'<p class="verification">Hermes has replied automatically. Staff can take ownership if further help is needed.</p>':'<p>Review or edit the reply, then send it directly to the customer’s Complaint Code conversation.</p>'}<label>Reply<textarea id="caseDraft" maxlength="2500" ${!active?'readonly':''}>${esc(c.draft)}</textarea></label>${active?'<label><input id="caseConfirmed" type="checkbox"> I reviewed this reply.</label><div class="case-actions"><button class="primary" data-act="send_reply">Send reply</button></div>':''}</section>`}
+     </section>`:`<section class="case-section"><h3>Reply to customer</h3>${c.conversation?.length? `<div class="muted"><strong>Latest customer message</strong><p>${esc([...c.conversation].reverse().find(m=>['TENANT','REPORTED_ISSUE'].includes(m.sender))?.text||'')}</p></div>`:''}${c.automatic_answer?'<p class="verification">Hermes has replied automatically. Staff can take ownership if further help is needed.</p>':'<p>Review or edit the reply, then send it directly to the customer’s private conversation.</p>'}<label>Reply<textarea id="caseDraft" maxlength="2500" ${!active?'readonly':''}>${esc(c.draft)}</textarea></label>${active?'<label><input id="caseConfirmed" type="checkbox"> I reviewed this reply.</label><div class="case-actions"><button class="primary" data-act="send_reply">Send reply</button></div>':''}</section>`}
 <section class="case-section" data-handling><h3>Case progress</h3>${c.tenant_resolution?`<p>Customer feedback: ${c.tenant_resolution.resolved?'Confirmed resolved':'Still unresolved'}</p><p>${esc(c.tenant_resolution.note)}</p>`:''}
-<p class="muted">${c.owner?'Handled by '+esc(c.owner):'No staff owner yet.'}</p><label>Internal note / work completed<textarea id="caseNote" maxlength="2000" placeholder="Describe the work or evidence (at least 8 characters). This note is private; use Send reply to update the customer."></textarea></label>
+<p class="muted">${c.owner?'Handled by '+esc(c.owner):'No staff owner yet.'}</p><label>Internal note / work completed<textarea id="caseNote" maxlength="2000" placeholder="Describe the work or evidence (at least 8 characters). This note is private."></textarea></label>
 <div class="case-actions">${actions}</div>
-${c.status==='FOLLOW_UP'&&!c.tenant_resolution?.resolved?'<p class="muted">Waiting for the customer. They can open Track complaint with their Complaint Code and choose Issue resolved or Still unresolved.</p>':''}
+${c.status==='FOLLOW_UP'&&!c.tenant_resolution?.resolved?'<p class="muted">Waiting for the customer. They can open Track complaint in their original browser and choose Issue resolved or Still unresolved.</p>':''}
 ${c.auto_close_at?`<p class="muted">No reply by ${esc(new Date(c.auto_close_at).toLocaleString())}: closes automatically with an unconfirmed outcome. The customer can reopen later.</p>`:''}
 ${c.verification?`<p class="verification">Resolution evidence: ${esc(c.verification)}</p>`:''}
 </section>
@@ -256,7 +278,7 @@ ${c.status==='FOLLOW_UP'?'<button data-act="reassess">Return to Needs staff</but
 ${(data.workorders||[]).filter(w=>w.case_id===c.id).map(w=>`<p>${esc(w.department)} · ${esc(w.description)} · ${esc(w.status)} ${w.status==='OPEN'?`<button data-workorder="${w.id}">Record completion</button>`:''}</p>`).join('')}
 </details>
 ${c.status==='CLOSED'&&c.closure_reason!=='CUSTOMER_INACTIVE'?'<section class="case-section"><h3>Teach future replies</h3><label>Reply as the customer should see it<textarea id="correctedExample" maxlength="2000" placeholder="Write directly to the customer. For example: Please tell us when the connection drops."></textarea></label><label>General question this answers (for public reuse)<input id="publicLessonQuestion" maxlength="240"></label><label><input id="publishPublicLesson" type="checkbox"> I reviewed this as general guidance safe for any customer. It contains no private, property-specific or account information.</label><label><input id="shareExample" type="checkbox"> Allow this style example through the protected shared-memory API</label><div class="case-actions"><button data-feedback="APPROVED">Use saved wording as a lesson</button><button data-feedback="CORRECTED">Save corrected lesson</button><button data-feedback="REJECTED">Reject lesson</button></div></section>':''}
-<details class="case-section"><summary>Source evidence and activity</summary><p>${esc(c.description)}</p><p>Platform ${esc(c.platform)} · Saved versions ${esc(c.source_versions.join(', '))}</p>${c.public_url?`<p><a href="${esc(c.public_url)}" target="_blank" rel="noopener noreferrer">Open original listing ↗</a></p>`:''}${c.analysis?`<p>Exact source quote: ${esc(c.analysis.evidence)}</p>`:''}${(c.analysis?.record_refs||[]).map(r=>`<p><b>${esc(r.id)} · v${r.version}</b> ${esc(r.source)}<br>${esc(r.text)}</p>`).join('')}${(c.activity||[]).map(a=>`<p><b>${esc(a.action)}</b> · ${esc(new Date(a.created_at).toLocaleString())}<br>${esc(a.detail)}</p>`).join('')}</details><p id="caseError" role="alert" class="error"></p>`;}
+<p id="caseError" role="alert" class="error"></p>`;}
 
 
 function formData(form){const p=Object.fromEntries(new FormData(form));form.querySelectorAll('[type="checkbox"]').forEach(e=>p[e.name]=e.checked);return p;}
@@ -280,6 +302,56 @@ $('scanAllSources').onclick=async()=>{
         notice(error.message,true);
     }
 };
+const reviewChromeSignIn=$('reviewChromeSignIn');
+if(reviewChromeSignIn)reviewChromeSignIn.onclick=async()=>{
+    const status=$('reviewBatchStatus');
+    reviewChromeSignIn.disabled=true;
+    try{
+        await request('review-chrome-sign-in',{});
+        status.textContent='Sign in on the separate Google Chrome window. Close that window when finished, then collect reviews.';
+    }catch(error){
+        status.textContent=error.message;
+    }finally{
+        reviewChromeSignIn.disabled=false;
+    }
+};
+const reviewBatchForm=$('reviewBatchForm');
+if(reviewBatchForm)reviewBatchForm.onsubmit=async event=>{
+    event.preventDefault();
+    const status=$('reviewBatchStatus');
+    const results=$('reviewBatchResults');
+    results.replaceChildren();
+    status.textContent='Reading public reviews in Chrome…';
+    try{
+        const batch=await run('import-review-batch',{links:formData(reviewBatchForm).links});
+        if(!batch.created.length&&!batch.duplicates.length){
+            status.textContent='No written 1–2 star reviews were found in the cards the collector loaded. You can paste individual review Share links here.';
+            return;
+        }
+        status.textContent=batch.created.length+' saved · '+batch.duplicates.length+' already saved'
+            +(batch.skipped?' · '+batch.skipped+' unreadable, duplicate or outside 1–2 stars':'')
+            +(batch.created.length?'. New cases are queued for assessment.':'.');
+        results.innerHTML=[...batch.created,...batch.duplicates].map(id=>
+            `<button type="button" data-case="${esc(id)}">Open ${esc(id)}</button>`).join('');
+    }catch(error){
+        status.textContent=error.message;
+    }
+};
+const reviewImportForm=$('reviewImportForm');
+if(reviewImportForm)reviewImportForm.onsubmit=async event=>{
+    event.preventDefault();
+    const button=reviewImportForm.querySelector('button');
+    const status=$('reviewImportStatus');
+    button.disabled=true;
+    status.textContent='Reading the review from Google Maps…';
+    try{
+        const result=await run('import-review',{url:formData(reviewImportForm).url});
+        status.textContent=result.created?'Review saved. Assessment has started.':'This review is already saved. Opening its existing case.';
+        openCase(result.id);
+    }catch(error){
+        status.textContent=error.message;
+    }finally{button.disabled=false;}
+};
 const publicComplaintForm=$('publicComplaintForm');
 if(publicComplaintForm)publicComplaintForm.onsubmit=async event=>{
     event.preventDefault();
@@ -297,16 +369,21 @@ $('newCase').onclick=()=>{$('intakeForm').reset();$('intakeDialog').showModal();
 $('recordSearch').oninput=renderDatabase;
 $('chooseDatabase').onclick=()=>run('select-database',{}).then(r=>notice(r.cancelled?'Database selection cancelled.':r.restart_required?'Database selected for next launch. Restart the app when ready; current records remain in the current file.':'The current database is selected.')).catch(e=>notice(e.message,true));
 $('refresh').onclick=()=>refresh().catch(e=>notice(e.message,true));$('tick').onclick=()=>run('tick',{}).catch(e=>notice(e.message,true));$('syncMemory').onclick=()=>run('memory-sync',{}).then(r=>notice(`${r.entries} current example(s) loaded into native Hermes memory.`)).catch(e=>notice(e.message,true));
-$('portalIssue').onclick=()=>{$('utilityContent').innerHTML=`<div class="dialog-heading"><h2>Issue verified tenant access</h2><button data-close="utilityDialog">×</button></div><p class="muted">This is optional and is not needed to submit a complaint. Use it only after identity verification when a tenant needs access to their full private history.</p><select id="portalTenant">${data.tenants.map(t=>`<option value="${esc(t.id)}">${esc(t.id)}</option>`).join('')}</select><button id="issueKey">Issue seven-day tenant access</button><button id="revokePortal">Revoke all tenant access keys</button><p id="portalKey" class="source-text"></p>`;$('utilityDialog').showModal();$('issueKey').onclick=async()=>{try{const r=await run('portal_issue',{tenant_id:$('portalTenant').value});$('portalKey').textContent='Verified tenant access (share through an authorised private channel): '+r.token;}catch(e){$('portalKey').textContent=e.message;}};};
 $('export').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='belive-tenant-support.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.close){$(b.dataset.close).close();return;}if(b.dataset.view||b.dataset.go){navigate(b.dataset.view||b.dataset.go);return;}if(b.dataset.case){openCase(b.dataset.case);return;}
 try{
 if(b.id==='reloadCase'){await run('status');renderDetail($('caseAssessment').open);}
-if(b.id==='revokePortal'){await run('portal_revoke',{tenant_id:$('portalTenant').value,confirmed:true});$('portalKey').textContent='All portal access keys for this tenant have been revoked.';}
-if(b.dataset.act){const more=!!b.closest('[data-more]');const c=data.cases.find(c=>c.id===selected);await run('case_action',{id:c.id,revision:c.revision,action:b.dataset.act,note:b.dataset.act==='draft'?$('caseDraft').value:$('caseNote').value,reviewed_reply:['send_reply','publish_response'].includes(b.dataset.act)?$('caseDraft').value:undefined,owner:data.operator.name,category:$('staffCategory')?.value,severity:$('staffSeverity')?.value,due_at:$('caseDue').value?new Date($('caseDue').value).toISOString():null,confirmed:b.dataset.act==='verify_close'?$('caseResolutionConfirmed')?.checked??false:$('caseConfirmed')?.checked??false});renderDetail();if(more)document.querySelector('#caseDetail [data-more]').open=true;}
+if(b.dataset.act){const more=!!b.closest('[data-more]');const c=data.cases.find(c=>c.id===selected);await run('case_action',{id:c.id,revision:c.revision,action:b.dataset.act,note:b.dataset.act==='draft'?$('caseDraft').value:$('caseNote').value,reviewed_reply:['send_reply','publish_response'].includes(b.dataset.act)?$('caseDraft').value:undefined,owner:data.operator.name,category:$('staffCategory')?.value,severity:$('staffSeverity')?.value,due_at:$('caseDue').value?new Date($('caseDue').value).toISOString():null,confirmed:['verify_close','verify_staff_close'].includes(b.dataset.act)?$('caseResolutionConfirmed')?.checked??false:$('caseConfirmed')?.checked??false});renderDetail();if(more)document.querySelector('#caseDetail [data-more]').open=true;}
 if(b.dataset.workorder){const c=data.cases.find(c=>c.id===selected);await run('case_action',{id:c.id,revision:c.revision,action:'complete_workorder',workorder_id:b.dataset.workorder,note:$('caseNote').value});renderDetail();}
 if(b.dataset.feedback){await run('feedback',{id:selected,verdict:b.dataset.feedback,text:$('correctedExample').value,share:$('shareExample').checked,publish_public:$('publishPublicLesson').checked,public_question:$('publicLessonQuestion').value});renderDetail();}
 if(b.dataset.revoke)await run('feedback',{id:b.dataset.revoke,verdict:'REJECTED'});
+if(b.hasAttribute('data-save-review-link')){
+    const c=data.cases.find(item=>item.id===selected);
+    await run('case_action',{id:c.id,revision:c.revision,action:'review_link',review_url:$('caseReviewLink').value});
+    renderDetail();
+    $('caseSourceEvidence').open=true;
+    notice('Individual review link saved.');
+}
 if(b.dataset.publicPreview){
     const c=data.cases.find(item=>item.id===b.dataset.publicPreview);
     const buttonLabel=b.textContent;

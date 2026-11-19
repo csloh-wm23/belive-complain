@@ -55,6 +55,22 @@ class AIValidationTests(unittest.TestCase):
     def test_title_quote_does_not_bypass_schema_checks(self):
         with patch.object(self.ai,'generate',return_value={**self.triage,'uncertainty':'false'}):
             with self.assertRaisesRegex(ValueError,'AI_INVALID_VALUES'):self.ai.analyse(self.context,[])
+    def test_conflicting_complaint_labels_get_one_checked_retry(self):
+        context={**self.context,'tenant_verified':False,'case':{'title':'Public review',
+                 'description':'The tour was enjoyable and the view was beautiful.'}}
+        conflict={**self.triage,'report_type':'ENQUIRY','relevance':'NON_SUPPORT',
+                  'category':'OTHER','severity':'LOW','evidence':'The tour was enjoyable'}
+        corrected={**conflict,'report_type':'NON_SUPPORT','summary':'Positive feedback without a support request.'}
+        with patch.object(self.ai,'generate',side_effect=[conflict,corrected]) as generate:
+            result=self.ai.analyse(context,[])
+        self.assertEqual(result['report_type'],'NON_SUPPORT')
+        self.assertEqual(generate.call_count,2)
+        self.assertIn('previous pair conflicted',generate.call_args.args[1])
+        with patch.object(self.ai,'generate',return_value=conflict) as generate:
+            with self.assertRaisesRegex(ValueError,'AI_INVALID_VALUES'):
+                self.ai.analyse(context,[])
+            self.assertEqual(generate.call_count,2)
+
     def test_specific_failure_is_visible_and_successful_retry_clears_old_reason(self):
         s,c=self.service()
         with patch.object(s.ai,'analyse',side_effect=ValueError('AI_UNGROUNDED_EVIDENCE')):
@@ -85,6 +101,37 @@ class AIValidationTests(unittest.TestCase):
         with s.store.connect() as db:
             persisted=[s.store.all(db,'case'),s.store.all(db,'job'),s.store.audit(db)]
         self.assertNotIn(secret,json.dumps(persisted))
+    def test_high_public_preview_keeps_full_acknowledgement_and_private_next_step(self):
+        context = {'complaint_level': 'HIGH', 'report': 'We lost power and got no update.'}
+        acknowledgement = (
+            "We’re sorry about the power interruption and the lack of updates you described. "
+            "We understand how disruptive that was."
+        )
+        with patch.object(self.ai, 'generate', return_value={'reply': acknowledgement}):
+            reply = self.ai.public_reply_preview(context)
+        body, next_step = reply.split('\n\n')
+        self.assertEqual(body, acknowledgement)
+        self.assertIn('privately through the BeLive tenant app', next_step)
+
+    def test_high_public_preview_leaves_payment_attribution_for_staff(self):
+        context = {'complaint_level': 'HIGH', 'report': 'My electricity was cut off.'}
+        acknowledgement = (
+            "We’re sorry your electricity was cut off due to a payment issue. "
+            "It sounds like you also had trouble reaching the team."
+        )
+        with patch.object(self.ai, 'generate', return_value={'reply': acknowledgement}):
+            reply = self.ai.public_reply_preview(context)
+        self.assertIn('electricity was cut off.', reply)
+        self.assertIn('trouble reaching the team', reply)
+        self.assertNotIn('payment issue', reply)
+
+    def test_high_public_preview_checks_the_full_acknowledgement(self):
+        context = {'complaint_level': 'HIGH', 'report': 'We lost power and got no update.'}
+        with patch.object(self.ai, 'generate',
+                          return_value={'reply': "We’re sorry about the power interruption. We've already restored it."}):
+            with self.assertRaisesRegex(ValueError, 'AI_UNSAFE_OUTPUT'):
+                self.ai.public_reply_preview(context)
+
     def test_malformed_json_has_fixed_diagnostic(self):
         exc=json.JSONDecodeError('Invalid JSON','Fictional response only',0)
         self.assertEqual(failure_code(exc),'AI_INVALID_JSON')

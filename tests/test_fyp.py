@@ -152,6 +152,16 @@ class FypTests(unittest.TestCase):
         self.cmd('lesson_revoke',{'id':final['adopted_lesson_id']})
         with self.s.store.connect() as db:self.assertEqual(self.s.styles(db,condo_id=demo.PROPERTY),[])
 
+    def test_learning_rejects_a_stalled_repair_without_creating_a_comparison(self):
+        question='My refrigerator has been broken for three months and no one comes to fix it.'
+        with self.assertRaisesRegex(ValueError,'Repair requests and danger reports go to staff'):
+            self.cmd('learning_start',{'category':'HOUSE_RULES','question':question})
+        self.assertEqual(self.s.snapshot()['learning_runs'],[])
+        practice='What details should I include when reporting a refrigerator that is no longer cooling?'
+        entry=self.cmd('learning_start',{'category':'MAINTENANCE','question':practice})
+        run=next(row for row in self.s.snapshot()['learning_runs'] if row['id']==entry['id'])
+        self.assertEqual((run['category'],run['question']),('MAINTENANCE',practice))
+
     def test_learning_uses_approved_guidance_for_all_support_topics(self):
         from belive.ai import CATEGORIES
 

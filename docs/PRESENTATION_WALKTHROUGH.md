@@ -10,9 +10,9 @@ Open three tabs on the computer running BeLive:
 - Staff dashboard: http://127.0.0.1:8877/
 - Tenant portal: http://127.0.0.1:8877/portal
 
-Sign in as Admin to demonstrate records, access keys and configuration. Support accounts handle cases but cannot issue tenant keys or maintain Admin settings. Credentials are private and are not included in this guide. Keep the server running and refresh dashboard tabs after a restart. The GitHub repository shares the code; localhost is a website running on this computer.
+Sign in as Admin to demonstrate records and configuration. Support accounts handle cases but cannot maintain Admin settings. Credentials are private and are not included in this guide. Keep the server running and refresh dashboard tabs after a restart. The GitHub repository shares the code; localhost is a website running on this computer.
 
-Use a clearly fictional DEMO tenant and property, and have that tenant's private access key ready. Do not switch databases during the tour: accounts and records belong to their database. Show only fictional records on the projector.
+Use a clearly fictional complaint and property. Do not switch databases during the tour: accounts and records belong to their database. Show only fictional records on the projector.
 
 Opening script:
 
@@ -22,9 +22,9 @@ Opening script:
 
 Open `/belive`. Point to the six support topics, **Make a complaint**, **Track my request** and **My requests**.
 
-> This is the tenant-facing entry point. Tenants can report Wi-Fi, maintenance, cleaning, access, utilities and billing concerns. A staff-issued access key connects the request to the correct tenant.
+> This is the tenant-facing entry point. Tenants can report Wi-Fi, maintenance, cleaning, access, utilities and billing concerns. The submitting browser remembers the private complaint conversation.
 
-Click **Make a complaint**, enter the DEMO access key and use a new, clearly fictional Wi-Fi enquiry:
+Click **Make a complaint** and use a new, clearly fictional Wi-Fi enquiry.
 
 - Title: `DEMO presentation: Wi-Fi disconnecting`
 - Details: `Fictional demonstration: Wi-Fi drops each evening on both my laptop and phone. What information should I provide to support?`
@@ -81,13 +81,13 @@ For a maintenance example, explain that staff can enter a department and action 
 
 ## 4. Tenant portal and follow-up: complete the communication loop (2 minutes)
 
-From the website receipt click **Track this request**, or open `/portal`. Enter the same tenant access key and click **Open my support records**. Click **Refresh conversations** if needed.
+In the browser used for submission, open **Track complaint** and select the case. Click **Refresh** if needed.
 
 > The tenant sees only their own support records and published conversation, not staff drafts, internal notes or other tenants' cases.
 
 Read the staff reply. Send a fictional follow-up such as `DEMO: Both devices disconnect at the same time.` In the staff case, use **Reload latest case details** to show the tenant's reply.
 
-In the tenant portal, point to **Issue resolved** and **Still unresolved**. These record feedback; they do not automatically close a case. **Close my support records** clears this browser view without revoking the access key.
+In the tenant portal, point to **Issue resolved** and **Still unresolved**. These record feedback; they do not automatically close a case.
 
 Back in the staff case, explain the closure sequence. Demonstrate it only on a fictional case with clearly labelled simulated evidence:
 
@@ -113,9 +113,9 @@ Click **Tenant & property records**. Show these areas in order:
 1. **Property support guidance**: records checked property-specific support rules. This is not move-in scheduling.
 2. **Verified tenant**: links an internal tenant reference to a property and unit after staff checks an authorised record. The checkbox is a staff assertion, not an automatic identity check.
 3. **Verified support context**: stores relevant facts and a source reference for this tenant. These are the records the AI can cite.
-4. **Issue tenant portal access key**: select the DEMO tenant and choose **Issue seven-day key** if a new demonstration key is needed. Share keys privately. **Revoke all keys for this tenant** invalidates existing keys, so only demonstrate it on a spare DEMO tenant.
+4. **Track complaint** opens cases submitted from the same browser. The receipt reference helps staff locate a case.
 5. **AI connection check**: **Test AI connection** makes a real provider request without tenant records. A saved PASSED result is a check at its shown time, not continuous proof every case will succeed.
-6. **Operator accounts**: Admin manages accounts; Support handles cases. These logins are separate from tenant access keys and the AI provider credential.
+6. **Operator accounts**: Admin manages accounts; Support handles cases. These logins are separate from the AI provider credential.
 
 > Verified records supply context; the AI must not invent tenancy policies or repair outcomes. Admin access controls who maintains these records and issues portal access.
 

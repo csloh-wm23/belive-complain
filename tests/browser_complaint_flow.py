@@ -54,11 +54,16 @@ def main():
                 cid = receipt['id']
                 expect(customer.locator('[data-case-state=HUMAN_REVIEW]')).to_be_visible()
 
-                # A new tracking page uses only the receipt code, without tenant verification.
+                # A new page in this browser remembers the submitted case.
                 customer.goto(url + '/portal?view=track')
-                customer.locator('#accessKey').fill(receipt['complaint_code'])
-                customer.locator('#connect').click()
+                expect(customer.locator('#requestList')).to_contain_text('QA electrical repair workflow')
+                customer.locator(f'[data-open-request="{cid}"]').click()
                 expect(customer.locator('#tenantCases')).to_contain_text('QA electrical repair workflow')
+                assert 'complaint_code' not in receipt
+                stranger=browser.new_page()
+                stranger.goto(url + '/portal?view=track&case=' + cid)
+                expect(stranger.locator('#requestList')).to_contain_text('No complaints are saved in this browser')
+                stranger.close()
                 staff.goto(url + '/?case=' + cid)
                 expect(staff.locator('#caseDialog')).to_be_visible()
                 expect(staff.get_by_role('heading', name='Case progress', exact=True)).to_be_visible()
@@ -158,10 +163,24 @@ def main():
                     output.parent.mkdir(exist_ok=True)
                     staff.locator('#caseDialog').evaluate('(el) => el.scrollTop = 0')
                     staff.screenshot(path=str(output))
+                public=service.command('intake',{
+                    'title':'Fictional public review for closure',
+                    'description':'A shared washing machine broke down at a fictional property.',
+                    'public_url':'https://www.google.com/maps/place/Fictional+Residence'
+                },'browser-public-close-fixture')
+                staff.goto(url + '/?case=' + public['id'])
+                staff.get_by_role('button', name='Take ownership', exact=True).click()
+                expect(staff.locator('#caseDetail .case-tags')).to_contain_text('Staff handling')
+                staff.locator('#caseNote').fill('Fictional maintenance record confirms the washer passed an operating check.')
+                staff.get_by_role('button', name='Close complaint', exact=True).click()
+                expect(staff.locator('#caseError')).to_contain_text('Confirm resolution against evidence')
+                staff.locator('#caseResolutionConfirmed').check()
+                staff.get_by_role('button', name='Close complaint', exact=True).click()
+                expect(staff.locator('#caseDetail .case-tags')).to_contain_text('Closed')
                 assert not errors, errors
                 snapshot = service.snapshot()
                 assert not any(c['status'] in {'HUMAN_REVIEW', 'FOLLOW_UP', 'IN_PROGRESS'} for c in snapshot['cases'])
-                print('PASS: formal anonymous complaint, code-only tracking, take ownership, one-click edited reply, privacy, confirmation gate, closure/reopening, saved seven-day policy, timed inactivity closure, message reopening, desktop/mobile; no page errors; temporary queues empty.')
+                print('PASS: formal anonymous complaint, same-browser tracking and session isolation, take ownership, one-click edited reply, privacy, confirmation gate, private and public closure, reopening, saved seven-day policy, timed inactivity closure, message reopening, desktop/mobile; no page errors; temporary queues empty.')
                 context.close()
                 browser.close()
         finally:

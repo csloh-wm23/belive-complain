@@ -53,6 +53,26 @@ def public_link_platform(value):
     raise ValueError('Only Google review, Facebook and Threads links are supported')
 
 
+def google_review_share_link(value):
+    message = 'Copy the link from Share on the individual Google review.'
+    if not isinstance(value, str) or len(value) > 2000:
+        raise ValueError(message)
+    value = value.strip()
+    try:
+        platform = public_link_platform(value)
+    except ValueError:
+        raise ValueError(message) from None
+    url = urlsplit(value)
+    if platform == 'GOOGLE' and (
+        (url.netloc.lower() == 'maps.app.goo.gl' and re.fullmatch(r'/[A-Za-z0-9_-]+/?', url.path))
+        or (url.netloc.lower() in {'www.google.com', 'google.com', 'maps.google.com'}
+            and (url.path.startswith('/maps/reviews/')
+                or re.fullmatch(r'/maps/contrib/\d+/place/[A-Za-z0-9_-]+(?:/.*)?', url.path)))
+    ):
+        return value
+    raise ValueError(message)
+
+
 def read_source(source):
     platform,resource=source['platform'],source['resource']
     token=os.getenv('BELIVE_'+platform+'_TOKEN','')

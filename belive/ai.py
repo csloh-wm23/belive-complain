@@ -148,21 +148,52 @@ class SupportAI:
         if not isinstance(result,dict): raise ValueError('AI_INVALID_JSON')
         return result
     def public_reply_preview(self, context):
-        result = self.generate(
-            'Public Reply Preview Agent',
-            'Draft a public reply for staff review. Return exactly {"reply":"..."}. '
-            'Write exactly one sentence thanking the reviewer for reporting their specific concerns. '
-            'Keep the wording about what was reported, without implying findings or adding durations. '
-            'The interface adds the instruction to contact support privately. '
-            'Do not request any information or give instructions, links, guarantees, timelines or promises of action.',
-            context, [],
-        )
+        high = context.get('complaint_level') == 'HIGH'
+        if high:
+            instruction = (
+                'Draft the opening of a public reply in BeLive’s voice. Return exactly {"reply":"..."}. '
+                'In two or three short sentences, apologise and name the concrete issues in this report. Use the '
+                'assessment summary as a checklist and confirm details against the report. Name the service or '
+                'facility affected, what the tenant said went wrong, and any difficulty getting a response. '
+                'Use the actual utility or appliance names from the report when available. '
+                'For payment disputes, acknowledge the service interruption and keep account details, including '
+                'the timing or status of any payment, private. Leave the cause open for staff to check. '
+                'Good tone on a different case: “We’re sorry the washing machine broke down and you struggled '
+                'to get an update. You should be able to get clear help when something in your home stops working.” '
+                'Use that style with this case’s actual details. Leave out names of people, addresses, unit and '
+                'account details, and durations. Keep it grounded in what the reviewer reported. '
+                'The app adds the private contact step. Do not ask for information, give links or advice, '
+                'or promise or claim that work, account changes or refunds have happened.'
+            )
+        else:
+            instruction = (
+                'Draft a public reply for staff review. Return exactly {"reply":"..."}. '
+                'Write exactly one sentence thanking the reviewer for reporting their specific concerns. '
+                'Keep the wording about what was reported, without implying findings or adding durations. '
+                'The interface adds the instruction to contact support privately. '
+                'Do not request any information or give instructions, links, guarantees, timelines or promises of action.'
+            )
+        result = self.generate('Public Reply Preview Agent', instruction, context, [])
         if set(result) != {'reply'}:
             raise ValueError('AI_INVALID_PLAN')
         acknowledgement = bounded(result['reply'], 20, 420)
-        acknowledgement = re.split(r'(?<=[.!?。！？])\s+', acknowledgement, maxsplit=1)[0]
-        if re.search(r'https?://|www\.|\[(?:email|number) removed\]|\b(?:password|otp|guarantee)\b', acknowledgement, re.I):
+        if not high:
+            acknowledgement = re.split(r'(?<=[.!?。！？])\s+', acknowledgement, maxsplit=1)[0]
+        if re.search(r'https?://|www\.|\[(?:email|number) removed\]|\b(?:password|otp|guarantee)\b',
+                     acknowledgement, re.I):
             raise ValueError('AI_UNSAFE_OUTPUT')
+        if high:
+            # Keep reported interruptions separate from unverified payment status or causes.
+            acknowledgement = re.sub(
+                r'\s+(?:due to|because of|for)\s+(?:(?:a|an|the|your)\s+)?'
+                r'(?:payments?\s+(?:issue|dispute|delay)|(?:late|missed|overdue)\s+payments?)\b',
+                '', acknowledgement, flags=re.I,
+            )
+            if re.search(r"\b(?:we(?: have|['’]ve) (?:already )?(?:repaired|fixed|restored|refunded)"
+                         r"|refund (?:has been|is) (?:issued|approved))\b", acknowledgement, re.I):
+                raise ValueError('AI_UNSAFE_OUTPUT')
+            return (acknowledgement + '\n\nPlease share your unit details and a way to reach you privately '
+                    'through the BeLive tenant app so our team can review your case and follow up with you directly.')
         return acknowledgement + ' Please contact BeLive tenant support privately so the team can review your report.'
 
     def conversational_reply(self, conversation, question, lessons):
@@ -291,8 +322,13 @@ class SupportAI:
             if local else 'evidence (an exact verbatim substring from case.title or case.description, preserving spelling and case). '
         )
         triage_styles=[] if context.get('learning_practice') else [e for e in examples if not e.get('scope_category')][:5]
-        a=generate('Complaint Analysis Agent',
-          'Determine whether this message is a complaint (a reported problem/dissatisfaction), a support enquiry, or unrelated. '
+        triage_instruction = (
+          'Determine whether this message is a complaint, a support enquiry, or unrelated. '
+          'A reported problem or dissatisfaction is a complaint even if the person also asks what to do. '
+          'Praise or general feedback with no support request or complaint is OTHER, with report_type '
+          'NON_SUPPORT, relevance NON_SUPPORT and severity LOW. '
+          'For a complaint or enquiry, use relevance SUPPORT or UNCERTAIN. '
+          'Use relevance NON_SUPPORT only together with report_type NON_SUPPORT. '
           'Return exactly report_type (COMPLAINT/ENQUIRY/NON_SUPPORT), relevance (SUPPORT/NON_SUPPORT/UNCERTAIN), category '
           '('+'/'.join(CATEGORIES)+'), severity (LOW/MEDIUM/HIGH/CRITICAL), summary (string), '
           'uncertainty (boolean), '+evidence_format+
@@ -306,11 +342,23 @@ class SupportAI:
           'Use the complaint rubric: LOW means SIMPLE, a routine information or safe self-service request that approved guidance can handle. '
           'MEDIUM means MODERATE, a service problem needing investigation, repeated unsuccessful help or a staff action without immediate danger. '
           'HIGH or CRITICAL means HIGH, an urgent safety/security risk. Do not lower a level to make automation possible. '
-          'For MODERATE cases still prepare useful safe assistance for staff review; only SIMPLE replies may be sent automatically.',context,triage_styles)
-        if set(a)!= {'report_type','relevance','category','severity','summary','uncertainty','evidence'}: raise ValueError('AI_INVALID_SCHEMA')
-        if a['report_type'] not in {'COMPLAINT','ENQUIRY','NON_SUPPORT'}:raise ValueError('AI_INVALID_VALUES')
-        if (a['report_type']=='NON_SUPPORT') != (a['relevance']=='NON_SUPPORT') and a['relevance']!='UNCERTAIN':raise ValueError('AI_INVALID_VALUES')
-        if a['relevance'] not in {'SUPPORT','NON_SUPPORT','UNCERTAIN'} or a['category'] not in CATEGORIES or a['severity'] not in {'LOW','MEDIUM','HIGH','CRITICAL'} or type(a['uncertainty']) is not bool: raise ValueError('AI_INVALID_VALUES')
+          'For MODERATE cases still prepare useful safe assistance for staff review; only SIMPLE replies may be sent automatically.')
+        for attempt in range(2):
+            instruction = triage_instruction
+            if attempt:
+                instruction += ' Recheck the report type and relevance together; the previous pair conflicted.'
+            a = generate('Complaint Analysis Agent', instruction, context, triage_styles)
+            if set(a) != {'report_type','relevance','category','severity','summary','uncertainty','evidence'}:
+                raise ValueError('AI_INVALID_SCHEMA')
+            if (a['report_type'] not in {'COMPLAINT','ENQUIRY','NON_SUPPORT'}
+                    or a['relevance'] not in {'SUPPORT','NON_SUPPORT','UNCERTAIN'}
+                    or a['category'] not in CATEGORIES or a['severity'] not in {'LOW','MEDIUM','HIGH','CRITICAL'}
+                    or type(a['uncertainty']) is not bool):
+                raise ValueError('AI_INVALID_VALUES')
+            if a['relevance'] == 'UNCERTAIN' or (a['report_type'] == 'NON_SUPPORT') == (a['relevance'] == 'NON_SUPPORT'):
+                break
+        else:
+            raise ValueError('AI_INVALID_VALUES')
         a['summary']=bounded(a['summary'],1,1000)
         if local and a['evidence'] in ('title','description'):
             evidence_field = a['evidence']
@@ -383,7 +431,9 @@ class SupportAI:
             'Check the proposed tenant response against only the selected approved guidance and the tenant conversation. '
             'Return exactly grounded (boolean), safe (boolean), uncertainty (boolean), unsupported_claims (array of strings). '
             'Grounded means every factual statement and instruction is supported by the guidance or clearly attributed to the tenant. '
-            'Relevant clarifying questions are allowed. Reject invented fees, schedules, property rules, diagnoses, promises, completed actions, '
+            + ('For this practice comparison, also fail grounded if the proposed reply does not address the actual question, even when it repeats approved guidance. '
+               if context.get('learning_practice') else '')
+            + 'Relevant clarifying questions are allowed. Reject invented fees, schedules, property rules, diagnoses, promises, completed actions, '
             'physical repairs, electrical/gas instructions, access bypasses, account changes or financial decisions. '
             'Reject repetition of a failed suggestion as a claimed solution and requests for details already clearly answered. Mark uncertainty true whenever unsure. Do not rewrite the response.',
             {'case':context['case'],'conversation':context.get('conversation',[]),

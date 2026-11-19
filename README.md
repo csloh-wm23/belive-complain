@@ -35,7 +35,7 @@ On the first launch for a database, create your own administrator account in the
 
 ## Tenant website and complaint entry
 
-Open [the customer complaint website](http://127.0.0.1:8877/belive). **Make a complaint** requires no Tenant Code or sign-up. After submission the system displays a case-scoped **Complaint Code** in the form `CMP-XXXX-XXXX-XXXX-XXXX`; it opens only that complaint for replies and outcome updates. **Try demo** remains available after an admin prepares the fictional demo.
+Open [the customer complaint website](http://127.0.0.1:8877/belive). **Make a complaint** opens a private conversation. Return to **Track complaint** in the submitting browser to read replies and send outcome updates. The receipt shows a reference for staff. **Try demo** remains available after an admin prepares the fictional demo.
 
 The portal has **New request** and **My requests** tabs, a compact request list and one selected conversation. The backend saves real case references in SQLite, enforces tenant scope, screens risk and launches the support agents. SIMPLE automatic replies are labelled AI SUPPORT. MODERATE drafts remain private to staff. Still unresolved saves the feedback and hands the case to staff. No key is included in URLs or browser storage.
 
@@ -50,7 +50,7 @@ Staff sees the same case in **Cases**, with actual agent activity, complaint lev
 - Use only the tenant's verified support records and verified house rules for personal assistance. Unverified public reports receive a private-contact invitation draft.
 - Hand uncertain, risky or failed AI cases to staff; show critical and overdue cases first, record the next action/deadline, maintain internal notes and require evidence for closure.
 - Publish reviewed responses to a tenant-scoped conversation. Tenants can reply and report resolved/unresolved outcomes; their confirmation never automatically closes a case.
-- Complaints waiting for a customer reply close after 7 days by default (editable in Staff routing). These closures have unconfirmed outcomes, do not count as verified resolutions and cannot become learning examples. Customers can reopen with the same Complaint Code. Scheduled checks run while the server is running and catch up after restart.
+- Complaints waiting for a customer reply close after 7 days by default (editable in Staff routing). These closures have unconfirmed outcomes, do not count as verified resolutions and cannot become learning examples. Customers can reopen from Track complaint in the submitting browser. Scheduled checks run while the server is running and catch up after restart.
 - Correct, expire or deactivate verified support context with immutable version history. AI citations show the exact record version used; changes during generation discard the result.
 - Review notifications before sending through a configured gateway. Store uncertain delivery as `UNKNOWN` without automatic retry.
 - Review response wording after closure. Latest rejection/reopening revokes future reuse. Examples are style guidance, never verified facts or model retraining.
@@ -66,7 +66,7 @@ Staff sees the same case in **Cases**, with actual agent activity, complaint lev
 3. Create a case. Without model configuration it explicitly hands over to staff. With configuration it proposes structured AI assistance; the normal workflow never substitutes a fictional response.
 4. Acknowledge the case under the signed-in operator. Review the urgency/category, save the next action/deadline and add any private notes.
 5. Review and save the response draft, check the confirmation box, then select **Send saved reply to tenant**. This creates an actual message in the local portal. External gateway delivery remains a separate reviewed action.
-6. Open [the complaint portal](http://127.0.0.1:8877/portal), submit without a code, and save the generated Complaint Code. That code shows only its own complaint and lets the customer reply. **Still unresolved** routes/reopens the case to staff; **Issue resolved** records feedback for staff verification. Verified Tenant Access remains an optional staff-issued method for viewing a tenant's full private history, and is never required to make a complaint.
+6. Open [the complaint portal](http://127.0.0.1:8877/portal), submit a complaint, and use **Track complaint** in the same browser to follow replies. **Still unresolved** routes or reopens the case to staff. **Issue resolved** records feedback for staff verification.
 7. Complete work orders, follow up, verify the outcome and close. Close only with evidence and no open work orders. Review reusable wording after closure; latest rejection/reopening revokes reuse.
 8. Open **More tools → Saved records** to inspect data and record versions. Correct or deactivate outdated support context. Create a verified backup. Recovery opens a new paused copy on the next launch; current records stay in place.
 9. Saving an authorised public source starts its checks every 15 minutes while the app is open. **Pause checks** / **Resume checks** affect only that source.
@@ -112,7 +112,7 @@ The application remains a local prototype listening only on loopback. It now has
 
 Admin **Create verified backup** uses SQLite's online backup API and an integrity check, then records a SHA-256 checksum. Backups are saved beside the active database under `backups/`; they contain sensitive database content, including account password hashes, and are not served as public downloads.
 
-**Recover into a separate workspace** checks that checksum, creates a new copy under `recovered/` and selects it for the next launch. It does not overwrite the active database or the backup. In the recovered copy, old sessions and tenant keys are revoked, sources are paused, outstanding gateway messages are held, active cases require staff review, and support guidance/style examples require fresh review before AI reuse. Sign in with an admin account present in the backup and revalidate records before resuming work. `--database` still overrides the selected file for an explicit CLI launch.
+**Recover into a separate workspace** checks that checksum, creates a new copy under `recovered/` and selects it for the next launch. It does not overwrite the active database or the backup. In the recovered copy, old staff and customer browser sessions are revoked, sources are paused, outstanding gateway messages are held, active cases require staff review, and support guidance/style examples require fresh review before AI reuse. Sign in with an admin account present in the backup and revalidate records before resuming work. `--database` still overrides the selected file for an explicit CLI launch.
 
 ## Data
 
@@ -137,7 +137,7 @@ python tests/browser_check.py
 python tests/browser_complaint_flow.py
 ```
 
-Simplified daily complaint handling: take ownership → send reply → mark handled → customer confirms → close complaint. See the [Chinese step-by-step guide](docs/COMPLAINT_STEPS_ZH.md). The simplified-flow browser check uses anonymous Complaint Codes and temporary data, including unresolved reopening after closure.
+Simplified daily complaint handling: take ownership → send reply → mark handled → customer confirms → close complaint. See the [Chinese step-by-step guide](docs/COMPLAINT_STEPS_ZH.md). The simplified-flow browser check uses private browser sessions and temporary data, including unresolved reopening after closure.
 
 Browser QA covers first-admin setup and Support login, role-restricted controls, reviewed portal replies, private-note isolation, tenant unresolved/resolved feedback, verified closure, versioned-record correction, backups, a test-double connection check, database selection/persistence, source controls and eight responsive views. The native file-picker result is substituted during browser QA so tests do not open a dialog or change the real workspace. Screenshots go into ignored `artifacts/`.
 

@@ -70,7 +70,7 @@ The local portal is an implemented communication channel. Operators review/save 
 
 ## Operator access
 
-Create an admin in first-run setup, then create Support accounts in settings. Credentials belong to the selected database. There is no default account or hard-coded password. The session cookie is HttpOnly/SameSite=Strict for this loopback HTTP app. Admin operations include users, source and context changes, AI checks, portal-key management, backup/recovery and database selection. Support operations include case handling, internal notes, reviewed responses and external notification review. Role checks are enforced independently of the visible UI.
+Create an admin in first-run setup, then create Support accounts in settings. Credentials belong to the selected database. There is no default account or hard-coded password. The session cookie is HttpOnly/SameSite=Strict for this loopback HTTP app. Admin operations include users, source and context changes, AI checks, backup/recovery and database selection. Support operations include case handling, internal notes, reviewed responses and external notification review. Role checks are enforced independently of the visible UI.
 
 ## Real AI check and evaluation
 

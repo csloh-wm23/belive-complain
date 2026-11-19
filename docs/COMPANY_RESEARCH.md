@@ -11,6 +11,6 @@ The user explicitly confirmed the Malaysian BeLive Ventures / CoLiving company. 
 
 Public marketing statements are not proof of a particular tenant's entitlements, repair outcome, price, refund, availability or response-time promise. The broader proposal also described move coordination, but the user's team has clarified that move-in/out arrangements, inspections and random PIC allocation are outside this module's responsibility.
 
-The prototype's 30-minute acknowledgement, 24-hour follow-up, 15-minute source interval, and seven-day portal key are implementation defaults/assumptions. They are not claimed as existing BeLive policies.
+The prototype's 30-minute acknowledgement, 24-hour follow-up, and 15-minute source interval are implementation defaults/assumptions. They are not claimed as existing BeLive policies.
 
 Research was used to narrow the system to tenant operations. No move-in/out, inspection, PIC allocation, owner, marketing or sales workflow is enabled.

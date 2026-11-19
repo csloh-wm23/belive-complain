@@ -88,7 +88,10 @@ class PublicConnectorTests(unittest.TestCase):
                 case = service.store.get(db, 'case', case['id'])
                 self.assertEqual(case['status'], 'AWAITING_CONTACT')
                 self.assertTrue(case['public_guidance_prepared'])
-                self.assertEqual(case['draft'], automation.public_guidance_reply(ai.classify_public_guidance.return_value))
+                self.assertEqual(case['draft'], automation.public_guidance_reply(
+                    ai.classify_public_guidance.return_value, public_source=True))
+                self.assertIn('contact BeLive tenant support privately', case['draft'])
+                self.assertNotIn('Still unresolved', case['draft'])
                 self.assertFalse(any(m['sender']=='SUPPORT' for m in service.store.all(db, 'message')))
                 self.assertFalse(service.store.all(db, 'outbox'))
 

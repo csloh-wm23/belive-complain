@@ -29,8 +29,8 @@ def tick(service, db, case, moment):
         return False
     case.update(status='CLOSED', closed_at=moment, closure_reason='CUSTOMER_INACTIVE',
                 resolution_type='UNCONFIRMED_INACTIVITY', verification='', followup_due=None,
-                action_due=None, ack_due=None, next_action='Closed after no customer reply; customer can reopen with the same Complaint Code')
-    text = 'This complaint was closed because we did not receive your reply within the waiting period. This does not confirm the issue was resolved. You can return with the same Complaint Code, send a message or choose Still unresolved to reopen it.'
+                action_due=None, ack_due=None, next_action='Closed after no customer reply; customer can reopen from Track complaint')
+    text = 'This complaint was closed because we did not receive your reply within the waiting period. This does not confirm the issue was resolved. Open Track complaint in the browser you used to submit it, then send a message or choose Still unresolved to reopen it.'
     post(service.store, db, case, 'SYSTEM', text, 'inactivity-close-' + str(case['revision']))
     service.store.event(db, case['id'], 'AUTO_CLOSED_INACTIVE', 'No customer reply; outcome unconfirmed; not a verified resolution or learning example')
     return True

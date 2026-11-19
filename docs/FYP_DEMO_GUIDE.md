@@ -9,7 +9,7 @@ On a new installation, create your own admin account. There is no shared default
 1. Choose **Prepare demo data**. This adds a fictional property, tenant and 36 approved demonstration knowledge entries. It does not replace existing company records or model settings.
 2. Choose **Test AI connection**. Wait for a genuine successful result.
 3. Choose **Enable routine automation**.
-4. On the tenant website choose **Try demo tenant**. You do not need to copy an access key for this fictional account. Normal tenants still need their own verified private code.
+4. On the tenant website choose **Try demo tenant**. For the ordinary tenant workflow, use **Make a complaint** and follow replies through **Track complaint** in the same browser.
 
 ## Test the complaint rules
 
@@ -28,8 +28,8 @@ An automatic reply is not proof that a repair happened. Model failure, missing k
 
 1. Open **Cases** and select the request title.
 2. **AI assessment** shows whether it is a complaint or support question, its level, staff destination, actual agent runs and reviewed lessons used.
-3. Read the conversation and **Response draft**. Edit it if needed and choose **Save edited reply**. Check the review box, then **Send saved reply to tenant**.
-4. Expand **Staff actions and outcome checks** to accept ownership, record action, create a local work order and verify the result. Close a case only after checking evidence.
+3. Read the conversation and **Reply**. Edit it if needed, check the review box, then choose **Send reply**.
+4. In **Case progress**, take ownership and record your work. Ask a private customer to confirm in **Track complaint**. For an imported public case, check the outcome evidence and close it from the staff dashboard.
 5. After a verified closure, **Teach future replies** can approve useful wording or save a correction. The next AI request retrieves current reviewed examples automatically. Rejection or reopening stops their reuse.
 
 In **Setup & knowledge → Where should cases go?**, an admin enters BeLive's actual destinations for each topic. Blank topics go to Support team. AI chooses the topic; it does not invent departments. The staff queue is local. Gateway notifications remain separately reviewed and need a configured gateway; a queued alert is not confirmed delivery.

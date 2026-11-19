@@ -9,7 +9,7 @@ import webbrowser
 from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
-from http.cookies import SimpleCookie
+from http.cookies import CookieError,SimpleCookie
 from belive.access import Access
 from belive.backups import operation as backup_operation
 from belive.service import Service
@@ -47,6 +47,35 @@ class Tasks:
         pending=c['status'] in {'AI_PENDING','AWAITING_CONTACT'} or (c['status']=='HUMAN_REVIEW' and c.get('ai_assistance_pending'))
         if pending and c['severity'] not in {'HIGH','CRITICAL'} and not c.get('analysis'):
             self.start('ai-'+c['id'],lambda:self.service.analyse(c['id']))
+    def analyse_batch(self, cases):
+        with self.lock:
+            keys = ['ai-'+c['id'] for c in cases if c['status']=='AWAITING_CONTACT'
+                    and 'ai-'+c['id'] not in self.running]
+            self.running.update(keys)
+        if not keys:
+            return
+
+        def run():
+            remaining = set(keys)
+            try:
+                for key in keys:
+                    if self.stop.is_set():
+                        break
+                    try:
+                        self.service.analyse(key.removeprefix('ai-'))
+                    except Exception:
+                        with self.service.store.connect() as db:
+                            self.service.store.event(db,key,'BACKGROUND_FAILED','Review assessment did not complete')
+                    finally:
+                        with self.lock:
+                            self.running.discard(key)
+                            remaining.discard(key)
+            finally:
+                with self.lock:
+                    self.running.difference_update(remaining)
+
+        threading.Thread(target=run,daemon=True).start()
+
     def learning(self,run_id):
         from belive.learning import execute
         return self.start('learning-'+run_id,lambda:execute(self.service,run_id))
@@ -69,7 +98,7 @@ class Tasks:
 
 def make_handler(service,tasks=None):
     tasks=tasks or Tasks(service);access=Access(service);csrf=secrets.token_urlsafe(32)
-    support_routes={'scan-all','public-preview','lesson_revoke','learning_start','learning_improve','intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
+    support_routes={'scan-all','import-review','import-review-batch','public-preview','lesson_revoke','learning_start','learning_improve','intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
     class Handler(SimpleHTTPRequestHandler):
         extensions_map={**SimpleHTTPRequestHandler.extensions_map,'.js':'text/javascript'}
         def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT),**kwargs)
@@ -79,15 +108,22 @@ def make_handler(service,tasks=None):
             self.send_header('Content-Security-Policy',"default-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
             super().end_headers()
         def valid_host(self):return self.headers.get('Host') in {f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}'}
-        def json(self,code,value,cookie=None):
+        def json(self,code,value,cookie=None,browser_cookie=None):
             data=json.dumps(value).encode();self.send_response(code)
             if cookie is not None:self.send_header('Set-Cookie','belive_session='+cookie+'; Path=/; HttpOnly; SameSite=Strict; Max-Age='+('28800' if cookie else '0'))
+            if browser_cookie is not None:self.set_browser_cookie(browser_cookie)
             self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
         def token(self):return self.headers.get('Authorization','').removeprefix('Bearer ')
-        def session(self):
+        def _cookie(self, name):
             try:
-                cookie=SimpleCookie(self.headers.get('Cookie',''));return cookie['belive_session'].value if 'belive_session' in cookie else ''
-            except Exception:return ''
+                cookies=SimpleCookie(self.headers.get('Cookie',''))
+                return cookies[name].value if name in cookies else ''
+            except (CookieError, ValueError):
+                return ''
+        def session(self):return self._cookie('belive_session')
+        def portal_token(self):return self.token() or self._cookie('belive_complaints')
+        def set_browser_cookie(self, token):
+            self.send_header('Set-Cookie','belive_complaints='+token+'; Path=/; HttpOnly; SameSite=Strict; Max-Age=15552000')
         def do_GET(self):
             if not self.valid_host():return self.json(403,{'error':'Local host required'})
             path=urlsplit(self.path).path
@@ -102,8 +138,8 @@ def make_handler(service,tasks=None):
                 with service.store.connect() as db:items=service.styles(db,shared=True)
                 return self.json(200,{'examples':[{'id':x['id'],'text':x['text'],'use':'style-only'} for x in items]})
             if path=='/api/portal':
-                try:return self.json(200,service.portal(self.token()))
-                except ValueError:return self.json(401,{'error':'Invalid or expired complaint code'})
+                try:return self.json(200,service.portal(self.portal_token()))
+                except ValueError:return self.json(401,{'error':'This browser has no active complaint session'})
             if path.startswith('/api/'):
                 if not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),csrf):return self.json(403,{'error':'Open the operator dashboard to access this endpoint','code':'STALE_CSRF'})
                 user=access.current(self.session())
@@ -121,7 +157,13 @@ def make_handler(service,tasks=None):
             if not file.is_file():return self.send_error(404)
             data=file.read_bytes()
             if path in {'/','/index.html'}:data=data.replace(b'__CSRF_TOKEN__',csrf.encode())
-            self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8' if file.suffix=='.html' else self.guess_type(str(file)));self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+            self.send_response(200)
+            if path=='/portal':
+                browser_token=service.browser_session(self._cookie('belive_complaints'))
+                self.set_browser_cookie(browser_token)
+            if path in {'/','/index.html','/assets/learning-ui.js'}:self.send_header('Cache-Control','no-store')
+            self.send_header('Content-Type','text/html; charset=utf-8' if file.suffix=='.html' else self.guess_type(str(file)))
+            self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
         def do_HEAD(self):return self.send_error(405)
         def do_POST(self):
             if not self.valid_host():return self.json(403,{'error':'Local host required'})
@@ -147,13 +189,15 @@ def make_handler(service,tasks=None):
                         from belive.demo import session
                         return self.json(200,session(service))
                     if website:
-                        result=service.website_submit(p,key);tasks.analyse(result)
-                        return self.json(200,result)
+                        browser_token=service.browser_session(self._cookie('belive_complaints'))
+                        result=service.website_submit(p,key,browser_token=browser_token)
+                        tasks.analyse(result)
+                        return self.json(200,result,browser_cookie=browser_token)
                     if path=='/api/portal/intake':
-                        result=service.portal_submit(self.token(),p,key);tasks.analyse(result)
+                        result=service.portal_submit(self.portal_token(),p,key);tasks.analyse(result)
                         return self.json(200,{'id':result['id'],'status':result['status']})
-                    if path=='/api/portal/feedback':return self.json(200,service.portal_feedback(self.token(),p,key))
-                    result=service.portal_update(self.token(),p,key)
+                    if path=='/api/portal/feedback':return self.json(200,service.portal_feedback(self.portal_token(),p,key))
+                    result=service.portal_update(self.portal_token(),p,key)
                     tasks.analyse({'id':p['id']})
                     return self.json(200,result)
                 if route in {'setup','login'}:
@@ -165,12 +209,33 @@ def make_handler(service,tasks=None):
                 if user['role']!='ADMIN' and route not in support_routes:return self.json(403,{'error':'Administrator access required'})
                 if route=='users':return self.json(200,access.create(p))
                 if route=='deactivate-user':return self.json(200,access.deactivate(p.get('id'),user['id']))
+                if route in {'portal_issue','portal_revoke'}:return self.json(404,{'error':'This access action has been retired'})
                 if route=='tenant_feedback':raise ValueError('Tenant feedback requires tenant portal access')
                 p={**p,'_actor':user['id']}
                 if route in {'learning_start','learning_improve'}:
                     result=service.command(route,p,key);tasks.learning(result['id'])
                     return self.json(200,result)
                 if route=='case_action' and p.get('action')=='acknowledge':p['owner']=user['name']
+                if route=='import-review':
+                    from belive.browser_reviews import read_browser_review
+                    review=read_browser_review(p.get('url'))
+                    case,created=service.import_browser_review(review,user['id'])
+                    if created:tasks.analyse(case)
+                    return self.json(200,{'id':case['id'],'created':created})
+                if route=='review-chrome-sign-in':
+                    from belive.browser_reviews import open_review_chrome_sign_in
+                    open_review_chrome_sign_in()
+                    return self.json(200,{'opened':True})
+                if route=='import-review-batch':
+                    from belive.browser_reviews import BATCH_LIMIT, read_browser_review_batch
+                    reviews, skipped = read_browser_review_batch(p.get('links'))
+                    created, duplicates = [], []
+                    for review in reviews[:BATCH_LIMIT]:
+                        case, is_new = service.import_browser_review(review,user['id'])
+                        (created if is_new else duplicates).append(case)
+                    tasks.analyse_batch(created)
+                    return self.json(200,{'created':[c['id'] for c in created],
+                                          'duplicates':[c['id'] for c in duplicates],'skipped':skipped})
                 if route=='public-preview':
                     return self.json(200,service.prepare_public_preview(p.get('id'),p.get('revision'),user['id']))
                 if route=='analyse':

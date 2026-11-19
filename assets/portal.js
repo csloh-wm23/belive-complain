@@ -12,11 +12,10 @@ if(topicTitles[selectedTopic]){
 }
 $('publicComplaint').hidden=trackingEntry;
 $('privateAccess').hidden=!trackingEntry;
-$('privateAccess').open=trackingEntry;
 if(trackingEntry){
     document.title='BeLive · Track complaint';
     document.querySelector('.page-heading h1').textContent='Track complaint';
-    document.querySelector('.page-heading p').textContent='Enter the Complaint Code you received after submitting.';
+    document.querySelector('.page-heading p').textContent='View the complaints submitted in this browser.';
     $('switchComplaintEntry').href='/portal?view=make';
     $('switchComplaintEntry').textContent='Make a complaint';
 }
@@ -24,7 +23,7 @@ if(trackingEntry){
 function closeRecords(){
     key='';accessScope='';selectedCase=null;drafts.clear();notices.clear();attempts.clear();cases.clear();
     $('tenantArea').hidden=true;$('tenantCases').replaceChildren();$('requestList').replaceChildren();$('tenantIdentity').textContent='';
-    $('portalAccessCard').hidden=false;$('portalSignOut').hidden=true;$('accessKey').value='';
+    $('portalAccessCard').hidden=false;$('portalSignOut').hidden=true;
 }
 
 function showView(view){
@@ -39,7 +38,7 @@ function renderRequests(){
     $('requestCount').textContent=cases.size?'('+cases.size+')':'';
     $('requestList').hidden=!!selectedCase;$('allRequests').hidden=!selectedCase;
     $('conversationHeading').textContent=selectedCase?'Your complaint':'My complaints';
-    $('requestList').innerHTML=[...cases.values()].map(c=>`<button class="portal-request-row" data-open-request="${esc(c.id)}"><span><strong>${esc(c.title)}</strong><small>${esc(status(c)[0])}</small></span><span>${esc(c.complaint_level||'CHECKING')} →</span></button>`).join('')||'<p>No requests yet. Choose New request to get started.</p>';
+    $('requestList').innerHTML=[...cases.values()].map(c=>`<button class="portal-request-row" data-open-request="${esc(c.id)}"><span><strong>${esc(c.title)}</strong><small>${esc(status(c)[0])}</small></span><span>${esc(c.complaint_level||'CHECKING')} →</span></button>`).join('')||'<p>No complaints are saved in this browser. <a href="/portal?view=make">Make a complaint</a> to start.</p>';
     $('tenantCases').innerHTML=selectedCase&&cases.has(selectedCase)?renderCase(cases.get(selectedCase)):'';
 }
 function openDestination(){
@@ -54,7 +53,7 @@ async function request(route,p,requestId){
     let response;
     try{
         response=await fetch('/api/portal'+route,{method:p?'POST':'GET',headers:{
-            'Authorization':'Bearer '+key,'Content-Type':'application/json',
+            ...(key?{'Authorization':'Bearer '+key}:{}),'Content-Type':'application/json',
             'Idempotency-Key':requestId||crypto.randomUUID()
         },body:p?JSON.stringify(p):undefined});
     }catch(error){
@@ -110,7 +109,7 @@ const chatSenders={
 
 function renderChatMessage(message){
     const sender=chatSenders[message.sender]||{label:message.sender.replaceAll('_',' '),side:'tenant'};
-    return `<div class="chat-message chat-${sender.side}"><small>${esc(sender.label)} · ${esc(new Date(message.at).toLocaleString())}</small><p>${esc(message.text)}</p></div>`;
+    return `<div class="chat-message chat-${sender.side}"><small>${esc(sender.label)} · ${esc(new Date(message.at).toLocaleString())}</small><p>${esc(message.sender==='SYSTEM'?message.text.replaceAll('with the same Complaint Code','from this browser'):message.text)}</p></div>`;
 }
 
 function renderCase(c){
@@ -121,7 +120,7 @@ function renderCase(c){
         <div class="portal-case-state" data-case-state="${esc(c.status)}"><strong>${esc(label)}</strong><p>${esc(explanation)}</p></div>
         <div class="conversation complaint-chat" role="region" aria-label="Complaint conversation">${c.conversation.map(renderChatMessage).join('')}</div>
         <label>Reply or outcome details<textarea data-note="${esc(c.id)}">${esc(drafts.get(c.id)||'')}</textarea></label>
-        ${c.auto_close_at?`<p class="muted">Please reply by ${esc(new Date(c.auto_close_at).toLocaleString())}. Without a reply, this complaint closes automatically. You can reopen it later with the same Complaint Code.</p>`:''}
+        ${c.auto_close_at?`<p class="muted">Please reply by ${esc(new Date(c.auto_close_at).toLocaleString())}. Without a reply, this complaint closes automatically. You can reopen it later through Track complaint.</p>`:''}
         <div class="case-actions">${active||c.status==='CLOSED'?`<button data-update="${esc(c.id)}">${c.status==='CLOSED'?'Send reply · reopen complaint':'Send reply to support'}</button>`:''}${active?`<button data-resolved="${esc(c.id)}">${c.informational_answer?'This answers my question':'Issue resolved'}</button>`:''}<button data-unresolved="${esc(c.id)}">Still unresolved</button></div>
         <p class="portal-case-notice ${notice?.error?'error':''}" data-case-notice="${esc(c.id)}" role="status" aria-live="polite" tabindex="-1" ${notice?'':'hidden'}>${esc(notice?.text||'')}</p>
         <p class="muted">${c.informational_answer?'Accepting a routine answer records that your question was answered. It does not confirm repairs or close a maintenance case.':'Still unresolved saves your message and asks the support team to handle the request. Staff checks the outcome before closing it.'}</p>
@@ -131,12 +130,13 @@ function renderCase(c){
 async function refresh(){
     const data=await request('');cases=new Map(data.cases.map(c=>[c.id,c]));
     accessScope=data.access_scope||'TENANT';
-    $('tenantArea').hidden=false;$('portalAccessCard').hidden=true;$('portalSignOut').hidden=false;
-    $('tenantIdentity').textContent=data.property_name+' · '+data.unit_ref;
+    $('tenantArea').hidden=false;$('portalAccessCard').hidden=true;$('portalSignOut').hidden=accessScope!=='TENANT';
+    $('tenantIdentity').textContent=data.unit_ref?data.property_name+' · '+data.unit_ref:'';
     $('demoTenantBanner').hidden=!data.demo_only;
-    $('newRequestTab').hidden=accessScope==='COMPLAINT';
+    $('newRequestTab').hidden=accessScope!=='TENANT';
     if(selectedCase&&!cases.has(selectedCase))selectedCase=null;
-    if(accessScope==='COMPLAINT'){selectedCase=[...cases.keys()][0]||null;currentView='conversations';}
+    if(accessScope==='COMPLAINT')selectedCase=[...cases.keys()][0]||null;
+    if(accessScope!=='TENANT')currentView='conversations';
     renderRequests();showView(currentView);
 }
 async function demoSignIn(){
@@ -147,6 +147,10 @@ async function demoSignIn(){
     const url=new URL(location.href);url.searchParams.delete('demo');history.replaceState(null,'',url);
 }
 async function loadEntry(){
+    if(trackingEntry){
+        await operation(async()=>{await refresh();openDestination();});
+        return;
+    }
     try{
         const response=await fetch('/api/demo');const demo=await response.json();
         $('demoEntry').hidden=trackingEntry||!demo.available;
@@ -171,17 +175,10 @@ async function operation(fn,caseId){
     try{await fn();}
     catch(error){
         $('portalNotice').textContent=error.message;
-        if(caseId&&key)caseNotice(caseId,error.message,true);
+        if(caseId&&accessScope)caseNotice(caseId,error.message,true);
     }finally{locked.forEach(e=>e.disabled=false);busy=false;}
 }
 
-$('portalAccess').onsubmit=event=>{
-    event.preventDefault();
-    operation(async()=>{
-        key=$('accessKey').value.trim();drafts.clear();notices.clear();attempts.clear();$('tenantArea').hidden=true;
-        await refresh();$('accessKey').value='';$('portalNotice').textContent='Your complaint is loaded.';
-    }).then(()=>{if(!$('tenantArea').hidden)openDestination();});
-};
 const complaintForm=$('websiteComplaint');
 const rentalLocation=document.createElement('div');
 rentalLocation.innerHTML='<label>Which property do you rent at?<input name="rental_property" list="complaintProperties" required minlength="2" maxlength="120" placeholder="Search or type a building name" aria-describedby="propertyDirectoryHint"></label><datalist id="complaintProperties"></datalist><p class="muted" id="propertyDirectoryHint">If your building is missing, type its name.</p><label>Unit or room (optional)<input name="rental_unit" maxlength="60" placeholder="e.g. Block B, Unit 12-03"></label>';
@@ -207,23 +204,6 @@ if(!trackingEntry){
         updatePropertyHint();
     }).catch(()=>{});
 }
-const recoveryEmail=document.createElement('label');
-recoveryEmail.innerHTML='Recovery email (optional)<input name="email" type="email" maxlength="254" autocomplete="email"><small>Email format is checked. Recovery requires verification by email after submission.</small>';
-complaintForm.insertBefore(recoveryEmail, $('sendWebsiteComplaint'));
-const recoveryPanel=document.createElement('details');
-recoveryPanel.hidden=!trackingEntry;
-recoveryPanel.innerHTML='<summary>Forgot your Complaint Code?</summary><form><label>Complaint reference<input name="reference" placeholder="BL-…" required maxlength="13"></label><label>Email used when submitting<input name="email" type="email" required maxlength="254" autocomplete="email"></label><button type="submit">Send my code</button></form>';
-$('privateAccess').after(recoveryPanel);
-recoveryPanel.querySelector('form').onsubmit=event=>{
-    event.preventDefault();
-    const payload=Object.fromEntries(new FormData(event.target));
-    operation(async()=>{
-        const response=await fetch('/api/website/complaint-recovery',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-        const result=await response.json();
-        if(!response.ok)throw Error(result.error||'Email recovery is unavailable');
-        $('portalNotice').textContent='If the reference and email match an active complaint, check your inbox for your code.';
-    });
-};
 const complaintReceipt=document.createElement('section');
 complaintReceipt.className='card';
 complaintReceipt.hidden=true;
@@ -241,40 +221,27 @@ complaintForm.onsubmit=event=>{
         const response=await fetch('/api/website/complaints',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':attempt.id},body:signature});
         const result=await response.json();if(!response.ok)throw Error(result.error||'Complaint could not be submitted');
         attempts.delete('website');
-        key=result.complaint_code;
-        complaintReceipt.innerHTML=`<h2>Complaint received</h2><p>Complaint Code: <strong>${esc(key)}</strong></p><p>Complaint reference: <strong>${esc(result.id)}</strong></p><button type="button">Copy Complaint Code</button><p>Save the code and reference. Keep the code private.</p>`;
-        const copyButton=complaintReceipt.querySelector('button');
-        const savedCode=key;
-        copyButton.onclick=async()=>{
-            try{await navigator.clipboard.writeText(savedCode);copyButton.textContent='Copied';}
-            catch{$('portalNotice').textContent='Select and copy the displayed code manually.';}
-        };
+        selectedCase=result.id;
+        const url=new URL(location.href);
+        url.search=new URLSearchParams({view:'track',case:result.id}).toString();
+        url.hash='';
+        history.replaceState(null,'',url);
+        document.title='BeLive · Track complaint';
+        document.querySelector('.page-heading h1').textContent='Track complaint';
+        document.querySelector('.page-heading p').textContent='View the complaints submitted in this browser.';
+        $('switchComplaintEntry').href='/portal?view=make';
+        $('switchComplaintEntry').textContent='Make a complaint';
+        complaintReceipt.innerHTML=`<h2>Complaint received</h2><p>Reference <strong>${esc(result.id)}</strong></p><p>Return to Track complaint in this browser to read replies.</p>`;
         complaintReceipt.hidden=false;
-        if(payload.email){
-            const verification=document.createElement('form');
-            verification.innerHTML='<p>Recovery email is not verified yet.</p><button type="button">Send verification code</button><label>Email verification code<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label><button type="submit">Verify email</button><p role="status"></p>';
-            const status=verification.querySelector('[role="status"]');
-            const verify=async code=>{
-                try{
-                    const response=await fetch('/api/portal/verify-email',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+savedCode},body:JSON.stringify({email:payload.email,...(code?{code}:{})})});
-                    const result=await response.json();
-                    if(!response.ok)throw Error(result.error||'Email verification failed');
-                    status.textContent=result.verified?'Recovery email verified.':'Verification code sent. Check your inbox.';
-                    if(result.verified)verification.querySelectorAll('input,button').forEach(el=>el.disabled=true);
-                }catch(error){status.textContent=error.message;}
-            };
-            verification.querySelector('button').onclick=()=>verify();
-            verification.onsubmit=e=>{e.preventDefault();verify(verification.elements.code.value);};
-            complaintReceipt.append(verification);
-        }
         event.target.reset();
-        await refresh();showView('conversations');complaintReceipt.scrollIntoView({block:'nearest'});
+        await refresh();
+        complaintReceipt.scrollIntoView({block:'nearest'});
     });
 };
 $('portalSignOut').onclick=()=>{
     if(busy)return;
     closeRecords();complaintReceipt.replaceChildren();complaintReceipt.hidden=true;$('portalNotice').textContent='Your support records are closed on this page.';
-    (trackingEntry?$('accessKey'):$('websiteComplaint').elements.title).focus();
+    $('websiteComplaint').elements.title.focus();
 };
 $('refreshPortal').onclick=()=>operation(refresh);
 $('tenantIntake').onsubmit=event=>{
@@ -315,7 +282,7 @@ document.addEventListener('input',event=>{
     if(event.target.dataset.note)drafts.set(event.target.dataset.note,event.target.value);
 });
 setInterval(()=>{
-    if(key&&!busy&&!document.querySelector('textarea:focus,input:focus'))operation(refresh);
+    if(accessScope&&!busy&&!document.querySelector('textarea:focus,input:focus'))operation(refresh);
 },10000);
 
 $('allRequests').onclick=()=>{selectedCase=null;renderRequests();};

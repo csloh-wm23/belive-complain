@@ -127,6 +127,7 @@ class Service:
             from belive.conversations import conversation
             for case in result['cases']:
                 case['conversation']=conversation(self.store,db,case)
+                case['can_contact_customer']=bool(case['tenant_id'] or self.has_complaint_access(db,case,browser_only=True))
                 case['activity']=[dict(r) for r in db.execute('SELECT * FROM events WHERE entity=? ORDER BY id DESC LIMIT 100',(case['id'],))]
                 active=case['status'] not in {'CLOSED','SKIPPED','VERIFIED','ANSWERED'}
                 deadlines=[d for d in [case.get('ack_due') if case['status']=='HUMAN_REVIEW' else None,case.get('followup_due') if case['status']=='FOLLOW_UP' else None,case.get('action_due')] if d]
@@ -420,16 +421,24 @@ class Service:
             self.store.put(db,'feedback',f);self.store.event(db,c['id'],'FEEDBACK_'+verdict,'Latest verdict controls retrieval');return f
         if name=='case_action':return self.case_action(db,p)
         raise ValueError('Unknown action')
-    def has_complaint_access(self,db,case):
+    def has_complaint_access(self,db,case,*,browser_only=False):
         return case.get('entrypoint')=='TENANT_WEBSITE' and any(
-            entry.get('case_id')==case['id'] and entry.get('complaint_access') and entry['expires']>now()
+            (not browser_only or 'case_ids' in entry) and self.portal_case_allowed(entry,case)
+            and not entry.get('tenant_id') and entry['expires']>now()
             for entry in self.store.all(db,'portal'))
 
     def case_action(self,db,p):
         c=self.store.get(db,'case',p.get('id'));require(p.get('revision')==c['revision'],'Case changed; reload before acting')
         action=p.get('action');note=p.get('note','');status=c['status']
-        if action!='note':c['automation_paused']=True
-        if action=='link_tenant':
+        if action not in {'note','review_link'}:c['automation_paused']=True
+        if action=='review_link':
+            from belive.connectors import google_review_share_link
+            require(c['platform']=='GOOGLE' and c['entrypoint']=='PUBLIC_SOURCE','Select a Google public review case')
+            review_url=google_review_share_link(p.get('review_url'))
+            if c.get('review_url')==review_url:return c
+            c['review_url']=review_url
+            note='Individual Google review link saved by staff'
+        elif action=='link_tenant':
             t=self.store.get(db,'tenant',p.get('tenant_id'));note=bounded(note,8,1000)
             require(not c['tenant_id'],'Case already linked to a verified tenant')
             c['tenant_id']=t['id']
@@ -447,7 +456,7 @@ class Service:
         elif action in {'publish_response','send_reply'}:
             if action=='send_reply':c['draft']=bounded(p.get('reviewed_reply'),1,2500)
             require(status not in {'CLOSED','SKIPPED','ANSWERED'} and c['draft'],'An active complaint and saved response are required')
-            require(c['tenant_id'] or self.has_complaint_access(db,c),'This case needs an active Complaint Code or verified tenant access')
+            require(c['tenant_id'] or self.has_complaint_access(db,c),'This case has no private complaint conversation. Ask the customer to use Make a complaint.')
             require(p.get('confirmed') is True,'Review the reply before sending it to the customer')
             if 'reviewed_reply' in p:
                 require(bounded(p['reviewed_reply'],1,2500)==c['draft'],'Save the edited reply before sending it')
@@ -492,24 +501,29 @@ class Service:
             w['evidence']=bounded(note,8,2000);w['status']='COMPLETED';self.store.put(db,'workorder',w)
         elif action=='followup':
             require(status in {'IN_PROGRESS','AI_PENDING'},'Staff handling or a prepared AI response is required')
-            require(c['tenant_id'] or self.has_complaint_access(db,c),'An active Complaint Code or verified tenant is required')
+            require(c['tenant_id'] or self.has_complaint_access(db,c),'There is no private conversation for this case. Ask the customer to submit through Make a complaint first.')
             note=bounded(note,8,2000)
             c['action_due']=None;c['status']='FOLLOW_UP';c['followup_due']=due(self.settings.followup_minutes);c['followup_count']=0
             c['waiting_since']=now();c.pop('tenant_resolution',None);c.pop('closure_reason',None)
             if not c['tenant_id']:
                 from belive.conversations import post
                 c.pop('tenant_resolution',None)
-                post(self.store,db,c,'SYSTEM',f'The BeLive team has recorded an action. Please choose Issue resolved or Still unresolved. If you do not reply within {closure.policy(self.store,db)["days"]} days, this complaint will close without a confirmed resolution. You can reopen it later with the same Complaint Code.','staff-followup-'+str(c['revision']))
+                post(self.store,db,c,'SYSTEM',f'The BeLive team has recorded an action. Please choose Issue resolved or Still unresolved. If you do not reply within {closure.policy(self.store,db)["days"]} days, this complaint will close without a confirmed resolution. You can reopen it later from Track complaint in the browser you used to submit it.','staff-followup-'+str(c['revision']))
         elif action=='reassess':
             require(status=='FOLLOW_UP','Only follow-up cases can be reassessed');note=bounded(note,8,2000);self.handoff(db,c,note)
-        elif action in {'verify','verify_close'}:
-            require(status=='FOLLOW_UP','Start follow-up before verifying resolution')
-            if not c['tenant_id']:
-                require(c.get('entrypoint')=='TENANT_WEBSITE' and c.get('tenant_resolution',{}).get('resolved') is True,
-                        'Wait for the customer to confirm the issue is resolved')
+        elif action in {'verify','verify_close','verify_staff_close'}:
+            if action=='verify_staff_close':
+                require(status=='IN_PROGRESS','Take ownership before recording verified closure')
+                require(not c['tenant_id'] and not self.has_complaint_access(db,c,browser_only=True),
+                        'Ask the customer to confirm the outcome in their private conversation')
+            else:
+                require(status=='FOLLOW_UP','Start follow-up before verifying resolution')
+                if not c['tenant_id']:
+                    require(c.get('entrypoint')=='TENANT_WEBSITE' and c.get('tenant_resolution',{}).get('resolved') is True,
+                            'Wait for the customer to confirm the issue is resolved')
             require(p.get('confirmed') is True,'Confirm resolution against evidence or tenant feedback')
             c['verification']=bounded(note,8,2000);c['status']='VERIFIED';c['followup_due']=None
-            if action=='verify_close':
+            if action in {'verify_close','verify_staff_close'}:
                 require(not any(w['case_id']==c['id'] and w['status']=='OPEN' for w in self.store.all(db,'workorder')),'Complete outstanding work orders before closure')
                 c['status']='CLOSED';c['closed_at']=now()
         elif action=='close':
@@ -525,6 +539,34 @@ class Service:
         else:raise ValueError('Unknown case action')
         c['revision']+=1;c['updated_at']=now();self.store.put(db,'case',c);self.store.event(db,c['id'],action.upper(),p.get('_actor','operator')+': '+str(note))
         return c
+    def import_browser_review(self, review, actor):
+        from belive.browser_reviews import google_listing_link, review_identity
+        review_link = review.get('review_url')
+        identity = review_identity(review_link)
+        if review_link:
+            require(identity is not None, 'The browser did not return an individual Google review link')
+        link = review_link or google_listing_link(review.get('listing_url'))
+        source_id = review['source_id']
+        with self.lock, self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            for case in self.store.all(db,'case'):
+                if case['platform']=='GOOGLE' and case.get('entrypoint')=='PUBLIC_SOURCE':
+                    existing_link=case.get('review_url') or case.get('public_url')
+                    if case['source_id']==source_id or (identity and review_identity(existing_link)==identity):
+                        if review_link and not case.get('review_url'):
+                            case.update(review_url=review_link, revision=case['revision']+1)
+                            self.store.put(db,'case',case)
+                            self.store.event(db,case['id'],'REVIEW_LINK','Direct review link confirmed by browser')
+                        return case,False
+            rating=review['rating']
+            label=f"{rating} star{'s' if rating!=1 else ''}"
+            case=self.create(db,{'title':f'Google Maps review - {label}', 'description':review['description'],
+                                 'platform':'GOOGLE','source_id':source_id})
+            case.update(public_url=link,review_url=review_link,review_rating=rating)
+            self.store.put(db,'case',case)
+            self.store.event(db,case['id'],'BROWSER_REVIEW_IMPORTED',actor+': one visible Google Maps review, '+label)
+            return case,True
+
     def prepare_public_preview(self, case_id, revision, actor):
         with self.lock, self.store.connect() as db:
             case = self.store.get(db, 'case', case_id)
@@ -535,7 +577,10 @@ class Service:
             require(assessment.get('report_type') == 'COMPLAINT' and assessment.get('relevance') == 'SUPPORT'
                     and not assessment.get('uncertainty') and case['status'] not in {'CLOSED', 'SKIPPED', 'VERIFIED', 'ANSWERED'},
                     'A confirmed, active public complaint assessment is required')
-            context = {'title': case['title'], 'report': case['description'], 'category': case['category']}
+            context = {'title': case['title'], 'report': case['description'], 'category': case['category'],
+                       'complaint_level': complaint_level(case)}
+            if context['complaint_level'] == 'HIGH':
+                context['assessment_summary'] = assessment.get('summary', '')
         try:
             reply = self.ai.public_reply_preview(context)
         except Exception as exc:
@@ -592,7 +637,7 @@ class Service:
                     decision={'can_answer':bool(public_reply),'topics':topics}
                 else:
                     decision=classify_public(c['title'],question,c['description'] if public_turn else None,lessons)
-                    public_reply=automation.public_guidance_reply(decision,lessons)
+                    public_reply=automation.public_guidance_reply(decision,lessons,public_source=public_source)
             except Exception:
                 pass  # The existing assessment path handles model and parsing failures.
         if not public_source and not public_reply and not public_turn:
@@ -691,6 +736,26 @@ class Service:
         item=self.store.get(db,'portal',digest(self._portal_token(token)))
         require(item['expires']>now(),'Portal access expired')
         return item
+    @staticmethod
+    def portal_case_allowed(scope,case):
+        if 'case_ids' in scope:
+            return case['id'] in scope['case_ids']
+        if scope.get('case_id'):
+            return case['id']==scope['case_id']
+        return bool(scope.get('tenant_id')) and case['tenant_id']==scope['tenant_id']
+
+    def browser_session(self, token):
+        with self.lock,self.store.connect() as db:
+            if token:
+                try:
+                    if 'case_ids' in self._portal_scope(db,token):
+                        return token
+                except ValueError:
+                    pass
+            token=secrets.token_urlsafe(32)
+            self.store.put(db,'portal',{'id':digest(token),'case_ids':[],'expires':due(60*24*180)})
+            return token
+
     def _complaint_code(self,db,case_id):
         try:secret=self.store.get(db,'secret','complaint-code')['value']
         except ValueError:
@@ -699,7 +764,7 @@ class Service:
         raw=hmac.new(bytes.fromhex(secret),case_id.encode(),hashlib.sha256).digest()[:10]
         text=base64.b32encode(raw).decode().rstrip('=')
         return 'CMP-'+'-'.join(text[i:i+4] for i in range(0,len(text),4))
-    def website_submit(self,p,key):
+    def website_submit(self,p,key,*,browser_token=None):
         from belive.complaint_mail import address
         from belive.conversations import post
         require(isinstance(key,str) and 8<=len(key)<=150,'A request idempotency key is required')
@@ -711,9 +776,18 @@ class Service:
                 'property':bounded(p.get('rental_property'),2,120),
                 'unit':bounded(p.get('rental_unit',''),0,60)
             }
-        fingerprint=digest(json.dumps(['website_complaint',payload,digest(email)] if email else ['website_complaint',payload],sort_keys=True))
+        request=['website_complaint',payload]
+        if email:
+            request.append(digest(email))
+        if browser_token:
+            request.append(digest(browser_token))
+        fingerprint=digest(json.dumps(request,sort_keys=True))
         with self.lock,self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
+            browser=None
+            if browser_token:
+                browser=self._portal_scope(db,browser_token)
+                require('case_ids' in browser,'Open the complaint form in this browser first')
             prior=db.execute('SELECT result FROM requests WHERE key=?',(key,)).fetchone()
             if prior:
                 saved=json.loads(prior[0]);require(saved['fingerprint']==fingerprint,'Idempotency key reused with different data')
@@ -730,6 +804,12 @@ class Service:
                     self.store.put(db,'complaint_recovery',{'id':case['id'],'email_hash':digest(email),'retry_after':'','verified':False})
                 result={'id':case['id'],'status':case['status'],'received_at':case['created_at']}
                 db.execute('INSERT INTO requests VALUES(?,?)',(key,json.dumps({'fingerprint':fingerprint,'result':result})))
+            if browser is not None:
+                if case['id'] not in browser['case_ids']:
+                    browser['case_ids'].append(case['id'])
+                    browser['expires']=due(60*24*180)
+                    self.store.put(db,'portal',browser)
+                return result
             code=self._complaint_code(db,case['id'])
             portal={'id':digest(code),'case_id':case['id'],'expires':due(60*24*180),'complaint_access':True}
             self.store.put(db,'portal',portal)
@@ -786,11 +866,12 @@ class Service:
         with self.store.connect() as db:
             item=self._portal_scope(db,token)
             case_id=item.get('case_id');tenant=item.get('tenant_id','')
-            cases=[{k:c.get(k) for k in ('id','title','description','status','created_at')} for c in self.store.all(db,'case') if (c['id']==case_id if case_id else c['tenant_id']==tenant)]
+            cases=[{k:c.get(k) for k in ('id','title','description','status','created_at')}
+                   for c in self.store.all(db,'case') if self.portal_case_allowed(item,c)]
             from belive.conversations import conversation
             for case in cases:
                 full=self.store.get(db,'case',case['id'])
-                case['conversation']=conversation(self.store,db,full,complaint_only=bool(case_id))
+                case['conversation']=conversation(self.store,db,full,complaint_only=not tenant)
                 case['resolution_confirmed']=bool(full.get('tenant_resolution',{}).get('resolved'))
                 case['informational_answer']=bool(full.get('automatic_answer') and not full.get('handoff'))
                 case['automatic_pending']=bool(full['status']=='AI_PENDING' and not full.get('analysis') and (
@@ -801,6 +882,9 @@ class Service:
                 case['ai_draft_ready']=bool(full['status']=='HUMAN_REVIEW' and full.get('analysis') and full.get('draft'))
                 case['closure_reason']=full.get('closure_reason','')
                 case['auto_close_at']=closure.deadline(full,closure.policy(self.store,db)['days']) if closure.waiting(full) else None
+            if 'case_ids' in item:
+                return {'tenant_id':'','cases':cases,'property_name':'BeLive complaints','unit_ref':'',
+                        'demo_only':False,'access_scope':'BROWSER'}
             if case_id:
                 return {'tenant_id':'','cases':cases,'property_name':'BeLive complaint','unit_ref':case_id,
                         'demo_only':False,'access_scope':'COMPLAINT'}
@@ -810,13 +894,14 @@ class Service:
     def portal_submit(self,token,p,key,entrypoint='TENANT_PORTAL'):
         require(entrypoint in {'TENANT_PORTAL','TENANT_WEBSITE'},'Unsupported tenant entry point')
         tenant=self.portal(token)['tenant_id']
+        require(bool(tenant),'Use Make a complaint for a new request')
         return self.command('intake',{'title':p.get('title'),'description':p.get('description'),'tenant_id':tenant,'platform':'INTERNAL','entrypoint':entrypoint},key)
     def portal_update(self,token,p,key):
         require(isinstance(key,str) and 8<=len(key)<=150,'A request idempotency key is required')
         with self.lock,self.store.connect() as db:
             scope=self._portal_scope(db,token);tenant=scope.get('tenant_id','')
             c=self.store.get(db,'case',p.get('id'))
-            require(c['id']==scope.get('case_id') if scope.get('case_id') else c['tenant_id']==tenant,'Case is outside this access code')
+            require(self.portal_case_allowed(scope,c),'This complaint is unavailable in this browser session')
             raw_note=p.get('note')
             short_ack=(c.get('entrypoint')=='TENANT_WEBSITE' and c['status']=='FOLLOW_UP'
                        and (c.get('automatic_answer') or {}).get('id')=='PUBLIC-COMPLAINT-FAQ'
@@ -864,6 +949,6 @@ class Service:
     def portal_feedback(self,token,p,key):
         with self.store.connect() as db:
             scope=self._portal_scope(db,token);c=self.store.get(db,'case',p.get('id'))
-            require(c['id']==scope.get('case_id') if scope.get('case_id') else c['tenant_id']==scope.get('tenant_id'),'Case is outside this access code')
+            require(self.portal_case_allowed(scope,c),'This complaint is unavailable in this browser session')
             tenant=c['tenant_id']
         return self.command('tenant_feedback',{'id':p.get('id'),'resolved':p.get('resolved'),'note':p.get('note'),'tenant_id':tenant},key)
