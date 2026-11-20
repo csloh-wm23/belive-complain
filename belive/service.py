@@ -20,6 +20,7 @@ NOTIFICATION_KINDS = {'STAFF_ALERT','TENANT_RESPONSE','STAFF_WORK_ORDER','ACK_TI
 COMMANDS.add('source_schedule')
 COMMANDS.add('closure_settings')
 COMMANDS.update({'reply_learning_scan','reply_learning_action'})
+COMMANDS.update({'wa_simulate','wa_knowledge','wa_staff_reply','wa_property'})
 
 PROPERTY_DIRECTORY = Path(__file__).resolve().parents[1] / 'assets' / 'property-directory.json'
 
@@ -74,6 +75,10 @@ class Service:
                     item.update(status='FAILED',approved=False,error='Interrupted; analyse or review again')
                 if item.get('preview_status')=='RUNNING':item['preview_status']='FAILED'
                 self.store.put(db,'reply_learning',item)
+            for item in self.store.all(db,'wa_outgoing'):
+                if item['status']=='SENDING':item.update(status='UNKNOWN',error='Interrupted send: check WhatsApp before retrying');self.store.put(db,'wa_outgoing',item)
+            for item in self.store.all(db,'wa_turn'):
+                if item['status']=='PROCESSING':item['status']='PENDING';self.store.put(db,'wa_turn',item)
     def context(self,db,c):
         from belive.conversations import conversation
         context={'case':{k:c[k] for k in ('title','description','category','severity')},'verified_records':[],
@@ -186,6 +191,8 @@ class Service:
                                latest_match=latest.get(lesson_id))
             from belive import demo,learning
             result['demo']=demo.info(self,db)
+            from belive.whatsapp import snapshot as whatsapp_snapshot
+            result['whatsapp']=whatsapp_snapshot(self,db)
             result['learning_runs']=[learning.public(x) for x in self.store.all(db,'learning_run')][:10]
             result['learning_lesson']=''
             from belive.experience_learning import experiences
@@ -270,7 +277,7 @@ class Service:
             (platform,source_id,source_hash,json.dumps({'title':title,'text':description}),now())).lastrowid
         for old in self.store.all(db,'case'):
             # Anonymous website complaints deduplicate only through their idempotency key: matching text can belong to different people.
-            if platform=='INTERNAL' and p.get('entrypoint')=='TENANT_WEBSITE':
+            if platform=='INTERNAL' and p.get('entrypoint') in {'TENANT_WEBSITE','WHATSAPP'}:
                 continue
             # A verified tenant may reuse an active matching thread, but never a completed outcome.
             if platform=='INTERNAL' and p.get('entrypoint')=='TENANT_PORTAL' and old['status'] in {'ANSWERED','CLOSED','SKIPPED'}:
@@ -311,6 +318,9 @@ class Service:
             db.execute('INSERT INTO requests VALUES(?,?)',(key,json.dumps({'fingerprint':fingerprint,'result':cached})))
             return result
     def _command(self,db,name,p):
+        if name in {'wa_simulate','wa_knowledge','wa_staff_reply','wa_property'}:
+            from belive.whatsapp import command
+            return command(self,db,name,p)
         if name in {'reply_learning_scan','reply_learning_action'}:
             from belive.reply_learning import command
             return command(self,db,name,p)

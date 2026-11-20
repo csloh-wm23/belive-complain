@@ -24,6 +24,7 @@ STATIC={'/':'index.html','/index.html':'index.html','/assets/app.js':'assets/app
         '/assets/tenant-home.svg':'assets/tenant-home.svg','/assets/tenant-site.js':'assets/tenant-site.js'}
 
 STATIC['/assets/learning-ui.js']='assets/learning-ui.js'
+STATIC['/assets/whatsapp-ui.js']='assets/whatsapp-ui.js'
 STATIC['/assets/fyp.css']='assets/fyp.css'
 STATIC['/assets/workspace-v2.css']='assets/workspace-v2.css'
 STATIC['/assets/workspace-v2.js']='assets/workspace-v2.js'
@@ -44,6 +45,7 @@ class Tasks:
         threading.Thread(target=run,daemon=True).start();return True
     def analyse(self,c):
         with self.service.store.connect() as db:c=self.service.store.get(db,'case',c['id'])
+        if c.get('entrypoint')=='WHATSAPP':return
         pending=c['status'] in {'AI_PENDING','AWAITING_CONTACT'} or (c['status']=='HUMAN_REVIEW' and c.get('ai_assistance_pending'))
         if pending and c['severity'] not in {'HIGH','CRITICAL'} and not c.get('analysis'):
             self.start('ai-'+c['id'],lambda:self.service.analyse(c['id']))
@@ -98,6 +100,7 @@ class Tasks:
         while not self.stop.wait(self.service.settings.scheduler_seconds):
             try:
                 self.service.tick()
+                self.whatsapp_pending()
                 self.pending_reply_feedback()
                 snapshot=self.service.snapshot()
                 for c in snapshot['cases']:self.analyse(c)
@@ -106,18 +109,27 @@ class Tasks:
             except Exception:
                 with self.service.store.connect() as db:self.service.store.event(db,'scheduler','SCHEDULER_FAILED','Tick failed; next scheduled attempt will recheck persisted state')
 
+    def whatsapp_pending(self):
+        from belive.whatsapp import process_thread,deliver
+        with self.service.store.connect() as db:
+            tids={x['thread_id'] for x in self.service.store.all(db,'wa_turn') if x['status']=='PENDING'}
+            outgoing=[x for x in self.service.store.all(db,'wa_outgoing') if x['status']=='QUEUED']
+        for tid in list(tids)[:4]:self.start('whatsapp-'+tid,lambda tid=tid:process_thread(self.service,tid))
+        for item in outgoing[:4]:self.start('wa-send-'+item['id'],lambda key=item['id']:deliver(self.service,key))
+
 def make_handler(service,tasks=None):
     tasks=tasks or Tasks(service);access=Access(service);csrf=secrets.token_urlsafe(32)
     support_routes={'scan-all','import-review','import-review-batch','public-preview','lesson_revoke','learning_start','learning_improve','intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
     support_routes.add('google-reply')
     support_routes.update({'reply_learning_scan','reply_learning_action'})
+    support_routes.update({'wa_simulate','wa_staff_reply','wa_property'})
     class Handler(SimpleHTTPRequestHandler):
         extensions_map={**SimpleHTTPRequestHandler.extensions_map,'.js':'text/javascript'}
         def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT),**kwargs)
         def end_headers(self):
             self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')
             self.send_header('Referrer-Policy','no-referrer')
-            self.send_header('Content-Security-Policy',"default-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+            self.send_header('Content-Security-Policy',"default-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
             super().end_headers()
         def valid_host(self):return self.headers.get('Host') in {f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}'}
         def json(self,code,value,cookie=None,browser_cookie=None):
@@ -137,6 +149,12 @@ def make_handler(service,tasks=None):
         def set_browser_cookie(self, token):
             self.send_header('Set-Cookie','belive_complaints='+token+'; Path=/; HttpOnly; SameSite=Strict; Max-Age=15552000')
         def do_GET(self):
+            if urlsplit(self.path).path=='/webhooks/whatsapp':
+                from belive.whatsapp import challenge,configuration
+                if not self.valid_host() and self.headers.get('Host')!=configuration()['webhook_host']:return self.json(403,{'error':'Webhook host not configured'})
+                try:
+                    data=challenge(urlsplit(self.path).query).encode();self.send_response(200);self.send_header('Content-Type','text/plain');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+                except ValueError:return self.json(403,{'error':'Webhook verification failed'})
             if not self.valid_host():return self.json(403,{'error':'Local host required'})
             path=urlsplit(self.path).path
             if path=='/api/auth':return self.json(200,{'setup_required':not access.users(),'user':access.current(self.session()),'csrf_token':csrf})
@@ -159,6 +177,12 @@ def make_handler(service,tasks=None):
                 if path=='/api/users':
                     if user['role']!='ADMIN':return self.json(403,{'error':'Administrator access required'})
                     return self.json(200,{'users':access.users()})
+                if path.startswith('/api/wa-photo/'):
+                    from belive.whatsapp import media_path
+                    try:
+                        with service.store.connect() as db:message=service.store.get(db,'wa_message',path.rsplit('/',1)[-1])
+                        data=media_path(service,message).read_bytes();self.send_response(200);self.send_header('Content-Type',message['media']['mime']);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+                    except (ValueError,FileNotFoundError):return self.json(404,{'error':'Photo not available'})
                 if path=='/api/status':
                     snapshot=service.snapshot();snapshot.update(tasks=sorted(tasks.running),operator=user)
                     if user['role']!='ADMIN':snapshot['storage']['can_choose']=False;snapshot['backups']=[]
@@ -178,6 +202,16 @@ def make_handler(service,tasks=None):
             self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
         def do_HEAD(self):return self.send_error(405)
         def do_POST(self):
+            if urlsplit(self.path).path=='/webhooks/whatsapp':
+                from belive.whatsapp import webhook,configuration
+                if not self.valid_host() and self.headers.get('Host')!=configuration()['webhook_host']:return self.json(403,{'error':'Webhook host not configured'})
+                try:
+                    size=int(self.headers.get('Content-Length','0'))
+                    if not 0<size<=2000000:return self.json(413,{'error':'Webhook too large'})
+                    webhook(service,self.rfile.read(size),self.headers.get('X-Hub-Signature-256',''));tasks.whatsapp_pending()
+                    return self.json(200,{'received':True})
+                except PermissionError:return self.json(403,{'error':'Invalid webhook signature'})
+                except (ValueError,TypeError,KeyError):return self.json(400,{'error':'Invalid WhatsApp payload'})
             if not self.valid_host():return self.json(403,{'error':'Local host required'})
             origin=self.headers.get('Origin')
             if origin and origin not in {f'http://127.0.0.1:{self.server.server_port}',f'http://localhost:{self.server.server_port}'}:return self.json(403,{'error':'Foreign origin rejected'})
@@ -187,7 +221,7 @@ def make_handler(service,tasks=None):
             if not portal and not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),csrf):return self.json(403,{'error':'Invalid operator token','code':'STALE_CSRF'})
             try:
                 size=int(self.headers.get('Content-Length','0'))
-                if not 1<=size<=64000:raise ValueError('Request size must be 1–64,000 bytes')
+                if not 1<=size<=(8000000 if route=='wa_simulate' else 64000):raise ValueError('Request too large')
                 p=json.loads(self.rfile.read(size));key=self.headers.get('Idempotency-Key','')
                 if not isinstance(p,dict):raise ValueError('JSON object required')
                 if portal:
@@ -228,6 +262,8 @@ def make_handler(service,tasks=None):
                 if route in {'portal_issue','portal_revoke'}:return self.json(404,{'error':'This access action has been retired'})
                 if route=='tenant_feedback':raise ValueError('Tenant feedback requires tenant portal access')
                 p={**p,'_actor':user['id']}
+                if route in {'wa_simulate','wa_knowledge','wa_staff_reply','wa_property'}:
+                    result=service.command(route,p,key);tasks.whatsapp_pending();return self.json(200,result)
                 if route in {'learning_start','learning_improve'}:
                     result=service.command(route,p,key);tasks.learning(result['id'])
                     return self.json(200,result)

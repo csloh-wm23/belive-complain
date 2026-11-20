@@ -65,3 +65,6 @@
 .queue-filters select { margin: 4px 0; }
 .command-hero h2 { margin: 0 0 18px; }
 .entry-lane { min-height: 0; }
+
+/* Private passive-support workspace. */
+.wa-layout{grid-template-columns:minmax(210px,.65fr) minmax(0,1.7fr);align-items:start}#waThreads{display:grid;gap:8px}#waThreads button[aria-pressed=true]{background:#dcf8e9;border-color:#176b57}#waHistory{max-height:560px;overflow:auto;overflow-wrap:anywhere}#waEvidence details{padding:10px 0;border-bottom:1px solid #e3e8e3}#waKnowledge article{padding:18px 0;border-top:1px solid #e3e8e3}#waNotice:empty{display:none}@media(max-width:850px){.wa-layout{grid-template-columns:1fr}}

@@ -50,7 +50,7 @@ def _prompt_context(value):
     return redact(value) if isinstance(value, str) else value
 
 
-def generate(settings, messages, context, examples, schema):
+def generate(settings, messages, context, examples, schema, images=None):
     prompt = {'context': _prompt_context(context),
               'reviewed_examples': [{'id': item['id'], 'text': redact(item['text'])[:320]} for item in examples]}
     response_format = {'type': 'json_object'}
@@ -67,6 +67,10 @@ def generate(settings, messages, context, examples, schema):
         'response_format': response_format,
         'stream': False,
     }
+    if images:
+        content=[{'type':'text','text':json.dumps(prompt)}]
+        for item in images[:3]:content.append({'type':'image_url','image_url':{'url':item,'detail':'auto'}})
+        payload['messages'][1]['content']=content
     provider = settings.llm_provider
     if provider == 'openai':
         payload.update(reasoning_effort='none', max_completion_tokens=2500, service_tier='default', store=False)

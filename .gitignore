@@ -6,6 +6,7 @@ node_modules/
 .venv/
 artifacts/
 output/qa-python/
+output/whatsapp-*
 data/
 *.db
 *.db-*

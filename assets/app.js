@@ -24,7 +24,7 @@ async function request(route,p){
     return value;
 }
 async function run(route,p){if(busy)throw Error('Wait for the current operation.');busy=true;const locked=[...document.querySelectorAll('button,input,textarea,select')].filter(e=>!e.disabled);locked.forEach(e=>e.disabled=true);try{const value=await request(route,p);await refresh();notice('Saved.');return value;}finally{locked.forEach(e=>e.disabled=false);busy=false;}}
-function navigate(view){if(!document.querySelector(`[data-page="${CSS.escape(view)}"]`))view='overview';if(location.hash!=='#'+view)history.pushState(null,'','#'+view);document.querySelectorAll('[data-page]').forEach(e=>e.hidden=e.dataset.page!==view);document.querySelectorAll('[data-view]').forEach(e=>{e.classList.toggle('active',e.dataset.view===view);e.setAttribute('aria-current',e.dataset.view===view?'page':'false');});const names={overview:'Command center',cases:'Complaints',notifications:'Messages',sources:'Public reviews',memory:'Self-learning',settings:'AI & knowledge',database:'Data & backups',activity:'Reports & activity'};const nav=document.querySelector(`[data-view="${view}"]`);if(nav?.closest('details'))nav.closest('details').open=true;$('pageTitle').textContent=names[view];$('crumb').textContent=names[view];window.scrollTo(0,0);}
+function navigate(view){if(!document.querySelector(`[data-page="${CSS.escape(view)}"]`))view='overview';if(location.hash!=='#'+view)history.pushState(null,'','#'+view);document.querySelectorAll('[data-page]').forEach(e=>e.hidden=e.dataset.page!==view);document.querySelectorAll('[data-view]').forEach(e=>{e.classList.toggle('active',e.dataset.view===view);e.setAttribute('aria-current',e.dataset.view===view?'page':'false');});const names={whatsapp:'WhatsApp inbox',overview:'Command center',cases:'Complaints',notifications:'Messages',sources:'Public reviews',memory:'Self-learning',settings:'AI & knowledge',database:'Data & backups',activity:'Reports & activity'};const nav=document.querySelector(`[data-view="${view}"]`);if(nav?.closest('details'))nav.closest('details').open=true;$('pageTitle').textContent=names[view];$('crumb').textContent=names[view];window.scrollTo(0,0);}
 const level=c=>c.complaint_level||({LOW:'SIMPLE',MEDIUM:'MODERATE',HIGH:'HIGH',CRITICAL:'HIGH'}[c.severity]||'CHECKING');
 const side=c=>['GOOGLE','FACEBOOK','THREADS','MANUAL_PUBLIC'].includes(c.platform)?'Proactive discovery':'Reactive support';
 const pill=value=>`<span class="pill ${String(value).toLowerCase()}">${esc(labels[value]||value)}</span>`;
@@ -192,7 +192,7 @@ function openLinkedCase(){
 }
 let caseEdited=false;
 $('caseDetail').addEventListener('input',()=>{caseEdited=true;});
-function openCase(id){selected=id;renderDetail();$('caseDialog').showModal();}
+function openCase(id){const wa=data.whatsapp?.threads?.find(t=>t.case_id===id);if(wa){navigate('whatsapp');window.dispatchEvent(new CustomEvent('belive:whatsapp-open',{detail:wa.id}));return;}selected=id;renderDetail();$('caseDialog').showModal();}
 function assessmentPending(c,snapshot=data){
     return c && ((snapshot.tasks||[]).includes('ai-'+c.id) ||
         (!c.analysis&&!['HIGH','CRITICAL'].includes(c.severity)&&
