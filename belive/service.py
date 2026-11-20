@@ -91,7 +91,10 @@ class Service:
         try:
             self.ai.check();check.update(status='PASSED',detail='A real configured-provider response passed the connection schema check.')
         except Exception as exc:
-            check.update(status='FAILED',detail='AI_NOT_CONFIGURED' if str(exc)=='AI_NOT_CONFIGURED' else 'AI_CONNECTION_FAILED')
+            code = failure_code(exc)
+            detail = FAILURE_MESSAGES[code] if code.startswith('OPENROUTER_') else (
+                'AI_NOT_CONFIGURED' if code == 'AI_NOT_CONFIGURED' else 'AI_CONNECTION_FAILED')
+            check.update(status='FAILED', detail=detail)
         check['finished_at']=now()
         with self.store.connect() as db:self.store.put(db,'health',check);self.store.event(db,'ai','CONNECTION_CHECK_'+check['status'],check['detail'])
         return check

@@ -1,7 +1,10 @@
-"""Grouped support agents running in native Hermes with a read-only project allowlist."""
+"""Grouped support agents with validated output and bounded model context."""
 import json
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
+
+from belive import openrouter
 from belive.hermes_native import native_request, runtime_python
 from belive.store import bounded, redact, now
 from belive.workflow import complaint_level
@@ -13,6 +16,11 @@ COMPANY = ('BeLive Ventures / BeLive CoLiving, Malaysia, serves tenants with fur
 FAILURE_MESSAGES = {
     'AI_NOT_CONFIGURED':'Configure the AI provider and model, then retry. Staff review is required meanwhile.',
     'AI_FAILED_OR_INVALID':'The AI request failed or its response could not be validated. Staff review is required; no response was published.',
+    'OPENROUTER_KEY_REJECTED':'OpenRouter rejected the API key or its model permissions. Check BELIVE_AI_KEY and restart.',
+    'OPENROUTER_CREDITS_REQUIRED':'OpenRouter requires available credits for the configured key.',
+    'OPENROUTER_MODEL_UNAVAILABLE':'OpenRouter found no eligible endpoint for the configured model.',
+    'OPENROUTER_RATE_LIMITED':'The OpenRouter key or model is rate-limited. Retry later.',
+    'OPENROUTER_CONNECTION_FAILED':'BeLive could not complete the OpenRouter request. Check Internet access and provider status.',
     'AI_INVALID_JSON':'The AI did not return a valid JSON object. No assessment was accepted.',
     'AI_INVALID_SCHEMA':'The AI assessment did not match the required fields. No assessment was accepted.',
     'AI_INVALID_VALUES':'The AI assessment contained an invalid category, urgency or value. No assessment was accepted.',
@@ -49,12 +57,20 @@ class AgentFailure(ValueError):
 class SupportAI:
     def __init__(self,settings,home): self.settings,self.home=settings,Path(home)
     def readiness(self):
+        if self.settings.llm_provider == 'openrouter':
+            return bool(self.settings.llm_model and self.settings.llm_api_key)
         if self.settings.llm_provider == 'ollama':
             return bool(self.settings.llm_model)
         try: runtime_python()
         except RuntimeError: return False
         return bool(self.settings.llm_provider in {'openai','ollama'} and self.settings.llm_model and
                     (self.settings.llm_provider=='ollama' or self.settings.llm_api_key))
+    def _selects_evidence_field(self):
+        return self.settings.llm_provider == 'openrouter' or (
+            self.settings.llm_provider == 'ollama'
+            and urlsplit(self.settings.ollama_base_url).hostname in {'localhost', '127.0.0.1', '::1'}
+        )
+
     def generate(self,role,instruction,context,examples):
         from belive.relevance import LOCATION_POLICY
         instruction += '\n'+LOCATION_POLICY
@@ -83,8 +99,7 @@ class SupportAI:
                 'uncertainty':{'type':'boolean'},
                 'evidence':{'type':'string'},
             }
-            from urllib.parse import urlsplit
-            if self.settings.llm_provider=='ollama' and urlsplit(self.settings.ollama_base_url).hostname in {'localhost','127.0.0.1','::1'}:
+            if self._selects_evidence_field():
                 props['evidence']['enum'] = ['description','title']
             shape = {'type':'object','properties':props,'required':list(props),'additionalProperties':False}
         if role == 'Safety Review Agent':
@@ -118,41 +133,44 @@ class SupportAI:
                 'response':{'type':'string'},'needs_staff':{'type':'boolean'},
                 'topics':{'type':'array','items':{'type':'string','enum':list(context['guidance'])},'maxItems':3}},
                 'required':['response','needs_staff','topics'],'additionalProperties':False}
+        if role == 'public complaint triage assistant':
+            shape = {'type':'object','properties':{
+                'can_answer':{'type':'boolean'},
+                'topics':{'type':'array','maxItems':3,'items':{'type':'string','enum':list(context['topics'])}},
+            },'required':['can_answer','topics'],'additionalProperties':False}
+        if role == 'Connection Check' and self.settings.llm_provider == 'openrouter':
+            shape = {'type':'object','properties':{'ok':{'type':'boolean'}},
+                     'required':['ok'],'additionalProperties':False}
+        if self.settings.llm_provider == 'openrouter':
+            response = openrouter.generate(self.settings, messages, context, examples, shape)
+        else:
+            response = self._generate_runtime(role, messages, context, examples, shape, dispatch)
+        raw=response.get('text','').strip()
+        raw=re.sub(r'^```(?:json)?\s*|\s*```$','',raw)
+        result=json.loads(raw)
+        if not isinstance(result,dict): raise ValueError('AI_INVALID_JSON')
+        return result
+
+    def _generate_runtime(self, role, messages, context, examples, shape, dispatch):
         try:
             runtime_python()
         except RuntimeError:
             if self.settings.llm_provider != 'ollama':
                 raise
             from urllib.request import Request, urlopen
-            from urllib.parse import urlsplit
             endpoint = self.settings.ollama_base_url.rstrip('/')
             if urlsplit(endpoint).hostname not in {'127.0.0.1', 'localhost', '::1'}:
                 raise RuntimeError('AI_NOT_CONFIGURED')
             messages[1]['content'] = json.dumps({'context':context,'reviewed_examples':examples})
-            output_format = shape or 'json'
-            if role == 'public complaint triage assistant':
-                output_format = {
-                    'type':'object',
-                    'properties':{
-                        'can_answer':{'type':'boolean'},
-                        'topics':{'type':'array','maxItems':3,'items':{'type':'string','enum':list(context['topics'])}},
-                    },
-                    'required':['can_answer','topics'],
-                    'additionalProperties':False,
-                }
-            payload = {'model':self.settings.llm_model,'messages':messages,'stream':False,'format':output_format,'think':False}
-            if role in {'Learning Reply Agent','Safety Review Agent','Reply Feedback Learning Agent'}:payload['options']={'temperature':0}
+            payload = {'model':self.settings.llm_model,'messages':messages,'stream':False,'format':shape or 'json','think':False}
+            if role in {'Learning Reply Agent', 'Safety Review Agent', 'Reply Feedback Learning Agent'}:
+                payload['options'] = {'temperature': 0}
             request = Request(endpoint+'/api/chat',json.dumps(payload).encode(),{'Content-Type':'application/json'})
             with urlopen(request, timeout=90) as reply:
-                response = {'text':json.load(reply)['message']['content']}
-        else:
-            response=native_request(messages,self.settings,tools=TOOLS,dispatch=dispatch,
-              examples=[{'version_id':e['id'],'approved_reply':e['text']} for e in examples],home=self.home,max_steps=5,response_schema=shape)
-        raw=response.get('text','').strip()
-        raw=re.sub(r'^```(?:json)?\s*|\s*```$','',raw)
-        result=json.loads(raw)
-        if not isinstance(result,dict): raise ValueError('AI_INVALID_JSON')
-        return result
+                return {'text':json.load(reply)['message']['content']}
+        return native_request(messages,self.settings,tools=TOOLS,dispatch=dispatch,
+            examples=[{'version_id':e['id'],'approved_reply':e['text']} for e in examples],
+            home=self.home,max_steps=5,response_schema=shape)
     def public_reply_preview(self, context):
         high = context.get('complaint_level') == 'HIGH'
         if high:
@@ -401,11 +419,10 @@ class SupportAI:
         return result
 
     def _analyse(self,context,examples,generate):
-        from urllib.parse import urlsplit
-        local = self.settings.llm_provider == 'ollama' and urlsplit(self.settings.ollama_base_url).hostname in {'localhost','127.0.0.1','::1'}
+        selects_field = self._selects_evidence_field()
         evidence_format = (
             'evidence (exactly "description" or "title", choosing the field that supports your assessment). '
-            if local else 'evidence (an exact verbatim substring from case.title or case.description, preserving spelling and case). '
+            if selects_field else 'evidence (an exact verbatim substring from case.title or case.description, preserving spelling and case). '
         )
         triage_styles=[] if context.get('learning_practice') else [e for e in examples if not e.get('scope_category') and not e.get('public_question')][:5]
         triage_instruction = (
@@ -446,7 +463,7 @@ class SupportAI:
         else:
             raise ValueError('AI_INVALID_VALUES')
         a['summary']=bounded(a['summary'],1,1000)
-        if local and a['evidence'] in ('title','description'):
+        if selects_field and a['evidence'] in ('title','description'):
             evidence_field = a['evidence']
             a['evidence'] = context['case'].get(evidence_field, '')[:400]
         else:
@@ -538,6 +555,8 @@ class SupportAI:
             raise ValueError('AI_UNGROUNDED_GUIDANCE')
 
     def sync(self,examples):
+        if self.settings.llm_provider == 'openrouter':
+            raise ValueError('Hosted AI reads current reviewed replies automatically.')
         return native_request([],self.settings,mode='memory',home=self.home,
             examples=[{'version_id':e['id'],'approved_reply':e['text']} for e in examples])
 

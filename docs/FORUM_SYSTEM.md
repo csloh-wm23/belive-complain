@@ -31,7 +31,7 @@ No live action is simulated in the normal workflow. Test doubles live only in te
 
 ## FYP workflow, 2 November 2026
 
-Complaint Analysis Agent identifies COMPLAINT/ENQUIRY/NON_SUPPORT, relevance, topic, LOW/MEDIUM/HIGH/CRITICAL, exact evidence and uncertainty. The UI maps LOW to SIMPLE, MEDIUM to MODERATE and HIGH/CRITICAL to HIGH. Handover/uncertain cases cannot present as SIMPLE merely because a model returned LOW. The separate Support Response Agent retrieves up to eight current property knowledge entries and five current reviewed styles. A conditional Safety Review Agent separately checks adapted guidance. Actual role, status and timestamps are stored; these are logical agents using the configured native Hermes model with read-only tools.
+Complaint Analysis Agent identifies COMPLAINT/ENQUIRY/NON_SUPPORT, relevance, topic, LOW/MEDIUM/HIGH/CRITICAL, exact evidence and uncertainty. The UI maps LOW to SIMPLE, MEDIUM to MODERATE and HIGH/CRITICAL to HIGH. Handover/uncertain cases cannot present as SIMPLE merely because a model returned LOW. The separate Support Response Agent retrieves up to eight current property knowledge entries and five current reviewed styles. A conditional Safety Review Agent separately checks adapted guidance. Actual role, status and timestamps are stored; the same logical agents run with hosted Hermes through OpenRouter or with the native runtime and its read-only tools.
 
 **Only SIMPLE replies send automatically**, and only through the private verified tenant portal after knowledge/language/confidence/version/safety gates. MODERATE is always handed to staff, while safe AI assessment and a private draft reduce staff work. Physical/account/financial requests are queued immediately and may get background AI assistance; a LOW model result cannot lower this deterministic MODERATE floor. HIGH danger bypasses routine response generation. Unknown facts stay questions or require staff; Hermes never invents property facts when prior knowledge is missing.
 
@@ -149,7 +149,7 @@ The recovered copy revokes staff and customer browser sessions, pauses source re
 
 ## Real connection checks and evaluation
 
-The admin connection test runs a genuine configured-provider probe through native Hermes, with neutral context and a separate isolated check-memory directory. Only a valid actual response records success; missing configuration/failures are reported. A prior successful check is dated evidence, not continuous provider health.
+The admin connection test runs a genuine probe against the configured model using neutral context. Hosted Hermes 4 405B uses OpenRouter with the company key and does not need a local model or native worker. Native providers use the separate isolated check-memory directory. BeLive selects and passes the current reviewed examples on each hosted call. Case prompts omit internal tenant and property identifiers where possible, mask recognized email addresses and long numbers, and request zero-data-retention routing. Only a valid response records success. The dashboard shows the latest result for the current provider and model.
 
 `evals/tenant_support.json` contains 24 clearly fictional English/Malay/Chinese cases. `scripts/evaluate_ai.py` makes no provider calls unless explicitly invoked with `--run-live`. Live evaluation uses a temporary database, captures schema/category/handover results and requires human review for factual and language quality. It does not insert examples into the normal workflow or claim a measured score without a run.
 

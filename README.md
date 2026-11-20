@@ -2,7 +2,7 @@
 
 An independent prototype for **BeLive Ventures / BeLive CoLiving, Malaysia**, covering **existing-tenant enquiries and complaints only**. It reuses the earlier project's workflow and UI concepts in a separate application, database and memory store. Move-in/out arrangements, inspections, random PIC assignment, owner support, marketing and sales are outside the current scope.
 
-This version has a Python/SQLite backend, native Hermes integration, tenant-scoped portal access and configurable connectors. It starts with an empty database. Fictional records are confined to tests, the opt-in evaluation set and an explicitly enabled demo tenant. Normal AI output always uses the configured real model; test doubles exist only in automated tests.
+This version has a Python/SQLite backend, hosted Hermes or native Hermes integration, tenant-scoped portal access and configurable connectors. It starts with an empty database. Fictional records are confined to tests, the opt-in evaluation set and an explicitly enabled demo tenant. Normal AI output always uses the configured real model; test doubles exist only in automated tests.
 
 ## New here?
 
@@ -15,7 +15,7 @@ The simplified workspace has two ways for a complaint to enter the same queue:
 - **Proactive discovery:** scheduled checks of explicitly authorised public sources can identify likely complaints and escalate urgent risks.
 - **Reactive support:** tenants or staff submit a private question or complaint through the local support flow.
 
-Four logical Hermes roles describe the end-to-end workflow: **Complaint Manager**, **External Monitoring**, **Investigation & Resolution**, and **Follow-up & Escalation**. They share verified knowledge, case history and a controlled self-learning loop; they are not four separate servers. Native model calls still record their actual analysis, response and conditional safety-review stages, while monitoring and follow-up use bounded scheduled tools and deterministic safety rules.
+Four logical support roles describe the end-to-end workflow: **Complaint Manager**, **External Monitoring**, **Investigation & Resolution**, and **Follow-up & Escalation**. They share verified knowledge, case history and a controlled self-learning loop; they are not four separate servers. Model calls record their actual analysis, response and conditional safety-review stages, while monitoring and follow-up use bounded scheduled tools and deterministic safety rules.
 
 Only **SIMPLE** private replies can send automatically. **MODERATE** gets AI assistance first but remains with staff for review and sending. **HIGH** goes directly to staff; immediate danger is screened before routine AI. Missing knowledge, failed checks and uncertainty go to staff.
 
@@ -29,7 +29,7 @@ Use Python 3.11 or newer. Double-click **Run BeLive Prototype.bat**, or run:
 python server.py
 ```
 
-Open [the local dashboard](http://127.0.0.1:8877). The launcher starts the backend automatically in its own Python window. Keep that window open for scheduled checks; press Ctrl+C once to stop. The batch launcher exits after opening Python, so it does not show an additional “Terminate batch job” prompt. The server listens only on `127.0.0.1`. No pip packages are needed for the dashboard or deterministic workflows. AI requires a separately installed native Hermes runtime and a configured model.
+Open [the local dashboard](http://127.0.0.1:8877). The launcher starts the backend automatically in its own Python window. Keep that window open for scheduled checks; press Ctrl+C once to stop. The batch launcher exits after opening Python, so it does not show an additional “Terminate batch job” prompt. The server listens only on `127.0.0.1`. No pip packages are needed for the dashboard or deterministic workflows. For hosted Hermes, set a company OpenRouter key in the local .env file. Native Hermes and local Ollama remain available.
 
 On the first launch for a database, create your own administrator account in the dashboard. There is no default password. Admins can create Support accounts under **Setup & knowledge**. Operator accounts belong to that database, so selecting a new empty database starts a new setup.
 
@@ -73,7 +73,7 @@ Staff sees the same case in **Cases**, with actual agent activity, complaint lev
 
 ## Real AI connection and evaluation
 
-Configure this project's `.env`, restart and use **Test AI connection** under **Setup & knowledge**. The test sends a neutral prompt with no tenant records and requires a genuine schema-valid provider response. Provider charges may apply. Its saved outcome distinguishes `RUNNING`, `PASSED` and `FAILED`; configuration presence alone is not a successful check.
+Configure this project's `.env`, restart and use **Test AI connection** under **AI & knowledge**. The test sends a neutral prompt with no tenant records and requires a genuine schema-valid provider response. Provider charges may apply. Its saved outcome distinguishes `RUNNING`, `PASSED` and `FAILED`; configuration presence alone is not a successful check.
 
 The separate evaluation set contains 24 fictional cases: eight each in English, Malay and Chinese. Inspect it without calling a provider:
 
@@ -97,6 +97,7 @@ Copy `.env.example` to `.env` in **this** project, fill only the required settin
 
 | Integration | Implemented | Still needed for live use |
 |---|---|---|
+| Hosted Hermes | Hermes 4 405B through OpenRouter, with the same BeLive agent stages and reviewed lessons | Company OpenRouter key, credits, Internet access and a successful connection check |
 | Native Hermes | Bounded `AIAgent` loop; triage and investigation/response stages; two read-only tools | Hermes on PATH, an OpenAI-compatible configured model through the supported OpenAI/Ollama options, provider credentials when required; validation of your own connection and broader support quality |
 | MemoryStore | Isolated current-feedback projection; persistence and revocation tested against installed Hermes | Operator-reviewed, redacted examples |
 | Google reviews | Selected authorised Business Profile location; at most 25 recent text reviews | Company-authorised API access/token and live verification |
@@ -104,7 +105,7 @@ Copy `.env.example` to `.env` in **this** project, fill only the required settin
 | Notification gateway | HTTPS, HMAC signature, explicit approval, idempotency key and confirmed receipt contract | A company-owned gateway that resolves internal recipients, sends through approved channels and implements the documented receipt contract |
 | Company records | Staff-entered verified records | Actual property support guidance and tenancy evidence; no Spacify API connection is assumed |
 
-`Native Hermes configured` checks local prerequisites; it does not prove a successful provider call. Real Ollama Cloud calls were made for the documented fictional-data smoke test. No live company messages, public posts or company API reads were made during validation.
+**AI configured** reports that model settings are present. **Test AI connection** verifies the selected provider. Real Ollama Cloud calls were made for the documented fictional-data smoke test. No live company messages, public posts or company API reads were made during validation.
 
 The application remains a local prototype listening only on loopback. It now has Admin/Support login, hashed passwords, expiring operator sessions, account deactivation and tenant-key revocation. Production hosting still requires a deployment design, TLS, stronger tenant identity verification, operational monitoring and agreed retention rules. A public GitHub repository does not host the running portal.
 
@@ -129,7 +130,7 @@ python -m unittest discover -s tests -p "test_*.py" -v
 # Equivalent: npm test
 ```
 
-There are 113 backend/HTTP/native-memory/database/automation checks. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
+The suite covers the backend, HTTP, AI providers, native memory, database and automation. The native-memory test skips if Hermes is absent and never calls a model. Tests use temporary databases and fictional records. Browser QA requires Playwright plus installed Chrome:
 
 ```sh
 python -m pip install -r requirements-dev.txt

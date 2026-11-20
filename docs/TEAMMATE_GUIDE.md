@@ -65,6 +65,6 @@ These numbers are **format examples**, not connected BeLive resources. Ask the a
 
 ## 5. Three quick fixes
 
-- **AI hands over to staff:** Configure the project's model/Hermes connection, restart and use **Test AI connection**. A real test may use provider credits. Staff handling works without AI.
+- **AI hands over to staff:** Follow the [AI key setup](AI_KEY_SETUP.md), restart and use **Test AI connection**. A real test may use provider credits. Staff handling works without AI.
 - **Tenant sees no reply:** Save the reviewed draft, confirm it and publish it to the portal. Internal notes and unsent drafts stay private.
 - **Records seem gone:** Check the active path in **Database & records** and reopen the original database. A new database is a separate workspace.
