@@ -29,11 +29,9 @@ def available_guides(service,db):
 
 
 def scenarios(service,db):
-    guides = available_guides(service,db)
     return [
         {'category':category,'label':label,'question':question}
         for category,(label,question) in SCENARIOS.items()
-        if category in guides
     ]
 
 def score(text):
@@ -44,6 +42,12 @@ def score(text):
     return {'checks':checks,'passed':sum(checks.values()),'total':len(checks),'word_count':len(text.split())}
 
 def command(service,db,name,p):
+    from belive import experience_learning
+    if name=='learning_start' and p.get('mode','experience') not in {'experience','style_legacy'}:raise ValueError('Choose the approved experience comparison')
+    if name=='learning_start' and p.get('mode','experience')=='experience':
+        return experience_learning.command(service,db,name,p)
+    if name=='learning_improve' and service.store.get(db,'learning_run',p.get('id')).get('mode')=='experience':
+        return experience_learning.command(service,db,name,p)
     if name=='lesson_revoke':
         item=service.store.get(db,'learned_style',p.get('id'));item['active']=False
         service.store.put(db,'learned_style',item);service.store.event(db,item['id'],'LESSON_REVOKED','Excluded from future replies')
@@ -79,6 +83,10 @@ def command(service,db,name,p):
     return {'id':item['id'],'status':item['status']}
 
 def execute(service,run_id):
+    from belive import experience_learning
+    with service.store.connect() as db:
+        experience_mode=service.store.get(db,'learning_run',run_id).get('mode')=='experience'
+    if experience_mode:return experience_learning.execute(service,run_id)
     with service.lock,service.store.connect() as db:
         run=service.store.get(db,'learning_run',run_id)
         if run['status'] not in {'BASELINE_QUEUED','IMPROVED_QUEUED'}:return

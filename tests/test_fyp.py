@@ -26,7 +26,10 @@ class FypTests(unittest.TestCase):
         self.cmd('demo_prepare',{'confirmed':True});self.cmd('automation_settings',{'enabled':True})
         self.token=demo.session(self.s)['token']
     def tearDown(self):self.tmp.cleanup()
-    def cmd(self,name,p,key=None):return self.s.command(name,p,key or secrets.token_hex(12))
+    def cmd(self,name,p,key=None):
+        # Retain regression coverage for saved legacy writing-format comparisons.
+        if name=='learning_start':p={'mode':'style_legacy',**p}
+        return self.s.command(name,p,key or secrets.token_hex(12))
     def intake(self,text='How do I report a Wi-Fi connection problem?'):
         return self.s.portal_submit(self.token,{'title':'Wi-Fi support','description':text},secrets.token_hex(12))
     def current(self,c):

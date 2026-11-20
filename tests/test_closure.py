@@ -85,6 +85,28 @@ class InactivityClosureTests(unittest.TestCase):
         with self.s.store.connect() as db:self.s.store.put(db,'workorder',dict(id='WO-QA',case_id=self.cid,status='OPEN'))
         self.tick_at(since+timedelta(days=20));self.assertEqual(self.current()['status'],'FOLLOW_UP')
 
+    def test_staff_followup_preserves_owner_and_pauses_customer_timeout(self):
+        since=self.start_wait()
+        self.action('staff_followup',note='Staff is investigating further; inspect the connection tomorrow.')
+        c=self.current()
+        self.assertTrue(c['staff_followup']);self.assertEqual(c['owner'],'QA staff')
+        self.assertFalse(c.get('waiting_since'));self.assertFalse(c['followup_due'])
+        self.tick_at(since+timedelta(days=30))
+        self.assertEqual(self.current()['status'],'FOLLOW_UP')
+        self.assertIsNone(self.s.portal(self.code)['cases'][0]['auto_close_at'])
+        self.action('followup',note='Further work completed and checked; customer confirmation requested.')
+        self.assertFalse(self.current().get('staff_followup'))
+        self.assertTrue(self.current()['waiting_since'])
+
+    def test_verified_outcome_can_return_to_followup_without_being_closed(self):
+        self.start_wait()
+        self.s.portal_feedback(self.code,dict(id=self.cid,resolved=True),secrets.token_hex(16))
+        self.action('verify',note='Staff checked the initial customer confirmation.',confirmed=True)
+        self.action('staff_followup',note='Further investigation is needed before closing this case.')
+        self.assertEqual(self.current()['status'],'FOLLOW_UP')
+        self.assertFalse(self.current()['verification'])
+        self.assertFalse(self.current().get('tenant_resolution'))
+
     def test_wait_period_saved_and_validated(self):
         for days in (0,91,True,'7'):
             with self.assertRaises(ValueError):self.s.command('closure_settings',dict(days=days),secrets.token_hex(16))

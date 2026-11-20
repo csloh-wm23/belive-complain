@@ -12,12 +12,12 @@ from belive.store import bounded,now
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):return None
 
-def request_json(url,token='',payload=None,headers=None):
+def request_json(url,token='',payload=None,headers=None,method=None):
     request_headers={'Accept':'application/json',**(headers or {})}
     if token:request_headers['Authorization']='Bearer '+token
     body=None if payload is None else json.dumps(payload).encode()
     if body is not None:request_headers['Content-Type']='application/json'
-    with build_opener(NoRedirect).open(Request(url,data=body,headers=request_headers),timeout=20) as response:
+    with build_opener(NoRedirect).open(Request(url,data=body,headers=request_headers,method=method),timeout=20) as response:
         data=response.read(1_000_001)
         if len(data)>1_000_000:raise ValueError('RESPONSE_TOO_LARGE')
         return json.loads(data) if data else {}

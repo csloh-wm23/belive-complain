@@ -19,6 +19,7 @@ COMMANDS = {'routing_settings','lesson_revoke','demo_prepare','demo_settings','l
 NOTIFICATION_KINDS = {'STAFF_ALERT','TENANT_RESPONSE','STAFF_WORK_ORDER','ACK_TIMEOUT','TENANT_FOLLOWUP'}
 COMMANDS.add('source_schedule')
 COMMANDS.add('closure_settings')
+COMMANDS.update({'reply_learning_scan','reply_learning_action'})
 
 PROPERTY_DIRECTORY = Path(__file__).resolve().parents[1] / 'assets' / 'property-directory.json'
 
@@ -68,11 +69,17 @@ class Service:
                 if item['status'] in {'BASELINE_QUEUED','BASELINE_RUNNING','IMPROVED_QUEUED','IMPROVED_RUNNING'}:
                     item.update(status='INTERRUPTED',error='The app restarted before the comparison completed')
                     self.store.put(db,'learning_run',item)
+            for item in self.store.all(db,'reply_learning'):
+                if item['status'] in {'ANALYSING','REVIEWING'}:
+                    item.update(status='FAILED',approved=False,error='Interrupted; analyse or review again')
+                if item.get('preview_status')=='RUNNING':item['preview_status']='FAILED'
+                self.store.put(db,'reply_learning',item)
     def context(self,db,c):
         from belive.conversations import conversation
         context={'case':{k:c[k] for k in ('title','description','category','severity')},'verified_records':[],
                  'condo_rules':None,'property_version':None,'tenant_verified':bool(c['tenant_id']),
                  'conversation':conversation(self.store,db,c)[-12:]}
+        context['reported_location']=c.get('reported_location')
         if c['tenant_id']:
             t=self.store.get(db,'tenant',c['tenant_id']);condo=support_condo(self.store.get(db,'condo',t['condo_id']))
             context['condo_rules']=condo['rules'] or None;context['property_version']={'id':condo['id'],'version':condo['version']}
@@ -94,9 +101,17 @@ class Service:
         cases={c['id']:c for c in self.store.all(db,'case')}
         examples=[f for f in latest.values() if f['verdict'] in {'APPROVED','CORRECTED'} and
                 cases.get(f['case_id'],{}).get('status')=='CLOSED' and cases[f['case_id']].get('closure_reason')!='CUSTOMER_INACTIVE' and cases[f['case_id']].get('category') in CATEGORIES and (not shared or f.get('share'))]
+        from belive.relevance import sample_case
+        examples=[{**f,'sample_data':sample_case(cases[f['case_id']]),'provenance':'Sample / test complaint experience' if sample_case(cases[f['case_id']]) else 'Staff-approved complaint experience'} for f in examples]
         if condo_id and not shared:
             examples += [{**x,'scope_category':x.get('scope_category','WIFI')}
                          for x in self.store.all(db,'learned_style') if x.get('active') and x.get('scope_condo')==condo_id]
+        if not shared:
+            from belive.relevance import domains
+            examples += [{'id':x['id'],'text':x['tip'],'verdict':'CORRECTED','scope_category':None,
+                          'public_question':x['question'],'general_scope':x['category']=='OTHER' and not domains(x['question']),
+                          'writing_tip':True,'at':x['at'],'sample_data':x.get('sample_data',False),'case_id':x['case_id']}
+                         for x in self.store.all(db,'reply_learning') if x.get('approved') and x['status']=='APPROVED' and x.get('scope_condo')==condo_id]
         return sorted(examples,key=lambda x:x.get('at',''),reverse=True)
     def public_lessons(self,db):
         lessons={}
@@ -141,9 +156,12 @@ class Service:
             result['closure_policy']=closure.policy(self.store,db)
             for case in result['cases']:
                 case['auto_close_at']=closure.deadline(case,result['closure_policy']['days']) if closure.waiting(case) else None
+                if case['platform']=='GOOGLE':
+                    from belive.google_replies import readiness
+                    case['google_posting']=readiness(self.store,db,case)
             result['answers']=[{**a,'history':self.store.history(db,'answer',a['id'])} for a in self.store.all(db,'answer')]
             result['backups']=self.store.all(db,'backup');result['health']=self.store.all(db,'health')
-            result['examples']=self.styles(db);result['audit']=self.store.audit(db)
+            result['examples']=[x for x in self.styles(db) if not x.get('writing_tip')];result['audit']=self.store.audit(db)
             active_public=self.public_lessons(db)
             usage={lesson_id:set() for lesson_id in active_public}
             latest={}
@@ -161,7 +179,16 @@ class Service:
             from belive import demo,learning
             result['demo']=demo.info(self,db)
             result['learning_runs']=[learning.public(x) for x in self.store.all(db,'learning_run')][:10]
-            result['learning_lesson']=learning.LESSON
+            result['learning_lesson']=''
+            from belive.experience_learning import experiences
+            result['learning_experiences']=experiences(self,db)
+            result['reply_learning']=self.store.all(db,'reply_learning')[:60]
+            usages=self.store.all(db,'reply_tip_usage')
+            signals=self.store.all(db,'reply_learning')
+            for item in result['reply_learning']:
+                matched=[u for u in usages if item['id'] in u['tip_ids']]
+                item['provided_count']=len(matched)
+                item['negative_after_use']=sum(any(s['case_id']==u['case_id'] and s['reply_id']==u['reply_id'] for s in signals) for u in matched)
             result['learning_scenarios']=learning.scenarios(self,db)
             result['learned_styles']=self.store.all(db,'learned_style')
             result['readiness']={'ai':self.ai.readiness(),'scheduler':True,'provider':self.settings.llm_provider,'model':self.settings.llm_model}
@@ -202,6 +229,7 @@ class Service:
         self.store.event(db,entity,'NOTIFICATION_QUEUED',kind+'; no external message sent')
         return item
     def handoff(self,db,c,reason):
+        c.pop('staff_followup',None)
         c.pop('waiting_since',None);c.pop('closure_reason',None)
         c.update(status='HUMAN_REVIEW',handoff=True,review_reason=reason,next_action='Staff assessment required',action_due=None,followup_due=None,ack_due=due(self.settings.acknowledgement_minutes),escalation=0)
         from belive.routing import destination
@@ -267,6 +295,9 @@ class Service:
             db.execute('INSERT INTO requests VALUES(?,?)',(key,json.dumps({'fingerprint':fingerprint,'result':cached})))
             return result
     def _command(self,db,name,p):
+        if name in {'reply_learning_scan','reply_learning_action'}:
+            from belive.reply_learning import command
+            return command(self,db,name,p)
         if name=='routing_settings':
             from belive.routing import save
             return save(self,db,p)
@@ -372,6 +403,8 @@ class Service:
                 c['followup_due']=None
                 c['next_action']='Staff review customer confirmation and close the case'
             c['revision']+=1;c['updated_at']=now();self.store.put(db,'case',c)
+            from belive.reply_learning import discover
+            discover(self,db,c['id'])
             self.store.event(db,c['id'],'TENANT_RESOLUTION_FEEDBACK',note);return {'saved':True}
         if name=='portal_revoke':
             tenant=self.store.get(db,'tenant',p.get('tenant_id'))
@@ -444,10 +477,12 @@ class Service:
             c['tenant_id']=t['id']
             if status=='AWAITING_CONTACT':c['status']='AI_PENDING'
         elif action=='acknowledge':
-            require(status in {'HUMAN_REVIEW','AI_PENDING','AWAITING_CONTACT'} or (status=='FOLLOW_UP' and c.get('automatic_answer')),'Case is not waiting for acknowledgement')
+            require(status in {'HUMAN_REVIEW','AI_PENDING','AWAITING_CONTACT'} or (status=='FOLLOW_UP' and (c.get('automatic_answer') or c.get('staff_followup'))),'Case is not waiting for acknowledgement')
+            c.pop('staff_followup',None)
             c['owner']=bounded(p.get('owner'),2,80);c['owner_id']=p.get('_actor','');c['ack_due']=None;c['status']='IN_PROGRESS';note='Staff accepted ownership'
         elif action=='draft':
             require(status not in {'CLOSED','SKIPPED','ANSWERED'},'Reopen the case before editing');c['draft']=bounded(note,1,2500)
+            c.pop('draft_tip_ids',None)
         elif action=='queue_response':
             require(status not in {'CLOSED','SKIPPED','ANSWERED'} and bool(c['draft']),'A reviewed draft is required')
             require(bool(c['tenant_id']),'Verify/link the tenant before queuing a private response')
@@ -472,6 +507,9 @@ class Service:
                     outcome['ai_drafts_unchanged'] = outcome.get('ai_drafts_unchanged',0)+int(original==c['draft'])
             c.pop('ai_draft_original',None)
             post(self.store,db,c,'SUPPORT',c['draft'],message_key)
+            from belive.reply_learning import usage
+            tips=[x for x in self.store.all(db,'reply_learning') if x['id'] in c.get('draft_tip_ids',[]) and x.get('approved')]
+            usage(self,db,c,message_id,tips)
             if c['status']=='FOLLOW_UP':c['waiting_since']=now()
             note='Reviewed response published to the tenant portal; no external gateway delivery claimed'
         elif action=='assess':
@@ -499,8 +537,17 @@ class Service:
             w=self.store.get(db,'workorder',p.get('workorder_id'))
             require(w['case_id']==c['id'] and w['status']=='OPEN','Open work order for this case required')
             w['evidence']=bounded(note,8,2000);w['status']='COMPLETED';self.store.put(db,'workorder',w)
+        elif action=='staff_followup':
+            require(status in {'IN_PROGRESS','FOLLOW_UP','VERIFIED'} and c.get('owner'),'Take ownership before continuing staff follow-up')
+            note=bounded(note,8,2000)
+            deadline=p.get('due_at') or due(1440)
+            date=datetime.fromisoformat(deadline)
+            require(date.tzinfo is not None and date>datetime.now(timezone.utc),'Choose a future deadline with timezone')
+            c.update(status='FOLLOW_UP',staff_followup=True,next_action=note,action_due=date.astimezone(timezone.utc).isoformat(),followup_due=None,verification='')
+            c.pop('waiting_since',None);c.pop('tenant_resolution',None)
         elif action=='followup':
-            require(status in {'IN_PROGRESS','AI_PENDING'},'Staff handling or a prepared AI response is required')
+            require(status in {'IN_PROGRESS','AI_PENDING'} or (status=='FOLLOW_UP' and c.get('staff_followup')),'Staff handling or a prepared AI response is required')
+            c.pop('staff_followup',None)
             require(c['tenant_id'] or self.has_complaint_access(db,c),'There is no private conversation for this case. Ask the customer to submit through Make a complaint first.')
             note=bounded(note,8,2000)
             c['action_due']=None;c['status']='FOLLOW_UP';c['followup_due']=due(self.settings.followup_minutes);c['followup_count']=0
@@ -513,7 +560,7 @@ class Service:
             require(status=='FOLLOW_UP','Only follow-up cases can be reassessed');note=bounded(note,8,2000);self.handoff(db,c,note)
         elif action in {'verify','verify_close','verify_staff_close'}:
             if action=='verify_staff_close':
-                require(status=='IN_PROGRESS','Take ownership before recording verified closure')
+                require(status=='IN_PROGRESS' or (status=='FOLLOW_UP' and c.get('staff_followup')),'Take ownership before recording verified closure')
                 require(not c['tenant_id'] and not self.has_complaint_access(db,c,browser_only=True),
                         'Ask the customer to confirm the outcome in their private conversation')
             else:
@@ -607,7 +654,11 @@ class Service:
             condo_id=self.store.get(db,'tenant',c['tenant_id'])['condo_id'] if c['tenant_id'] else None
             examples=self.styles(db,condo_id=condo_id);revision=c['revision'];job={'id':uid('AI'),'case_id':c['id'],'status':'RUNNING','at':now()}
             public_source=c.get('entrypoint')=='PUBLIC_SOURCE' and not c['tenant_id']
-            lessons=self.public_lessons(db) if c.get('entrypoint') in {'TENANT_WEBSITE','PUBLIC_SOURCE'} and not c['tenant_id'] else {}
+            from belive.relevance import select
+            question=c.get('public_guidance_turn',{}).get('text',c['description'])
+            from belive.reply_learning import matching
+            writing_tips=matching(self,db,question,condo_id)
+            lessons=select(question,self.public_lessons(db)) if c.get('entrypoint') in {'TENANT_WEBSITE','PUBLIC_SOURCE'} and not c['tenant_id'] else {}
             assisted_staff=bool(c.get('ai_assistance_pending') and c['status']=='HUMAN_REVIEW')
             self.store.put(db,'job',job)
         public_reply=''
@@ -633,7 +684,7 @@ class Service:
             try:
                 composer=getattr(self.ai,'conversational_reply',None)
                 if composer and not public_source:
-                    public_reply,topics=composer(context['conversation'],question,lessons)
+                    public_reply,topics=composer(context['conversation'],question,lessons,known_location=c.get('reported_location'),writing_tips=writing_tips)
                     decision={'can_answer':bool(public_reply),'topics':topics}
                 else:
                     decision=classify_public(c['title'],question,c['description'] if public_turn else None,lessons)
@@ -650,7 +701,7 @@ class Service:
             db.execute('BEGIN IMMEDIATE')
             current=self.store.get(db,'case',case_id)
             if (current['revision']!=revision or self.styles(db,condo_id=condo_id)!=examples or self.context(db,current)!=context
-                    or (public_reply and self.public_lessons(db)!=lessons)):
+                    or (public_reply and select(question,self.public_lessons(db))!=lessons)):
                 job['status']='STALE';job['error']='Case or reviewed guidance changed during AI work; result not applied'
             else:
                 if public_reply:
@@ -662,6 +713,8 @@ class Service:
                         self.store.event(db,case_id,'PUBLIC_GUIDANCE_PREPARED','Draft prepared locally; no external reply sent')
                     else:
                         automation.publish_public_guidance(self.store,db,current,public_reply,'AI_SUPPORT',public_turn['id'] if public_turn else 'initial')
+                        from belive.reply_learning import usage
+                        usage(self,db,current,current.get('automatic_answer',{}).get('message_id'),writing_tips)
                     used=[topic for topic in decision['topics'] if topic in lessons]
                     if used:self.store.event(db,case_id,'PUBLIC_LESSON_USED',', '.join(used))
                 elif public_turn:
@@ -682,12 +735,15 @@ class Service:
                     else:current['status']='AI_PENDING' if current['tenant_id'] else 'AWAITING_CONTACT'
                     if result.get('response'):
                         current['draft']=result['response']
+                        current['draft_tip_ids']=[x['id'] for x in writing_tips]
                         current['ai_draft_original']=result['response']
                     if assisted_staff:
                         current.update(status='HUMAN_REVIEW',handoff=True,next_action='Review the AI assessment and proposed response before replying')
                     else:automation.apply_result(self,db,current,result,context)
                     if current.get('automatic_answer') and current['status']=='FOLLOW_UP':
                         current.pop('ai_draft_original',None)
+                        from belive.reply_learning import usage
+                        usage(self,db,current,current['automatic_answer'].get('message_id'),writing_tips)
                     job['agent_trace']=result.get('agent_trace',[])
                 current['ai_assistance_pending']=False
                 current.pop('public_guidance_turn',None)
@@ -698,6 +754,8 @@ class Service:
     def tick(self):
         with self.lock,self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
+            from belive.reply_learning import discover
+            discover(self,db)
             moment=now()
             for c in self.store.all(db,'case'):
                 changed=False
@@ -710,7 +768,7 @@ class Service:
                     had_wait=c.get('waiting_since')
                     closed=closure.tick(self,db,c,moment)
                     changed=changed or closed or not had_wait
-                if c['status']=='FOLLOW_UP' and c.get('followup_due') and c['followup_due']<=moment and not c.get('tenant_resolution',{}).get('resolved'):
+                if c['status']=='FOLLOW_UP' and not c.get('staff_followup') and c.get('followup_due') and c['followup_due']<=moment and not c.get('tenant_resolution',{}).get('resolved'):
                     n=c.get('followup_count',0)+1;c['followup_count']=n
                     if c.get('automatic_answer') and not c.get('owner'):
                         if not closure.waiting(c) and (n>=2 or not automation.policy(self.store,db)['enabled']):
@@ -771,9 +829,9 @@ class Service:
         email=address(p.get('email',''))
         payload={'title':p.get('title'),'description':p.get('description'),'platform':'INTERNAL','entrypoint':'TENANT_WEBSITE'}
         # Older clients may still send complaints without location fields.
-        if 'rental_property' in p or 'rental_unit' in p:
+        if p.get('rental_property') or p.get('rental_unit'):
             payload['reported_location']={
-                'property':bounded(p.get('rental_property'),2,120),
+                'property':bounded(p.get('rental_property',''),0,120),
                 'unit':bounded(p.get('rental_unit',''),0,60)
             }
         request=['website_complaint',payload]
@@ -881,6 +939,7 @@ class Service:
                 case['ai_assistance_pending']=bool(full.get('ai_assistance_pending'))
                 case['ai_draft_ready']=bool(full['status']=='HUMAN_REVIEW' and full.get('analysis') and full.get('draft'))
                 case['closure_reason']=full.get('closure_reason','')
+                case['staff_followup']=bool(full.get('staff_followup'))
                 case['auto_close_at']=closure.deadline(full,closure.policy(self.store,db)['days']) if closure.waiting(full) else None
             if 'case_ids' in item:
                 return {'tenant_id':'','cases':cases,'property_name':'BeLive complaints','unit_ref':'',
@@ -912,6 +971,8 @@ class Service:
                 saved=json.loads(old[0]);require(saved['fingerprint']==fingerprint,'Idempotency mismatch');return saved['result']
             from belive.conversations import post
             message=post(self.store,db,c,'TENANT',note,'update-'+key)
+            from belive.reply_learning import discover
+            discover(self,db,c['id'])
             if c['status']=='CLOSED':
                 self.record_reopen(db,c)
                 c.pop('closed_at',None);c.pop('closure_reason',None);c.pop('waiting_since',None)

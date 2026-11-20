@@ -19,7 +19,7 @@ Four logical Hermes roles describe the end-to-end workflow: **Complaint Manager*
 
 Only **SIMPLE** private replies can send automatically. **MODERATE** gets AI assistance first but remains with staff for review and sending. **HIGH** goes directly to staff; immediate danger is screened before routine AI. Missing knowledge, failed checks and uncertainty go to staff.
 
-Daily work is organised under **Command center**, **Complaints**, and **Self-learning**. Less frequent AI, knowledge, monitoring, account and database controls are grouped under **System setup**. Self-learning accepts only reviewed outcomes from verified closed cases; rejection or reopening revokes reuse. The optional Learning Lab compares real replies before and after an approved writing lesson. See [knowledge and automation](docs/AI_KNOWLEDGE_AND_AUTOMATION.md).
+Daily work is organised under **Command center**, **Complaints**, and **Self-learning**. Less frequent AI, knowledge, monitoring, account and database controls are grouped under **System setup**. Self-learning compares the same actual question without and with a relevant approved complaint experience, displaying its source and sample provenance. No matching experience means no second lesson is invented. Rejection, source changes or reopening prevent reuse. Older formatting-only comparisons remain labelled as legacy sample writing tips. See [the current walkthrough](docs/COMPLAINT_STEPS_ZH.md).
 
 ## Run locally
 

@@ -45,6 +45,7 @@ def main():
                 expect(staff.locator('#closureStatus')).to_contain_text('7 days')
                 customer.goto(url + '/portal?view=make')
                 form = customer.locator('#websiteComplaint')
+                customer.locator('#complaintLocation > summary').click()
                 form.locator('[name=rental_property]').fill('QA Fictional Residence')
                 form.locator('[name=title]').fill('QA electrical repair workflow')
                 form.locator('[name=description]').fill('Smoke and sparks from a socket in the shared laundry room. Fictional QA test.')
@@ -168,9 +169,29 @@ def main():
                     'description':'A shared washing machine broke down at a fictional property.',
                     'public_url':'https://www.google.com/maps/place/Fictional+Residence'
                 },'browser-public-close-fixture')
+                service.command('case_action',dict(id=public['id'],revision=public['revision'],action='draft',note='We are sorry about the washing machine problem. Please contact BeLive privately with your location.'),'browser-public-draft-fixture')
                 staff.goto(url + '/?case=' + public['id'])
                 staff.get_by_role('button', name='Take ownership', exact=True).click()
                 expect(staff.locator('#caseDetail .case-tags')).to_contain_text('Staff handling')
+                staff.locator('#caseNote').fill('Maintenance is investigating; inspect the washer again tomorrow.')
+                staff.get_by_role('button',name='Continue follow-up',exact=True).click()
+                expect(staff.locator('#caseDetail .case-tags')).to_contain_text('Follow-up')
+                expect(staff.locator('.case-next-step')).to_contain_text('Staff follow-up is still open')
+                assert staff.locator('#caseResolutionConfirmed').count()==1
+                with service.store.connect() as db:
+                    current=service.store.get(db,'case',public['id'])
+                    assert current['staff_followup'] and current['action_due'] and not current['verification']
+                staff.locator('#caseNote').fill('The inspection is ongoing. Arrange another maintenance check.')
+                staff.get_by_role('button',name='Continue follow-up',exact=True).click()
+                expect(staff.locator('#caseNote')).to_have_value('')
+                staff.get_by_role('button',name='Resume handling',exact=True).click()
+                expect(staff.locator('#caseDetail .case-tags')).to_contain_text('Staff handling')
+                context.grant_permissions(['clipboard-read','clipboard-write'],origin=url)
+                copied='Sorry about the reported washer fault. Please contact BeLive privately so staff can review the details.'
+                staff.locator('#publicReplyText').fill(copied)
+                staff.get_by_role('button',name='Copy public reply',exact=True).click()
+                expect(staff.locator('#notice')).to_contain_text('Nothing has been posted by BeLive')
+                assert staff.evaluate('navigator.clipboard.readText()')==copied
                 staff.locator('#caseNote').fill('Fictional maintenance record confirms the washer passed an operating check.')
                 staff.get_by_role('button', name='Close complaint', exact=True).click()
                 expect(staff.locator('#caseError')).to_contain_text('Confirm resolution against evidence')

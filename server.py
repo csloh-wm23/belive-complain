@@ -79,6 +79,15 @@ class Tasks:
     def learning(self,run_id):
         from belive.learning import execute
         return self.start('learning-'+run_id,lambda:execute(self.service,run_id))
+    def reply_feedback(self,item_id):
+        from belive.reply_learning import execute
+        return self.start('reply-feedback-'+item_id,lambda:execute(self.service,item_id))
+    def pending_reply_feedback(self,case_id=None):
+        if not hasattr(self.service.ai,'reply_improvement'):return
+        with self.service.store.connect() as db:
+            pending=[x for x in self.service.store.all(db,'reply_learning')
+                     if (not case_id or x['case_id']==case_id) and (x['status'] in {'PENDING','APPROVAL_QUEUED'} or x.get('preview_status')=='QUEUED')]
+        for item in pending[:1]:self.reply_feedback(item['id'])
     def scan(self,source_id):
         def run():
             ids=scan(self.service,source_id)
@@ -89,6 +98,7 @@ class Tasks:
         while not self.stop.wait(self.service.settings.scheduler_seconds):
             try:
                 self.service.tick()
+                self.pending_reply_feedback()
                 snapshot=self.service.snapshot()
                 for c in snapshot['cases']:self.analyse(c)
                 for source in snapshot['sources']:
@@ -99,6 +109,8 @@ class Tasks:
 def make_handler(service,tasks=None):
     tasks=tasks or Tasks(service);access=Access(service);csrf=secrets.token_urlsafe(32)
     support_routes={'scan-all','import-review','import-review-batch','public-preview','lesson_revoke','learning_start','learning_improve','intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
+    support_routes.add('google-reply')
+    support_routes.update({'reply_learning_scan','reply_learning_action'})
     class Handler(SimpleHTTPRequestHandler):
         extensions_map={**SimpleHTTPRequestHandler.extensions_map,'.js':'text/javascript'}
         def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT),**kwargs)
@@ -196,8 +208,12 @@ def make_handler(service,tasks=None):
                     if path=='/api/portal/intake':
                         result=service.portal_submit(self.portal_token(),p,key);tasks.analyse(result)
                         return self.json(200,{'id':result['id'],'status':result['status']})
-                    if path=='/api/portal/feedback':return self.json(200,service.portal_feedback(self.portal_token(),p,key))
+                    if path=='/api/portal/feedback':
+                        result=service.portal_feedback(self.portal_token(),p,key)
+                        tasks.pending_reply_feedback(p['id'])
+                        return self.json(200,result)
                     result=service.portal_update(self.portal_token(),p,key)
+                    tasks.pending_reply_feedback(p['id'])
                     tasks.analyse({'id':p['id']})
                     return self.json(200,result)
                 if route in {'setup','login'}:
@@ -214,6 +230,11 @@ def make_handler(service,tasks=None):
                 p={**p,'_actor':user['id']}
                 if route in {'learning_start','learning_improve'}:
                     result=service.command(route,p,key);tasks.learning(result['id'])
+                    return self.json(200,result)
+                if route in {'reply_learning_scan','reply_learning_action'}:
+                    result=service.command(route,p,key)
+                    if route=='reply_learning_action':tasks.reply_feedback(result['id'])
+                    else:tasks.pending_reply_feedback()
                     return self.json(200,result)
                 if route=='case_action' and p.get('action')=='acknowledge':p['owner']=user['name']
                 if route=='import-review':
@@ -236,6 +257,9 @@ def make_handler(service,tasks=None):
                     tasks.analyse_batch(created)
                     return self.json(200,{'created':[c['id'] for c in created],
                                           'duplicates':[c['id'] for c in duplicates],'skipped':skipped})
+                if route=='google-reply':
+                    from belive.google_replies import publish
+                    return self.json(200,publish(service,p,user['id'],key))
                 if route=='public-preview':
                     return self.json(200,service.prepare_public_preview(p.get('id'),p.get('revision'),user['id']))
                 if route=='analyse':

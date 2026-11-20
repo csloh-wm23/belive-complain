@@ -9,6 +9,7 @@ def policy(store, db):
 
 def waiting(case):
     return (case['status'] == 'FOLLOW_UP'
+            and not case.get('staff_followup')
             and (case.get('tenant_id') or case.get('entrypoint') == 'TENANT_WEBSITE')
             and not case.get('tenant_resolution', {}).get('resolved'))
 

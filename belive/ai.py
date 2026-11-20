@@ -56,6 +56,8 @@ class SupportAI:
         return bool(self.settings.llm_provider in {'openai','ollama'} and self.settings.llm_model and
                     (self.settings.llm_provider=='ollama' or self.settings.llm_api_key))
     def generate(self,role,instruction,context,examples):
+        from belive.relevance import LOCATION_POLICY
+        instruction += '\n'+LOCATION_POLICY
         if not self.readiness(): raise RuntimeError('AI_NOT_CONFIGURED')
         def dispatch(name,args):
             if args: raise ValueError('Tool does not accept arguments')
@@ -89,6 +91,9 @@ class SupportAI:
             props = {key:{'type':'boolean'} for key in ('grounded','safe','uncertainty')}
             props['unsupported_claims'] = {'type':'array','items':{'type':'string'}}
             shape = {'type':'object','properties':props,'required':list(props),'additionalProperties':False}
+        if role == 'Reply Feedback Learning Agent':
+            props={'cause':{'type':'string','enum':['COMMUNICATION','SERVICE_ACTION','UNCLEAR']},'reason':{'type':'string'},'tip':{'type':'string'}}
+            shape={'type':'object','properties':props,'required':list(props),'additionalProperties':False}
         if role == 'Support Response Agent':
             types = {'plan':'string','response':'string','requires_human':'boolean','record_ids':'array'}
             if context.get('automatic'):
@@ -136,6 +141,7 @@ class SupportAI:
                     'additionalProperties':False,
                 }
             payload = {'model':self.settings.llm_model,'messages':messages,'stream':False,'format':output_format,'think':False}
+            if role in {'Learning Reply Agent','Safety Review Agent','Reply Feedback Learning Agent'}:payload['options']={'temperature':0}
             request = Request(endpoint+'/api/chat',json.dumps(payload).encode(),{'Content-Type':'application/json'})
             with urlopen(request, timeout=90) as reply:
                 response = {'text':json.load(reply)['message']['content']}
@@ -196,11 +202,81 @@ class SupportAI:
                     'through the BeLive tenant app so our team can review your case and follow up with you directly.')
         return acknowledgement + ' Please contact BeLive tenant support privately so the team can review your report.'
 
-    def conversational_reply(self, conversation, question, lessons):
+    def reply_improvement(self,question,reply,customer_feedback):
+        result=self.generate('Reply Feedback Learning Agent',
+            'Study the actual original question, published reply and later dissatisfied customer message. '
+            'Continued complaints are a signal, not proof the wording was wrong. Distinguish COMMUNICATION '
+            '(unclear, repetitive, irrelevant, or ignored details), SERVICE_ACTION (a repair or staff action still needed), '
+            'or UNCLEAR. Explain the evidence and uncertainty. Propose a specific reusable writing/handling tip '
+            'that addresses this exchange, not a default formatting rule. Do not invent facts, diagnose physical '
+            'causes, claim resolution, or put private details in the tip. For service-action failures acknowledge '
+            'the open issue and staff need; wording alone cannot repair it. Return cause, reason, tip.',
+            {'original_question':question,'published_reply':reply,'customer_followup':customer_feedback},[])
+        if result.get('cause') not in {'COMMUNICATION','SERVICE_ACTION','UNCLEAR'}:raise ValueError('AI_INVALID_SCHEMA')
+        return {'cause':result['cause'],'reason':bounded(result.get('reason'),8,1500),'tip':bounded(result.get('tip'),8,1000)}
+
+    def review_writing_tip(self,tip):
+        from belive.relevance import LOCATION_POLICY
+        result=self.generate('Safety Review Agent',
+            'Review this proposed reusable writing tip, not a customer reply. General communication advice '
+            'such as acknowledging prior attempts and avoiding repetition is allowed. Fail unsafe operational '
+            'instructions, private/account/property facts, secrets, unverified claims, or promises of completed '
+            'work. A tip may say hand to staff when an actual action is needed. Return grounded, safe, uncertainty '
+            'booleans and unsupported_claims array. '+LOCATION_POLICY,{'proposed_writing_tip':tip},[])
+        return result.get('grounded') is True and result.get('safe') is True and result.get('uncertainty') is False and result.get('unsupported_claims')==[]
+
+    def experience_reply(self,question,experience=None):
+        from belive.relevance import LOCATION_POLICY,unnecessary_location,location_scope
+        foundation=('You may acknowledge a visible written message, answer general process questions and ask what help is needed. '
+                    'You may suggest recording observable symptoms, when they happen, visible error messages and checks already tried, without diagnosing a cause. '
+                    'If a problem is unclear, ask for a short description. Never invent company facts or claim staff work occurred. '+LOCATION_POLICY)
+        approved={'general_support':foundation}
+        if experience:approved['approved_complaint_experience']={'question':experience['question'],'answer':experience['answer']}
+        context={'question':question,'approved_guidance':approved,'location_scope':location_scope(question),
+                 'reviewed_writing_tip':experience.get('writing_tip','') if experience else '',
+                 'previous_reply_and_feedback':experience.get('conversation_feedback') if experience else None}
+        for attempt in range(2):
+            result=self.generate('Learning Reply Agent',
+                'Reply directly to this actual question using only the supplied approved guidance. '
+                'Adapt any complaint experience to this question; do not copy unrelated requirements. '
+                'Apply reviewed_writing_tip to communication behavior only; it is not a source of company facts. '
+                'When previous_reply_and_feedback is supplied, respond to that customer follow-up in context. Acknowledge what they already told us, correct communication mistakes and do not repeat failed advice. '
+                'If location_scope is NONE, do not introduce buildings, rooms, addresses or location exceptions. '
+                'For shared equipment, never ask for a private room number. For a question asking what to record, explain useful details to record. '
+                'Use natural wording. No numbered format is required. Return exactly {"reply":"..."}. '
+                +('The previous draft asked for unnecessary location details. Ask about the issue instead. ' if attempt else ''),context,[])
+            reply=bounded(result.get('reply'),1,2000)
+            if not unnecessary_location(reply,question):break
+        else:raise ValueError('AI_UNNECESSARY_LOCATION')
+        review=self.generate('Safety Review Agent',
+            'Check that the reply answers this question using only approved guidance. Return grounded, safe, uncertainty booleans and unsupported_claims array. '
+            'Paraphrased requests for observable symptoms, times, error messages and previous checks are supported by the general support guidance. '
+            'A phrase such as "helps us understand" does not claim completed work. Only flag concrete unsupported claims actually present in the reply. '
+            'Reject unrelated lesson content, unnecessary location requests, invented company facts and claims of completed work. '+LOCATION_POLICY,
+            {**context,'proposed_response':reply},[])
+        def passed(check):return check.get('grounded') is True and check.get('safe') is True and check.get('uncertainty') is False and check.get('unsupported_claims')==[]
+        if not passed(review):
+            repaired=self.generate('Learning Reply Agent',
+                'Correct the rejected reply using only approved guidance. Remove every unsupported claim. '
+                'Do not mention location at all for location_scope NONE. Never request a private room number for shared equipment. '
+                'Answer the actual question naturally, without a fixed numbered format. Return exactly {"reply":"..."}.',
+                {**context,'rejected_reply':reply,'review_findings':review},[])
+            reply=bounded(repaired.get('reply'),1,2000)
+            if unnecessary_location(reply,question):raise ValueError('AI_UNNECESSARY_LOCATION')
+            review=self.generate('Safety Review Agent',
+                'Check this corrected reply against approved guidance and the actual question. Relevant clarifying questions are allowed. '
+                'Paraphrased observation requests are grounded. Do not invent hypothetical implications or require exact copying of the guide. '
+                'Return grounded, safe, uncertainty booleans and unsupported_claims array. Reject invented facts and unnecessary location requests. '+LOCATION_POLICY,
+                {**context,'proposed_response':reply},[])
+            if not passed(review):raise ValueError('AI_UNGROUNDED_GUIDANCE')
+        return reply
+
+    def conversational_reply(self, conversation, question, lessons, known_location=None,writing_tips=None):
         from belive.automation import PUBLIC_GUIDANCE,recovery_guidance
         guidance={key:{'question':value[0],'answer':value[1] or recovery_guidance()}
                   for key,value in {**PUBLIC_GUIDANCE,**lessons}.items()}
-        context={'conversation':conversation[-16:],'current_message':question,'guidance':guidance}
+        context={'conversation':conversation[-16:],'current_message':question,'guidance':guidance,'provided_location':known_location,
+                 'reviewed_writing_tips':[{'id':x['id'],'tip':x['tip']} for x in (writing_tips or [])]}
         # Prior generated answers are context, not verified knowledge.
         context['conversation']=[message for message in context['conversation']
                                  if message['sender'] not in {'AI_SUPPORT','SYSTEM'}]
@@ -208,6 +284,9 @@ class SupportAI:
         result=self.generate('Customer Conversation Agent',
             'Respond directly to the customer using the conversation and approved guidance. '
             'Return response, needs_staff, and the topic IDs used. Read what has already been explained. '
+            'Prefer a relevant approved complaint-experience topic (STYLE- ID) over overlapping generic guidance. '
+            'Adapt the experience to this question and omit irrelevant requirements; do not simply copy it. '
+            'Apply reviewed_writing_tips to avoid previously unhelpful communication. They are writing advice, never company facts or permission to perform actions. '
             'If the customer challenges an answer, explain the relevant reason or ask one focused clarifying '
             'question. Do not simply repeat the earlier wording or ask for details they already supplied. '
             'Answer a WHY question with the reason first. Example: comparing devices is optional, '
@@ -229,6 +308,13 @@ class SupportAI:
             'Never claim a repair, booking, refund or staff action occurred. Do not call tools.',
             context,[])
         response=bounded(result.get('response'),1,1200)
+        from belive.relevance import unnecessary_location
+        if unnecessary_location(response,question):
+            result=self.generate('Customer Conversation Agent',
+                'Answer the current message without asking for a building, property, address or room number. '
+                'Ask what the issue is if unclear, or answer the general question. Return response, needs_staff, topics.',context,[])
+            response=bounded(result.get('response'),1,1200)
+            if unnecessary_location(response,question):raise ValueError('AI_UNNECESSARY_LOCATION')
         from difflib import SequenceMatcher
         previous=context['previous_replies']
         if previous and SequenceMatcher(None,response.casefold(),previous[-1].casefold()).ratio()>.82:
@@ -321,7 +407,7 @@ class SupportAI:
             'evidence (exactly "description" or "title", choosing the field that supports your assessment). '
             if local else 'evidence (an exact verbatim substring from case.title or case.description, preserving spelling and case). '
         )
-        triage_styles=[] if context.get('learning_practice') else [e for e in examples if not e.get('scope_category')][:5]
+        triage_styles=[] if context.get('learning_practice') else [e for e in examples if not e.get('scope_category') and not e.get('public_question')][:5]
         triage_instruction = (
           'Determine whether this message is a complaint, a support enquiry, or unrelated. '
           'A reported problem or dissatisfaction is a complaint even if the person also asks what to do. '
@@ -388,8 +474,11 @@ class SupportAI:
             response = bounded(reply['reply'],1,1000)
             self.review_guidance(context,guide,response,[],generate)
             return {**a,'response':response,'guidance_review_passed':True}
+        from belive.relevance import match_score,domains
         examples=[example for example in examples
-                  if example.get('scope_category') in (None,a['category'])][:5]
+                  if example.get('scope_category') in (None,a['category'])
+                  and (not example.get('public_question') or match_score(context['case']['description'],example['public_question'])>0
+                       or (example.get('general_scope') and not domains(context['case']['description'])))][:5]
         automatic=bool(context.get('automatic'))
         routine=(' In automatic mode, also return approved_answer_id (one ID from approved_answers, or empty), match_confidence (number 0 to 1), request_language (en/ms/zh or unknown). '
           'An EXACT entry must directly answer the current question; its exact wording will be sent. A GUIDANCE entry is a reusable support playbook: '
@@ -403,7 +492,7 @@ class SupportAI:
         p=generate('Support Response Agent',
           'Use the provided verified records, condo rules and reviewed styles to prepare cautious support. '
           'Return exactly plan (string), response (string), requires_human (boolean), '
-          'record_ids (array of IDs from verified_records actually used). Missing tenant-specific facts must become questions. '
+          'record_ids (array of IDs from verified_records actually used). Ask only for missing facts needed for this question; general support does not require tenant location. '
           'Account, payment, security-access changes and physical repairs always require a human. '
           'Requests to arrange move-in/out, inspections or PIC allocation must be handed to staff; do not plan or claim those arrangements. '
           'If there is no safe useful response, set requires_human true.'+routine,
@@ -417,6 +506,8 @@ class SupportAI:
         allowed={r['id'] for r in context['verified_records']}
         if any(not isinstance(x,str) or x not in allowed for x in p['record_ids']): raise ValueError('AI_UNKNOWN_RECORD')
         for field in ('plan','response'): p[field]=bounded(p[field],1,2500)
+        from belive.relevance import unnecessary_location
+        if unnecessary_location(p['response'],context['case']['description']):raise ValueError('AI_UNNECESSARY_LOCATION')
         text=p['response']+' '+p['plan']
         if re.search(r'(refund (?:has been|is) (?:issued|approved)|we have (?:repaired|refunded)|guarantee|share your (?:password|otp)|bypass.{0,30}lock)',text,re.I): raise ValueError('AI_UNSAFE_OUTPUT')
         selected=next((x for x in context.get('approved_answers',[]) if x['id']==p.get('approved_answer_id')),None)

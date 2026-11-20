@@ -42,6 +42,7 @@ PUBLIC_COMPLAINT_ANSWERS = {
 }
 
 PUBLIC_GUIDANCE = {
+    'general_support': ('General support, greetings, or an unclear issue', 'Acknowledge the message and ask what help is needed or what happened. General support does not require a property, address or room number. Ask for specific details only after the issue is clear.'),
     'track': ('How to check the status or replies of a complaint', PUBLIC_COMPLAINT_ANSWERS['how do i track my complaint']),
     'recover': ('How to find a complaint when tracking is unavailable', None),
     'add_details': ('How to add a message or correct details in an existing complaint', PUBLIC_COMPLAINT_ANSWERS['how can i add more details to my complaint']),

@@ -81,6 +81,7 @@ async function send(action,route,payload){
 }
 
 function status(c){
+    if(c.status==='FOLLOW_UP'&&c.staff_followup)return ['Support team is following up','Your complaint remains open while staff continues checking it. You can add details below.'];
     if(c.status==='CLOSED'&&c.closure_reason==='CUSTOMER_INACTIVE')return ['Closed after no reply','We did not receive a reply within the waiting period. The outcome is unconfirmed. Send a message or choose Still unresolved to reopen this complaint.'];
     if(c.status==='FOLLOW_UP'&&c.resolution_confirmed)return ['You confirmed the issue is resolved','The BeLive team will check your confirmation before closing the complaint. Choose Still unresolved if the problem returns.'];
     if(c.automatic_pending)return ['AI is reviewing your request','Your message was received. SIMPLE requests can receive an automatic reply.'];
@@ -181,7 +182,7 @@ async function operation(fn,caseId){
 
 const complaintForm=$('websiteComplaint');
 const rentalLocation=document.createElement('div');
-rentalLocation.innerHTML='<label>Which property do you rent at?<input name="rental_property" list="complaintProperties" required minlength="2" maxlength="120" placeholder="Search or type a building name" aria-describedby="propertyDirectoryHint"></label><datalist id="complaintProperties"></datalist><p class="muted" id="propertyDirectoryHint">If your building is missing, type its name.</p><label>Unit or room (optional)<input name="rental_unit" maxlength="60" placeholder="e.g. Block B, Unit 12-03"></label>';
+rentalLocation.innerHTML='<details id="complaintLocation"><summary>Add location for a property or physical issue (optional)</summary><p class="muted">General questions do not need a location. For building-specific questions, give the property only. For a physical fault, give the affected room, shared area or equipment.</p><label>Property (only when relevant)<input name="rental_property" list="complaintProperties" maxlength="120" placeholder="Search or type a building name" aria-describedby="propertyDirectoryHint"></label><datalist id="complaintProperties"></datalist><p class="muted" id="propertyDirectoryHint">If your building is missing, type its name.</p><label>Affected unit / room / shared area (only when relevant)<input name="rental_unit" maxlength="60" placeholder="e.g. laundry room, or unit with the fault"></label></details>';
 complaintForm.insertBefore(rentalLocation,complaintForm.firstElementChild);
 const propertyInput=complaintForm.elements.rental_property;
 const propertyHint=$('propertyDirectoryHint');
