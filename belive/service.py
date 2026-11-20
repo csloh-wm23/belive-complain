@@ -11,7 +11,7 @@ from pathlib import Path
 from belive.store import Store, bounded, digest, now, redact
 from belive.settings import load_settings
 from belive.ai import SupportAI, CATEGORIES, FAILURE_MESSAGES, failure_code
-from belive import automation
+from belive import automation, hosted_ai, decisions
 from belive import closure
 from belive.workflow import complaint_level
 
@@ -86,13 +86,18 @@ class Service:
             context['verified_records']=[r for r in self.store.all(db,'record') if r['tenant_id']==t['id'] and r['verified'] and r.get('active',True) and (not r.get('expires_at') or r['expires_at']>now())]
         return automation.add_context(self.store,db,c,context)
     def check_ai(self):
-        check={'id':'ai','status':'RUNNING','at':now(),'provider':self.settings.llm_provider,'model':self.settings.llm_model}
+        check={'id':'ai','status':'RUNNING','at':now(),'provider':self.settings.llm_provider,'model':self.settings.llm_model,
+               'decisions':decisions.enabled(self.settings)}
         with self.store.connect() as db:self.store.put(db,'health',check)
         try:
-            self.ai.check();check.update(status='PASSED',detail='A real configured-provider response passed the connection schema check.')
+            self.ai.check()
+            detail = 'A real configured-provider response passed the connection schema check.'
+            if decisions.enabled(self.settings):
+                detail += ' Decisions triage also returned valid choices.'
+            check.update(status='PASSED',detail=detail)
         except Exception as exc:
             code = failure_code(exc)
-            detail = FAILURE_MESSAGES[code] if code.startswith('OPENROUTER_') else (
+            detail = FAILURE_MESSAGES[code] if code in hosted_ai.FAILURE_MESSAGES else (
                 'AI_NOT_CONFIGURED' if code == 'AI_NOT_CONFIGURED' else 'AI_CONNECTION_FAILED')
             check.update(status='FAILED', detail=detail)
         check['finished_at']=now()
@@ -185,16 +190,24 @@ class Service:
             result['learning_lesson']=''
             from belive.experience_learning import experiences
             result['learning_experiences']=experiences(self,db)
-            result['reply_learning']=self.store.all(db,'reply_learning')[:60]
+            reactions = self.store.all(db,'reply_learning')
+            result['reply_learning']=[item for item in reactions if item['status']!='OBSERVED' or item.get('signal')][:60]
+            result['feedback_reactions']={key:sum(item.get('reaction')==key for item in reactions)
+                                          for key in ['DISSATISFIED','POSITIVE','NEUTRAL','UNCLEAR']}
             usages=self.store.all(db,'reply_tip_usage')
             signals=self.store.all(db,'reply_learning')
             for item in result['reply_learning']:
                 matched=[u for u in usages if item['id'] in u['tip_ids']]
                 item['provided_count']=len(matched)
-                item['negative_after_use']=sum(any(s['case_id']==u['case_id'] and s['reply_id']==u['reply_id'] for s in signals) for u in matched)
+                item['latest_case']=matched[0]['case_id'] if matched else None
+                item['negative_after_use']=sum(any(s['case_id']==u['case_id'] and s['reply_id']==u['reply_id']
+                                                       and s.get('signal',True) for s in signals) for u in matched)
+                item['positive_after_use']=sum(any(s['case_id']==u['case_id'] and s['reply_id']==u['reply_id']
+                                                       and s.get('reaction')=='POSITIVE' for s in signals) for u in matched)
             result['learning_scenarios']=learning.scenarios(self,db)
             result['learned_styles']=self.store.all(db,'learned_style')
-            result['readiness']={'ai':self.ai.readiness(),'scheduler':True,'provider':self.settings.llm_provider,'model':self.settings.llm_model}
+            result['readiness']={'ai':self.ai.readiness(),'scheduler':True,'provider':self.settings.llm_provider,'model':self.settings.llm_model,
+                                 'hosted':hosted_ai.uses_direct_api(self.settings), 'decisions':decisions.enabled(self.settings)}
             from belive.workspace import selected_database
             active=self.store.path.resolve()
             selected=selected_database(self.workspace_config,active) if self.workspace_config else active

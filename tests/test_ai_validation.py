@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
-from belive import openrouter
+from belive import hosted_ai
 from belive.ai import SupportAI,failure_code
 from belive.service import Service
 from belive.settings import Settings, load_settings
@@ -140,71 +140,89 @@ class AIValidationTests(unittest.TestCase):
         exc=json.JSONDecodeError('Invalid JSON','Fictional response only',0)
         self.assertEqual(failure_code(exc),'AI_INVALID_JSON')
 
-    def test_hosted_hermes_runs_both_agents_and_loads_reviewed_replies_without_native_runtime(self):
-        with patch.dict(os.environ, {
-            'BELIVE_AI_PROVIDER': 'openrouter', 'BELIVE_AI_MODEL': '', 'BELIVE_AI_KEY': 'test-key-only',
-        }), patch('belive.settings.load_env'):
-            settings = load_settings()
-        self.assertEqual(settings.llm_model, openrouter.DEFAULT_MODEL)
-        ai = SupportAI(settings, self.root / 'unused-memory')
+    @staticmethod
+    def completion(value):
+        return io.BytesIO(json.dumps({'choices': [{
+            'finish_reason': 'stop', 'message': {'content': json.dumps(value)},
+        }]}).encode())
+
+    def test_hosted_models_run_both_agents_with_reviewed_replies_without_native_runtime(self):
         lesson = {'id':'STYLE-TEST','text':'Ask when the appliance stopped. staff@example.com',
                   'tenant_id':'TENANT-PRIVATE'}
         context = {**self.context, 'property_version': {'id': 'PROPERTY-PRIVATE'},
                    'conversation': [{'sender': 'TENANT', 'text': 'Contact example@example.com',
                                      'case_id': 'CASE-PRIVATE'}]}
-        def completion(value):
-            return io.BytesIO(json.dumps({'choices': [{
-                'finish_reason':'stop', 'message':{'content':json.dumps(value)}
-            }]}).encode())
-        with patch('belive.ai.runtime_python', side_effect=AssertionError('native runtime called')), \
-             patch('belive.openrouter.urlopen', side_effect=[
-                 completion({**self.triage,'evidence':'description'}), completion(self.plan),
-             ]) as request:
-            result = ai.analyse(context, [lesson])
-        self.assertEqual([a['agent'] for a in result['agent_trace']],
-                         ['Complaint Analysis Agent','Support Response Agent'])
-        self.assertEqual(result['evidence'], context['case']['description'])
-        self.assertEqual(result['complaint_level'], 'MODERATE')
-        self.assertTrue(result['requires_human'])
-        self.assertEqual(result['learning_used']['example_ids'], ['STYLE-TEST'])
-        for call in request.call_args_list:
-            http_request = call.args[0]
-            self.assertEqual(http_request.full_url, 'https://openrouter.ai/api/v1/chat/completions')
-            self.assertEqual(http_request.get_header('Authorization'), 'Bearer test-key-only')
-            body = json.loads(http_request.data)
-            self.assertEqual(body['model'], openrouter.DEFAULT_MODEL)
-            self.assertEqual(body['response_format']['type'], 'json_schema')
-            self.assertTrue(body['provider']['zdr'])
-            self.assertNotIn('tools', body)
-            self.assertNotIn(b'test-key-only', http_request.data)
-            for private in ['PROPERTY-PRIVATE','TENANT-PRIVATE','CASE-PRIVATE','@example.com']:
-                self.assertNotIn(private.encode(), http_request.data)
-        sent = json.loads(json.loads(request.call_args.args[0].data)['messages'][1]['content'])
-        self.assertEqual(sent['reviewed_examples'], [{'id':'STYLE-TEST',
-                         'text':'Ask when the appliance stopped. [email removed]'}])
+        for provider, model in hosted_ai.DEFAULT_MODELS.items():
+            with self.subTest(provider=provider):
+                with patch.dict(os.environ, {
+                    'BELIVE_AI_PROVIDER': provider, 'BELIVE_AI_MODEL': '', 'BELIVE_AI_KEY': 'test-key-only',
+                }), patch('belive.settings.load_env'):
+                    settings = load_settings()
+                self.assertEqual(settings.llm_model, model)
+                ai = SupportAI(settings, self.root / 'unused-memory')
+                with (
+                    patch('belive.ai.runtime_python', side_effect=AssertionError('native runtime called')),
+                    patch('belive.hosted_ai.urlopen', side_effect=[
+                        self.completion({**self.triage, 'evidence': 'description'}),
+                        self.completion(self.plan),
+                    ]) as request,
+                ):
+                    result = ai.analyse(context, [lesson])
+                self.assertEqual([a['agent'] for a in result['agent_trace']],
+                                 ['Complaint Analysis Agent','Support Response Agent'])
+                self.assertEqual(result['evidence'], context['case']['description'])
+                self.assertEqual(result['complaint_level'], 'MODERATE')
+                self.assertTrue(result['requires_human'])
+                self.assertEqual(result['learning_used']['example_ids'], ['STYLE-TEST'])
+                for call in request.call_args_list:
+                    http_request = call.args[0]
+                    self.assertEqual(http_request.full_url, hosted_ai.ENDPOINTS[provider])
+                    self.assertEqual(http_request.get_header('Authorization'), 'Bearer test-key-only')
+                    body = json.loads(http_request.data)
+                    self.assertEqual(body['model'], model)
+                    self.assertEqual(body['response_format']['type'], 'json_schema')
+                    self.assertNotIn('tools', body)
+                    self.assertNotIn(b'test-key-only', http_request.data)
+                    for private in ['PROPERTY-PRIVATE','TENANT-PRIVATE','CASE-PRIVATE','@example.com']:
+                        self.assertNotIn(private.encode(), http_request.data)
+                    if provider == 'openai':
+                        self.assertEqual(body['reasoning_effort'], 'none')
+                        self.assertEqual(body['service_tier'], 'default')
+                        self.assertEqual(body['max_completion_tokens'], 2500)
+                        self.assertIs(body['store'], False)
+                        self.assertNotIn('provider', body)
+                    else:
+                        self.assertTrue(body['provider']['zdr'])
+                sent = json.loads(json.loads(request.call_args.args[0].data)['messages'][1]['content'])
+                self.assertEqual(sent['reviewed_examples'], [{'id':'STYLE-TEST',
+                                 'text':'Ask when the appliance stopped. [email removed]'}])
 
     def test_hosted_connection_check_reports_missing_key_and_safe_auth_failure(self):
-        settings = Settings(llm_provider='openrouter', llm_model=openrouter.DEFAULT_MODEL)
-        with patch('belive.service.load_settings', return_value=settings):
-            service = Service(self.root / 'hosted.db')
-        with patch('belive.ai.runtime_python', side_effect=AssertionError('native runtime called')), \
-             patch('belive.openrouter.urlopen') as request:
-            self.assertEqual(service.check_ai()['detail'], 'AI_NOT_CONFIGURED')
-            request.assert_not_called()
-            settings.llm_api_key = 'test-key-only'
-            request.side_effect = HTTPError(openrouter.ENDPOINT, 401, 'private error', {},
-                                            io.BytesIO(b'sensitive provider response'))
-            failed = service.check_ai()
-            self.assertEqual(failed['status'], 'FAILED')
-            self.assertIn('rejected the API key', failed['detail'])
-            self.assertNotIn('private error', str(failed))
-            self.assertNotIn('test-key-only', str(failed))
-            request.side_effect = None
-            request.return_value = io.BytesIO(b'{"choices":[{"finish_reason":"stop","message":{"content":"{\\"ok\\":true}"}}]}')
-            passed = service.check_ai()
-            self.assertEqual(passed['status'], 'PASSED')
-            self.assertEqual(passed['model'], openrouter.DEFAULT_MODEL)
-            self.assertEqual(json.loads(json.loads(request.call_args.args[0].data)['messages'][1]['content']),
-                             {'context':{'check':'connection only; no tenant data'},'reviewed_examples':[]})
+        for provider, model in hosted_ai.DEFAULT_MODELS.items():
+            with self.subTest(provider=provider):
+                settings = Settings(llm_provider=provider, llm_model=model)
+                with patch('belive.service.load_settings', return_value=settings):
+                    service = Service(self.root / (provider+'.db'))
+                with (
+                    patch('belive.ai.runtime_python', side_effect=AssertionError('native runtime called')),
+                    patch('belive.hosted_ai.urlopen') as request,
+                ):
+                    self.assertEqual(service.check_ai()['detail'], 'AI_NOT_CONFIGURED')
+                    request.assert_not_called()
+                    settings.llm_api_key = 'test-key-only'
+                    request.side_effect = HTTPError(hosted_ai.ENDPOINTS[provider], 401, 'private error', {},
+                                                    io.BytesIO(b'sensitive provider response'))
+                    failed = service.check_ai()
+                    self.assertEqual(failed['status'], 'FAILED')
+                    self.assertIn('rejected the API key', failed['detail'])
+                    self.assertNotIn('private error', str(failed))
+                    self.assertNotIn('test-key-only', str(failed))
+                    request.side_effect = None
+                    request.return_value = self.completion({'ok': True})
+                    passed = service.check_ai()
+                    self.assertEqual(passed['status'], 'PASSED')
+                    self.assertEqual(passed['model'], model)
+                    self.assertEqual(json.loads(json.loads(request.call_args.args[0].data)['messages'][1]['content']),
+                                     {'context':{'check':'connection only; no tenant data'},'reviewed_examples':[]})
 
 if __name__=='__main__':unittest.main()

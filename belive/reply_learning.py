@@ -9,7 +9,7 @@ def negative(text):
     return bool(re.search(r"still (?:not|unresolved|broken|doesn|happening)|(?:didn.t|doesn.t|not) help|not (?:resolved|fixed|working|helpful)|already (?:told|tried|said)|keep (?:repeating|complaining)|same (?:answer|reply|problem)|wrong answer|answer.{0,15}wrong|not what I asked|don.t understand|you (?:misunderstood|didn.t understand)|why.{0,30}room number|没解决|还没好|一直重复|没帮助|还是不行",text,re.I))
 
 
-def add(service,db,case,reply,customer,question):
+def add(service,db,case,reply,customer,question,*,signal=True,explicit_unresolved=False):
     key='RLF-'+digest(case['id']+':'+reply['id']+':'+customer['id'])[:18]
     if any(x['id']==key for x in service.store.all(db,'reply_learning')):return
     condo=None;sample=relevance.sample_case(case)
@@ -18,9 +18,11 @@ def add(service,db,case,reply,customer,question):
     item=dict(id=key,case_id=case['id'],question=redact(question),reply=redact(reply['text']),
               customer_feedback=redact(customer['text']),reply_id=reply['id'],feedback_id=customer['id'],
               category=case['category'],scope_condo=condo,sample_data=sample,status='PENDING',approved=False,
-              revision=1,at=now(),tip='',reason='',cause='',preview=None)
+              revision=1,at=now(),tip='',reason='',cause='',preview=None,
+              signal=signal,explicit_unresolved=explicit_unresolved,reaction='',tone='')
     service.store.put(db,'reply_learning',item)
-    service.store.event(db,case['id'],'REPLY_FEEDBACK_CAPTURED',key+': customer dissatisfaction after a published reply; cause not yet known')
+    action = 'REPLY_FEEDBACK_CAPTURED' if signal else 'CUSTOMER_REACTION_QUEUED'
+    service.store.event(db,case['id'],action,key+': reply and customer follow-up saved for review')
 
 
 def discover(service,db,case_id=None):
@@ -32,7 +34,11 @@ def discover(service,db,case_id=None):
                 last_reply=message;before_reply=question
             elif message['sender']=='TENANT':
                 explicitly_unresolved=case.get('tenant_resolution',{}).get('resolved') is False and case['tenant_resolution'].get('note')==message['text']
-                if last_reply and (negative(message['text']) or explicitly_unresolved):add(service,db,case,last_reply,message,before_reply)
+                signal = negative(message['text']) or explicitly_unresolved
+                inspect_reaction = case_id is not None and getattr(service.ai,'checks_feedback_reactions',False)
+                if last_reply and (signal or inspect_reaction):
+                    add(service,db,case,last_reply,message,before_reply,
+                        signal=signal,explicit_unresolved=explicitly_unresolved)
                 question=message['text']
 
 
@@ -87,7 +93,7 @@ def execute(service,item_id):
         from belive.experience_learning import experiences
         relevant=[x for x in experiences(service,db) if relevance.match_score(item['question'],x['question'])>0]
         experience=relevant[0] if relevant else {'question':item['question'],'answer':''}
-    error='';value=None
+    error='';error_type='';value=None
     ai=SupportAI(service.settings,service.store.path.parent/'hermes_memory/reply-feedback'/item_id) if isinstance(service.ai,SupportAI) else service.ai
     try:
         if testing:
@@ -99,20 +105,35 @@ def execute(service,item_id):
         else:
             value=ai.reply_improvement(item['question'],item['reply'],item['customer_feedback'])
             if value.get('cause') not in {'COMMUNICATION','SERVICE_ACTION','UNCLEAR'}:raise ValueError('Invalid feedback diagnosis')
-            value={'cause':value['cause'],'reason':bounded(value.get('reason'),8,1500),'tip':bounded(value.get('tip'),8,1000)}
-    except Exception as exc:error=failure_code(exc)
+            reaction = value.get('reaction','DISSATISFIED')
+            tone = value.get('tone','UNCLEAR')
+            if (reaction not in {'DISSATISFIED','POSITIVE','NEUTRAL','UNCLEAR'}
+                    or tone not in {'ANGRY','FRUSTRATED','CALM','UNCLEAR'}):
+                raise ValueError('Invalid customer reaction')
+            if item.get('explicit_unresolved'):
+                reaction = 'DISSATISFIED'
+            value={'cause':value['cause'],'reason':bounded(value.get('reason'),8,1500),
+                   'reaction':reaction,'tone':tone,
+                   'tip':bounded(value.get('tip'),8,1000) if reaction=='DISSATISFIED' and value.get('tip') else ''}
+    except Exception as exc:
+        error=failure_code(exc)
+        error_type=type(exc).__name__
     with service.lock,service.store.connect() as db:
         current=service.store.get(db,'reply_learning',item_id)
         if current['revision']!=revision:return
+        current.pop('error_type',None)
         if error:
             if testing:current['preview_status']='FAILED'
             else:current.update(status='PROPOSED' if approving else 'FAILED',approved=False)
             current['error']=error
+            current['error_type']=error_type
         elif testing:
             current.update(preview_status='READY',preview=value,preview_at=now(),comparison_note='Original published reply versus a new draft using reviewed feedback. This test does not prove resolution or improvement; compare helpfulness and observe later customer feedback.')
         elif approving:current.update(status='APPROVED',approved=True,error='')
         else:
-            current.update(status='PROPOSED',cause=value['cause'],reason=value['reason'],tip=value['tip'],error='')
+            dissatisfied = value['reaction']=='DISSATISFIED'
+            status = 'PROPOSED' if dissatisfied and value['tip'] else 'OBSERVED'
+            current.update(status=status,signal=dissatisfied,**value,error='')
         current['revision']+=1;service.store.put(db,'reply_learning',current)
         service.store.event(db,current['case_id'],'REPLY_LEARNING_'+current['status'],current['id']+': reviewed communication feedback; not a repair claim')
 

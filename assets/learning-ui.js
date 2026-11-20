@@ -171,13 +171,16 @@ const replyFeedbackDrafts=new Map();
 function renderReplyFeedback(status){
     const list=$('replyFeedbackList');
     if(document.activeElement?.closest('#replyFeedbackList')&&['INPUT','TEXTAREA'].includes(document.activeElement.tagName))return;
-    const names={PENDING:'Waiting for analysis',ANALYSING:'Examining the reply and customer feedback…',PROPOSED:'Improvement tip needs your review',APPROVAL_QUEUED:'Waiting for tip safety review',REVIEWING:'Checking the reviewed tip…',APPROVED:'Approved for relevant future replies',REJECTED:'Tip revoked',FAILED:'Analysis could not complete'};
-    list.innerHTML=(status.reply_learning||[]).map(item=>{
+    const names={PENDING:'Waiting for analysis',ANALYSING:'Examining the reply and customer feedback…',PROPOSED:'Improvement tip needs your review',OBSERVED:'Customer reaction recorded',APPROVAL_QUEUED:'Waiting for tip safety review',REVIEWING:'Checking the reviewed tip…',APPROVED:'Approved for relevant future replies',REJECTED:'Tip revoked',FAILED:'Analysis could not complete'};
+    const reactions=status.feedback_reactions||{};
+    const summary=`<p class="muted">Customer follow-ups checked · ${reactions.DISSATISFIED||0} dissatisfied · ${reactions.POSITIVE||0} positive · ${reactions.NEUTRAL||0} neutral · ${reactions.UNCLEAR||0} unclear</p>`;
+    list.innerHTML=summary+((status.reply_learning||[]).map(item=>{
         const busy=replyFeedbackBusy||['ANALYSING','REVIEWING','APPROVAL_QUEUED'].includes(item.status);
         const tip=replyFeedbackDrafts.get(item.id)??item.tip;
         return `<article class="record-card" data-reply-feedback="${esc(item.id)}"><div class="card-heading"><strong>${esc(names[item.status]||item.status)}</strong><button type="button" class="text-button" data-case="${esc(item.case_id)}">Source case ${esc(item.case_id)}</button></div>
         <p class="eyebrow">${item.sample_data?'SAMPLE / TEST conversation':'Recorded complaint conversation'}</p>
         <p><b>Original question</b> ${esc(item.question)}</p><p><b>Reply we sent</b></p><blockquote>${esc(item.reply)}</blockquote><p><b>Customer feedback afterward</b></p><blockquote>${esc(item.customer_feedback)}</blockquote>
+        ${item.tone?`<p><b>Customer tone</b> ${esc(item.tone.toLowerCase())} · <b>Reaction</b> ${esc(item.reaction.toLowerCase())}</p>`:''}
         ${item.reason?`<p><b>AI assessment · ${esc(item.cause.replaceAll('_',' '))}</b> ${esc(item.reason)}</p><p class="muted">This is an assessment, not proof of what caused the complaint.${item.cause==='SERVICE_ACTION'?' Staff action is still needed; a writing tip does not resolve it.':''}</p>`:''}
         ${item.tip?`<label>Writing improvement tip from this feedback<textarea data-feedback-tip="${esc(item.id)}" maxlength="1000" ${item.status==='PROPOSED'?'':'readonly'}>${esc(tip)}</textarea></label>`:''}
         ${item.status==='PROPOSED'?`<label><input type="checkbox" data-tip-confirm="${esc(item.id)}"> I reviewed this as reusable writing advice without private facts or unverified promises.</label>`:''}
@@ -185,11 +188,12 @@ function renderReplyFeedback(status){
         ${item.status==='PROPOSED'?`<button class="primary" type="button" data-reply-learning-action="approve" data-feedback-id="${esc(item.id)}" ${busy?'disabled':''}>Approve & use writing tip</button>`:''}
         ${item.approved?`<button type="button" data-reply-learning-action="test" data-feedback-id="${esc(item.id)}" ${busy||['QUEUED','RUNNING'].includes(item.preview_status)?'disabled':''}>Test improved reply</button>`:''}
         ${item.tip&&item.status!=='REJECTED'?`<button type="button" data-reply-learning-action="revoke" data-feedback-id="${esc(item.id)}" ${replyFeedbackBusy?'disabled':''}>Reject / revoke tip</button>`:''}</div>
-        ${item.approved?`<p class="muted">Writing tip provided to ${item.provided_count||0} published reply agent runs; ${item.negative_after_use||0} received further dissatisfied feedback. These counts are observations, not proof the tip caused an outcome. ${item.scope_condo?'Reuse is limited to the same property.':'Reuse is limited to matching questions.'}</p>`:''}
+        ${item.latest_case?`<button type="button" class="text-button" data-case="${esc(item.latest_case)}">Open latest reply using this tip →</button>`:''}
+        ${item.approved?`<p class="muted">Writing tip provided to ${item.provided_count||0} published reply agent runs; ${item.negative_after_use||0} received further dissatisfied feedback · ${item.positive_after_use||0} received positive feedback. Open the source conversation to review the outcome. ${item.scope_condo?'Reuse is limited to the same property.':'Reuse is limited to matching questions.'}</p>`:''}
         ${item.preview_status==='RUNNING'||item.preview_status==='QUEUED'?'<p role="status">Generating a new draft using the reviewed writing tip…</p>':''}
         ${item.preview?`<p><b>New draft using the reviewed tip · not sent</b></p><blockquote>${esc(item.preview)}</blockquote><p class="muted">${esc(item.comparison_note)}</p>`:''}
         ${item.error?`<p class="error" role="alert">${esc(item.error)}. Review the tip or retry analysis.</p>`:''}</article>`;
-    }).join('')||'<p>No dissatisfied follow-up after a published reply has been recorded yet. Check past replies, or use a test complaint to send a reply and then report Still unresolved. Hermes will create an evidence-linked suggestion rather than inventing a default tip.</p>';
+    }).join('')||'<p>No dissatisfied follow-up after a published reply has been recorded yet. Check past replies, or use a test complaint to send a reply and then report Still unresolved. Luna checks the conversation and proposes a correction when the customer is dissatisfied.</p>');
 }
 document.addEventListener('input',event=>{if(event.target.matches('[data-feedback-tip]'))replyFeedbackDrafts.set(event.target.dataset.feedbackTip,event.target.value);});
 $('scanReplyFeedback').onclick=async()=>{try{const result=await send('reply_learning_scan',{});$('replyFeedbackStatus').textContent=`${result.captured} feedback signal(s) recorded. Pending analysis runs in the background.`;}catch(error){$('replyFeedbackStatus').textContent=error.message;}};

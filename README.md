@@ -2,7 +2,7 @@
 
 An independent prototype for **BeLive Ventures / BeLive CoLiving, Malaysia**, covering **existing-tenant enquiries and complaints only**. It reuses the earlier project's workflow and UI concepts in a separate application, database and memory store. Move-in/out arrangements, inspections, random PIC assignment, owner support, marketing and sales are outside the current scope.
 
-This version has a Python/SQLite backend, hosted Hermes or native Hermes integration, tenant-scoped portal access and configurable connectors. It starts with an empty database. Fictional records are confined to tests, the opt-in evaluation set and an explicitly enabled demo tenant. Normal AI output always uses the configured real model; test doubles exist only in automated tests.
+This version has a Python/SQLite backend, hosted models and optional native Hermes integration, tenant-scoped portal access and configurable connectors. It starts with an empty database. Fictional records are confined to tests, the opt-in evaluation set and an explicitly enabled demo tenant. Normal AI output always uses the configured real model; test doubles exist only in automated tests.
 
 ## New here?
 
@@ -29,7 +29,7 @@ Use Python 3.11 or newer. Double-click **Run BeLive Prototype.bat**, or run:
 python server.py
 ```
 
-Open [the local dashboard](http://127.0.0.1:8877). The launcher starts the backend automatically in its own Python window. Keep that window open for scheduled checks; press Ctrl+C once to stop. The batch launcher exits after opening Python, so it does not show an additional “Terminate batch job” prompt. The server listens only on `127.0.0.1`. No pip packages are needed for the dashboard or deterministic workflows. For hosted Hermes, set a company OpenRouter key in the local .env file. Native Hermes and local Ollama remain available.
+Open [the local dashboard](http://127.0.0.1:8877). The launcher starts the backend automatically in its own Python window. Keep that window open for scheduled checks; press Ctrl+C once to stop. The batch launcher exits after opening Python, so it does not show an additional “Terminate batch job” prompt. The server listens only on `127.0.0.1`. No pip packages are needed for the dashboard or deterministic workflows. The default hosted setup uses GPT-6 Luna and an OpenAI project key in the local .env file. Hosted Hermes, native Hermes and local Ollama are also available.
 
 On the first launch for a database, create your own administrator account in the dashboard. There is no default password. Admins can create Support accounts under **Setup & knowledge**. Operator accounts belong to that database, so selecting a new empty database starts a new setup.
 
@@ -97,7 +97,7 @@ Copy `.env.example` to `.env` in **this** project, fill only the required settin
 
 | Integration | Implemented | Still needed for live use |
 |---|---|---|
-| Hosted Hermes | Hermes 4 405B through OpenRouter, with the same BeLive agent stages and reviewed lessons | Company OpenRouter key, credits, Internet access and a successful connection check |
+| Hosted models | GPT-6 Luna through OpenAI or Hermes 4 405B through OpenRouter, with the same BeLive agent stages and reviewed lessons | API project key, credits, Internet access and a successful connection check |
 | Native Hermes | Bounded `AIAgent` loop; triage and investigation/response stages; two read-only tools | Hermes on PATH, an OpenAI-compatible configured model through the supported OpenAI/Ollama options, provider credentials when required; validation of your own connection and broader support quality |
 | MemoryStore | Isolated current-feedback projection; persistence and revocation tested against installed Hermes | Operator-reviewed, redacted examples |
 | Google reviews | Selected authorised Business Profile location; at most 25 recent text reviews | Company-authorised API access/token and live verification |

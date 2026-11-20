@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from belive import openrouter
+from belive import hosted_ai, decisions
 from belive.hermes_native import native_request, runtime_python
 from belive.store import bounded, redact, now
 from belive.workflow import complaint_level
@@ -16,11 +16,8 @@ COMPANY = ('BeLive Ventures / BeLive CoLiving, Malaysia, serves tenants with fur
 FAILURE_MESSAGES = {
     'AI_NOT_CONFIGURED':'Configure the AI provider and model, then retry. Staff review is required meanwhile.',
     'AI_FAILED_OR_INVALID':'The AI request failed or its response could not be validated. Staff review is required; no response was published.',
-    'OPENROUTER_KEY_REJECTED':'OpenRouter rejected the API key or its model permissions. Check BELIVE_AI_KEY and restart.',
-    'OPENROUTER_CREDITS_REQUIRED':'OpenRouter requires available credits for the configured key.',
-    'OPENROUTER_MODEL_UNAVAILABLE':'OpenRouter found no eligible endpoint for the configured model.',
-    'OPENROUTER_RATE_LIMITED':'The OpenRouter key or model is rate-limited. Retry later.',
-    'OPENROUTER_CONNECTION_FAILED':'BeLive could not complete the OpenRouter request. Check Internet access and provider status.',
+    **hosted_ai.FAILURE_MESSAGES,
+    'AI_INVALID_DECISION':'The Decisions assessment was incomplete or invalid. Staff review is required.',
     'AI_INVALID_JSON':'The AI did not return a valid JSON object. No assessment was accepted.',
     'AI_INVALID_SCHEMA':'The AI assessment did not match the required fields. No assessment was accepted.',
     'AI_INVALID_VALUES':'The AI assessment contained an invalid category, urgency or value. No assessment was accepted.',
@@ -55,9 +52,10 @@ class AgentFailure(ValueError):
         self.agent_trace=trace
 
 class SupportAI:
+    checks_feedback_reactions = True
     def __init__(self,settings,home): self.settings,self.home=settings,Path(home)
     def readiness(self):
-        if self.settings.llm_provider == 'openrouter':
+        if hosted_ai.uses_direct_api(self.settings):
             return bool(self.settings.llm_model and self.settings.llm_api_key)
         if self.settings.llm_provider == 'ollama':
             return bool(self.settings.llm_model)
@@ -66,7 +64,7 @@ class SupportAI:
         return bool(self.settings.llm_provider in {'openai','ollama'} and self.settings.llm_model and
                     (self.settings.llm_provider=='ollama' or self.settings.llm_api_key))
     def _selects_evidence_field(self):
-        return self.settings.llm_provider == 'openrouter' or (
+        return hosted_ai.uses_direct_api(self.settings) or (
             self.settings.llm_provider == 'ollama'
             and urlsplit(self.settings.ollama_base_url).hostname in {'localhost', '127.0.0.1', '::1'}
         )
@@ -75,6 +73,8 @@ class SupportAI:
         from belive.relevance import LOCATION_POLICY
         instruction += '\n'+LOCATION_POLICY
         if not self.readiness(): raise RuntimeError('AI_NOT_CONFIGURED')
+        if role == 'Complaint Analysis Agent' and decisions.enabled(self.settings):
+            return decisions.triage(self.settings, context, instruction)
         def dispatch(name,args):
             if args: raise ValueError('Tool does not accept arguments')
             if name=='read_case_context': return {'context':context}
@@ -86,7 +86,10 @@ class SupportAI:
            'Never invent rent, fees, refunds, balances, rules, permissions, availability, repair findings or dates. '
            'Never claim an action happened, a message was sent, or a problem was resolved. '
            'Do not give electrical, gas, medical or dangerous repair instructions. '
-           'Use the tenant message language. Return only the requested JSON object.'},
+           'Use the tenant message language. When frustrated, acknowledge their specific difficulty briefly. '
+           'Correct misunderstandings, use details already supplied and avoid repeating failed advice. '
+           'Keep the tone calm and respectful without matching insults or inventing promises. '
+           'Return only the requested JSON object.'},
           {'role':'user','content':json.dumps(context)}]
         shape = None
         if role == 'Complaint Analysis Agent':
@@ -107,7 +110,12 @@ class SupportAI:
             props['unsupported_claims'] = {'type':'array','items':{'type':'string'}}
             shape = {'type':'object','properties':props,'required':list(props),'additionalProperties':False}
         if role == 'Reply Feedback Learning Agent':
-            props={'cause':{'type':'string','enum':['COMMUNICATION','SERVICE_ACTION','UNCLEAR']},'reason':{'type':'string'},'tip':{'type':'string'}}
+            props={
+                'reaction':{'type':'string','enum':['DISSATISFIED','POSITIVE','NEUTRAL','UNCLEAR']},
+                'tone':{'type':'string','enum':['ANGRY','FRUSTRATED','CALM','UNCLEAR']},
+                'cause':{'type':'string','enum':['COMMUNICATION','SERVICE_ACTION','UNCLEAR']},
+                'reason':{'type':'string'},'tip':{'type':'string'},
+            }
             shape={'type':'object','properties':props,'required':list(props),'additionalProperties':False}
         if role == 'Support Response Agent':
             types = {'plan':'string','response':'string','requires_human':'boolean','record_ids':'array'}
@@ -138,11 +146,11 @@ class SupportAI:
                 'can_answer':{'type':'boolean'},
                 'topics':{'type':'array','maxItems':3,'items':{'type':'string','enum':list(context['topics'])}},
             },'required':['can_answer','topics'],'additionalProperties':False}
-        if role == 'Connection Check' and self.settings.llm_provider == 'openrouter':
+        if role == 'Connection Check' and hosted_ai.uses_direct_api(self.settings):
             shape = {'type':'object','properties':{'ok':{'type':'boolean'}},
                      'required':['ok'],'additionalProperties':False}
-        if self.settings.llm_provider == 'openrouter':
-            response = openrouter.generate(self.settings, messages, context, examples, shape)
+        if hosted_ai.uses_direct_api(self.settings):
+            response = hosted_ai.generate(self.settings, messages, context, examples, shape)
         else:
             response = self._generate_runtime(role, messages, context, examples, shape, dispatch)
         raw=response.get('text','').strip()
@@ -222,16 +230,29 @@ class SupportAI:
 
     def reply_improvement(self,question,reply,customer_feedback):
         result=self.generate('Reply Feedback Learning Agent',
-            'Study the actual original question, published reply and later dissatisfied customer message. '
+            'Study the actual original question, published reply and customer follow-up in context. '
+            'Recognize English, Malay and Chinese, slang, indirect frustration and sarcasm. '
+            'Return reaction (DISSATISFIED/POSITIVE/NEUTRAL/UNCLEAR) and tone (ANGRY/FRUSTRATED/CALM/UNCLEAR). '
+            'A new detail or ordinary follow-up is NEUTRAL. Appreciation or explicit acceptance is POSITIVE. '
+            'Sarcastic thanks combined with an unresolved problem is DISSATISFIED. Calm disagreement may also be DISSATISFIED. '
+            'Frustration about unresolved physical work is a service issue even if the reply was polite. '
             'Continued complaints are a signal, not proof the wording was wrong. Distinguish COMMUNICATION '
             '(unclear, repetitive, irrelevant, or ignored details), SERVICE_ACTION (a repair or staff action still needed), '
             'or UNCLEAR. Explain the evidence and uncertainty. Propose a specific reusable writing/handling tip '
             'that addresses this exchange, not a default formatting rule. Do not invent facts, diagnose physical '
             'causes, claim resolution, or put private details in the tip. For service-action failures acknowledge '
-            'the open issue and staff need; wording alone cannot repair it. Return cause, reason, tip.',
+            'the open issue and staff need; wording alone cannot repair it. '
+            'Return an empty tip for POSITIVE, NEUTRAL or UNCLEAR reactions. For DISSATISFIED propose a specific correction '
+            'such as acknowledge failed steps, answer the actual question, avoid repetition or ask for staff action. '
+            'Return reaction, tone, cause, reason, tip.',
             {'original_question':question,'published_reply':reply,'customer_followup':customer_feedback},[])
-        if result.get('cause') not in {'COMMUNICATION','SERVICE_ACTION','UNCLEAR'}:raise ValueError('AI_INVALID_SCHEMA')
-        return {'cause':result['cause'],'reason':bounded(result.get('reason'),8,1500),'tip':bounded(result.get('tip'),8,1000)}
+        if (set(result) != {'reaction','tone','cause','reason','tip'}
+                or result['reaction'] not in {'DISSATISFIED','POSITIVE','NEUTRAL','UNCLEAR'}
+                or result['tone'] not in {'ANGRY','FRUSTRATED','CALM','UNCLEAR'}
+                or result['cause'] not in {'COMMUNICATION','SERVICE_ACTION','UNCLEAR'}):
+            raise ValueError('AI_INVALID_SCHEMA')
+        return {**result,'reason':bounded(result['reason'],8,1500),
+                'tip':bounded(result['tip'],8,1000) if result['reaction']=='DISSATISFIED' else ''}
 
     def review_writing_tip(self,tip):
         from belive.relevance import LOCATION_POLICY
@@ -451,7 +472,7 @@ class SupportAI:
             if attempt:
                 instruction += ' Recheck the report type and relevance together; the previous pair conflicted.'
             a = generate('Complaint Analysis Agent', instruction, context, triage_styles)
-            if set(a) != {'report_type','relevance','category','severity','summary','uncertainty','evidence'}:
+            if set(a) - {'decision_details'} != {'report_type','relevance','category','severity','summary','uncertainty','evidence'}:
                 raise ValueError('AI_INVALID_SCHEMA')
             if (a['report_type'] not in {'COMPLAINT','ENQUIRY','NON_SUPPORT'}
                     or a['relevance'] not in {'SUPPORT','NON_SUPPORT','UNCERTAIN'}
@@ -555,7 +576,7 @@ class SupportAI:
             raise ValueError('AI_UNGROUNDED_GUIDANCE')
 
     def sync(self,examples):
-        if self.settings.llm_provider == 'openrouter':
+        if hosted_ai.uses_direct_api(self.settings):
             raise ValueError('Hosted AI reads current reviewed replies automatically.')
         return native_request([],self.settings,mode='memory',home=self.home,
             examples=[{'version_id':e['id'],'approved_reply':e['text']} for e in examples])
@@ -564,4 +585,9 @@ class SupportAI:
         probe=SupportAI(self.settings,self.home.parent/'connection-check')
         result=probe.generate('Connection Check','Return exactly {"ok":true}. Do not call tools.',{'check':'connection only; no tenant data'},[])
         if set(result)!={'ok'} or result['ok'] is not True:raise ValueError('AI_CONNECTION_SCHEMA_INVALID')
+        if decisions.enabled(self.settings):
+            decisions.triage(self.settings, {
+                'case':{'title':'Connection check','description':'How do I check the status of a complaint?'},
+                'conversation':[],
+            },'Classify this neutral support-process question. No tenant data is included.')
         return {'ok':True}

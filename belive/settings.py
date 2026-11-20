@@ -3,7 +3,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from belive.openrouter import DEFAULT_MODEL
+from belive.hosted_ai import DEFAULT_MODELS
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,6 +21,7 @@ class Settings:
     llm_provider: str = 'openai'
     llm_model: str = ''
     llm_api_key: str = ''
+    decisions_enabled: bool = False
     ollama_base_url: str = 'http://127.0.0.1:11434'
     ollama_api_key: str = ''
     acknowledgement_minutes: int = 30
@@ -30,11 +31,10 @@ class Settings:
 def load_settings():
     load_env()
     provider = os.getenv('BELIVE_AI_PROVIDER', 'openai').strip().lower()
-    model = os.getenv('BELIVE_AI_MODEL', '').strip()
-    if provider == 'openrouter' and not model:
-        model = DEFAULT_MODEL
+    model = os.getenv('BELIVE_AI_MODEL', '').strip() or DEFAULT_MODELS.get(provider, '')
     return Settings(llm_provider=provider,
         llm_model=model, llm_api_key=os.getenv('BELIVE_AI_KEY','').strip(),
+        decisions_enabled=os.getenv('BELIVE_DECISIONS_ENABLED','false').strip().lower()=='true',
         ollama_base_url=os.getenv('BELIVE_OLLAMA_URL','http://127.0.0.1:11434'),
         ollama_api_key=os.getenv('BELIVE_OLLAMA_KEY',''),
         acknowledgement_minutes=max(1,int(os.getenv('BELIVE_ACK_MINUTES','30'))),
