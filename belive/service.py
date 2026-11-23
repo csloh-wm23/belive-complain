@@ -21,6 +21,7 @@ COMMANDS.add('source_schedule')
 COMMANDS.add('closure_settings')
 COMMANDS.update({'reply_learning_scan','reply_learning_action'})
 COMMANDS.update({'wa_simulate','wa_knowledge','wa_staff_reply','wa_property'})
+COMMANDS.add('wa_document_action')
 
 PROPERTY_DIRECTORY = Path(__file__).resolve().parents[1] / 'assets' / 'property-directory.json'
 
@@ -56,7 +57,7 @@ def risk(text):
 
 class Service:
     def __init__(self,path,ai=None,workspace_config=None):
-        self.store=Store(path);self.settings=load_settings();self.lock=threading.RLock();self.workspace_config=workspace_config
+        self.store=Store(path);self.settings=load_settings();self.lock=threading.RLock();self.memory_lock=threading.RLock();self.workspace_config=workspace_config
         self.ai=ai or SupportAI(self.settings,self.store.path.parent/'hermes_memory/support')
         # An interrupted external send is uncertain and must never be retried automatically.
         with self.store.connect() as db:
@@ -109,6 +110,11 @@ class Service:
         with self.store.connect() as db:self.store.put(db,'health',check);self.store.event(db,'ai','CONNECTION_CHECK_'+check['status'],check['detail'])
         return check
     def styles(self,db,shared=False,condo_id=None):
+        from belive import shared_memory
+        if shared_memory.enabled(self,db) and not shared:
+            examples=[{'id':x['id'],'text':x['answer'],'public_question':x['question'],'verdict':'CORRECTED','sample_data':x.get('sample_data',False),'case_id':None,'at':''} for x in shared_memory.experiences(self,db)]
+            examples += [{'id':x['id'],'text':x['tip'],'public_question':x['question'],'writing_tip':True,'verdict':'CORRECTED','scope_category':None,'sample_data':x.get('sample_data',False),'case_id':None,'at':''} for x in shared_memory.tips(self,db)]
+            return examples
         latest={}
         for f in reversed(self.store.all(db,'feedback')): latest[f['case_id']]=f
         cases={c['id']:c for c in self.store.all(db,'case')}
@@ -127,6 +133,8 @@ class Service:
                          for x in self.store.all(db,'reply_learning') if x.get('approved') and x['status']=='APPROVED' and x.get('scope_condo')==condo_id]
         return sorted(examples,key=lambda x:x.get('at',''),reverse=True)
     def public_lessons(self,db):
+        from belive import shared_memory
+        if shared_memory.enabled(self,db):return {x['id']:(x['question'],x['answer']) for x in shared_memory.experiences(self,db)}
         lessons={}
         seen=set()
         for feedback in self.store.all(db,'feedback'):
@@ -145,6 +153,8 @@ class Service:
             keys={'cases':'case','condos':'condo','tenants':'tenant',
                   'outbox':'outbox','workorders':'workorder','sources':'source','jobs':'job','records':'record'}
             result={key:self.store.all(db,kind) for key,kind in keys.items()}
+            from belive import shared_memory
+            result['shared_memory']=shared_memory.status(self,db)
             result['condos']=[support_condo(c) for c in result['condos']]
             from belive.connectors import scan_interval
             result['source_interval_minutes']=scan_interval(self.store,db)
@@ -318,6 +328,9 @@ class Service:
             db.execute('INSERT INTO requests VALUES(?,?)',(key,json.dumps({'fingerprint':fingerprint,'result':cached})))
             return result
     def _command(self,db,name,p):
+        if name=='wa_document_action':
+            from belive.company_sop import document_action
+            return document_action(self,db,p)
         if name in {'wa_simulate','wa_knowledge','wa_staff_reply','wa_property'}:
             from belive.whatsapp import command
             return command(self,db,name,p)

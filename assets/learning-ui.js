@@ -39,7 +39,7 @@ function render(status){
     const scenarios=data.learning_scenarios||[];
     const experiencePicker=$('learningExperience');
     const previousExperience=experiencePicker.value;
-    const experienceOptions='<option value="">Automatically match my question</option>'+(data.learning_experiences||[]).map(x=>`<option value="${esc(x.id)}">${x.sample_data?'SAMPLE · ':''}${esc(x.question)} · ${esc(x.case_id)}</option>`).join('');
+    const experienceOptions='<option value="">Automatically match my question</option>'+(data.learning_experiences||[]).map(x=>`<option value="${esc(x.id)}">${x.sample_data?'SAMPLE · ':''}${esc(x.question)} · ${esc(x.case_id||"Shared team memory")}</option>`).join('');
     if(experiencePicker.innerHTML!==experienceOptions){experiencePicker.innerHTML=experienceOptions;experiencePicker.value=previousExperience;}
     const topics=$('learningTopic');
     const options=scenarios.map(topic=>`<option value="${esc(topic.category)}">${esc(topic.label)}</option>`).join('')
@@ -81,7 +81,7 @@ function render(status){
     const hasLearning=Boolean(run?.experience||run?.writing_tip);
     $('learningImprove').hidden=run?.status!=='BASELINE_READY'||(run?.mode==='experience'&&!hasLearning);
     $('learningNoExperience').hidden=!(run?.mode==='experience'&&!hasLearning);
-    $('learningExperienceSource').innerHTML=(run?.experience?`<p><strong>${esc(run.experience.provenance)}</strong> · <button type="button" class="text-button" data-case="${esc(run.experience.case_id)}">Source case ${esc(run.experience.case_id)}</button></p><p>Matches: ${esc(run.experience.question)}</p>`:'')+(run?.writing_tip?`<p><strong>${run.writing_tip.sample_data?'SAMPLE · ':''}Approved writing improvement from customer feedback</strong> · <button type="button" class="text-button" data-case="${esc(run.writing_tip.case_id)}">Source case ${esc(run.writing_tip.case_id)}</button></p>`:'');
+    $('learningExperienceSource').innerHTML=(run?.experience?`<p><strong>${esc(run.experience.provenance)}</strong> · ${run.experience.case_id?`<button type="button" class="text-button" data-case="${esc(run.experience.case_id)}">Source case ${esc(run.experience.case_id)}</button>`:"Shared team memory"}</p><p>Matches: ${esc(run.experience.question)}</p>`:'')+(run?.writing_tip?`<p><strong>${run.writing_tip.sample_data?'SAMPLE · ':''}Approved writing improvement from customer feedback</strong> · ${run.writing_tip.case_id?`<button type="button" class="text-button" data-case="${esc(run.writing_tip.case_id)}">Source case ${esc(run.writing_tip.case_id)}</button>`:"Shared team memory"}</p>`:'');
     $('learningImprove').querySelector('button').disabled=submitting||run?.status!=='BASELINE_READY';
     if(run?.id!==lessonRun&&document.activeElement!==$('learningLesson')){
         $('learningLesson').value=run?.mode==='experience'?matchedLesson(run):run?.lesson||'';

@@ -25,6 +25,7 @@ STATIC={'/':'index.html','/index.html':'index.html','/assets/app.js':'assets/app
 
 STATIC['/assets/learning-ui.js']='assets/learning-ui.js'
 STATIC['/assets/whatsapp-ui.js']='assets/whatsapp-ui.js'
+STATIC['/assets/shared-memory-ui.js']='assets/shared-memory-ui.js'
 STATIC['/assets/fyp.css']='assets/fyp.css'
 STATIC['/assets/workspace-v2.css']='assets/workspace-v2.css'
 STATIC['/assets/workspace-v2.js']='assets/workspace-v2.js'
@@ -83,7 +84,13 @@ class Tasks:
         return self.start('learning-'+run_id,lambda:execute(self.service,run_id))
     def reply_feedback(self,item_id):
         from belive.reply_learning import execute
-        return self.start('reply-feedback-'+item_id,lambda:execute(self.service,item_id))
+        def run():
+            execute(self.service,item_id);self.memory_pending()
+        return self.start('reply-feedback-'+item_id,run)
+    def memory_pending(self):
+        from belive import shared_memory
+        with self.service.store.connect() as db:active=shared_memory.enabled(self.service,db)
+        if active:return self.start('shared-memory-sync',lambda:shared_memory.sync(self.service))
     def pending_reply_feedback(self,case_id=None):
         if not hasattr(self.service.ai,'reply_improvement'):return
         with self.service.store.connect() as db:
@@ -100,6 +107,7 @@ class Tasks:
         while not self.stop.wait(self.service.settings.scheduler_seconds):
             try:
                 self.service.tick()
+                self.memory_pending()
                 self.whatsapp_pending()
                 self.pending_reply_feedback()
                 snapshot=self.service.snapshot()
@@ -183,6 +191,13 @@ def make_handler(service,tasks=None):
                         with service.store.connect() as db:message=service.store.get(db,'wa_message',path.rsplit('/',1)[-1])
                         data=media_path(service,message).read_bytes();self.send_response(200);self.send_header('Content-Type',message['media']['mime']);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
                     except (ValueError,FileNotFoundError):return self.json(404,{'error':'Photo not available'})
+                if path.startswith('/api/wa-document/'):
+                    from belive.company_sop import document_path
+                    try:
+                        with service.store.connect() as db:document=service.store.get(db,'sop_document',path.rsplit('/',1)[-1])
+                        content=document_path(service,document).read_bytes()
+                        self.send_response(200);self.send_header('Content-Type','application/pdf');self.send_header('Content-Disposition','attachment; filename="company-support-reference.pdf"');self.send_header('Content-Length',str(len(content)));self.end_headers();self.wfile.write(content);return
+                    except (ValueError,FileNotFoundError):return self.json(404,{'error':'Document not available'})
                 if path=='/api/status':
                     snapshot=service.snapshot();snapshot.update(tasks=sorted(tasks.running),operator=user)
                     if user['role']!='ADMIN':snapshot['storage']['can_choose']=False;snapshot['backups']=[]
@@ -262,8 +277,22 @@ def make_handler(service,tasks=None):
                 if route in {'portal_issue','portal_revoke'}:return self.json(404,{'error':'This access action has been retired'})
                 if route=='tenant_feedback':raise ValueError('Tenant feedback requires tenant portal access')
                 p={**p,'_actor':user['id']}
-                if route in {'wa_simulate','wa_knowledge','wa_staff_reply','wa_property'}:
-                    result=service.command(route,p,key);tasks.whatsapp_pending();return self.json(200,result)
+                if route.startswith('shared-memory-'):
+                    from belive import shared_memory
+                    if route=='shared-memory-import-key':
+                        from belive.repository_memory import import_key
+                        return self.json(200,import_key(service,p.get('key','')))
+                    if route=='shared-memory-host':return self.json(200,shared_memory.setup_host(service))
+                    if route=='shared-memory-connect':return self.json(200,shared_memory.configure(service,p))
+                    if route=='shared-memory-sync':return self.json(200,shared_memory.sync(service))
+                    if route=='shared-memory-pairing':return self.json(200,shared_memory.pairing(service,p.get('url','')))
+                    if route=='shared-memory-resolve':return self.json(200,shared_memory.resolve(service,p))
+                    if route=='shared-memory-action':return self.json(200,shared_memory.change(service,p))
+                    if route=='shared-memory-network':return self.json(200,shared_memory.network_status())
+                    if route=='shared-memory-private-serve':return self.json(200,shared_memory.enable_private_service(service))
+                    raise ValueError('Unknown shared memory action')
+                if route in {'wa_simulate','wa_knowledge','wa_staff_reply','wa_property','wa_document_action'}:
+                    result=service.command(route,p,key);tasks.memory_pending();tasks.whatsapp_pending();return self.json(200,result)
                 if route in {'learning_start','learning_improve'}:
                     result=service.command(route,p,key);tasks.learning(result['id'])
                     return self.json(200,result)
@@ -323,6 +352,7 @@ def make_handler(service,tasks=None):
                     return self.json(200,service.command('database_location',{'path':str(chosen),'_actor':user['id']},key))
                 if route=='tick':service.tick();return self.json(200,{'checked':True})
                 result=service.command(route,p,key)
+                tasks.memory_pending()
                 if route=='intake':tasks.analyse(result)
                 return self.json(200,result)
             except (ValueError,TypeError,KeyError) as exc:return self.json(400,{'error':str(exc)[:300]})
@@ -336,6 +366,10 @@ def main():
     if not 1024<=args.port<=65535:parser.error('Port must be 1024–65535')
     database=args.database or selected_database()
     service=Service(database,workspace_config=DEFAULT_CONFIG);tasks=Tasks(service)
+    from belive.repository_memory import startup as restore_repository_memory
+    restore_repository_memory(service)
+    from belive import shared_memory
+    shared_memory.start_host(service);tasks.memory_pending()
     with ThreadingHTTPServer(('127.0.0.1',args.port),make_handler(service,tasks)) as server:
         thread=threading.Thread(target=tasks.loop,daemon=True);thread.start()
         url=f'http://127.0.0.1:{args.port}';print('BeLive tenant support: '+url,flush=True)
@@ -344,6 +378,8 @@ def main():
         if not args.no_browser:threading.Timer(.4,lambda:webbrowser.open(url)).start()
         try:server.serve_forever()
         except KeyboardInterrupt:pass
-        finally:tasks.stop.set();thread.join(2)
+        finally:
+            tasks.stop.set();thread.join(2)
+            if getattr(service,'memory_hub',None):service.memory_hub.shutdown();service.memory_hub.server_close()
 
 if __name__=='__main__':main()

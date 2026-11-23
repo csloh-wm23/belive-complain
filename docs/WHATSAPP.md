@@ -36,4 +36,20 @@ Free-text replies are only sent within the 24-hour customer-service window. Outs
 
 Existing feedback learning captures dissatisfied follow-ups after an actual AI reply. Reviewed, approved relevant writing tips can improve later WhatsApp replies; these tips cannot create new company policy or operational facts. This is retrieval and feedback learning, not model weight training.
 
+## Company PDF references and house rules
+
+Open **WhatsApp inbox → Company-approved SOP** to view imported company references. Each document shows its template status and points requiring clarification. Each knowledge section retains its original page excerpts, page numbers, clause references and version. **Download original PDF** requires staff authentication; the source is never a public static file.
+
+Relevant sections are selected by conversation meaning, including short follow-ups. Normal rule questions can be answered without a tenant code, identity check or room number. Affected locations are requested only for an actual physical issue or property-specific information. General template guidance does not establish any particular customer's signed lease, rent, dates or liability.
+
+Sections have three response policies: **General rule** (AI can explain), **Staff decides** (individual actions, approvals, fees and blame require verified staff direction), and **Needs company clarification** (conflicting clauses cannot be silently reconciled or resolved through public web search). AI still acknowledges the customer when seeking staff guidance. Replacement price tables do not prove tenant fault or create automatic bills; good-faith complaints remain accepted.
+
+Verified staff instructions to collect customer details are relayed without immediately creating another staff request. The system waits for the customer's answer; genuinely new conflicting facts can reopen the staff task. Direct customer requests to speak to staff are honoured even while AI asks for missing details; informational questions that merely mention staff are not automatically handed over. A draft rejected by the evidence review gets one bounded revision using that feedback before falling back to staff.
+
+**Disable document** excludes all its sections from future replies without deleting audit history. An individual section can also be disabled. Queued replies are checked against source versions and document status before delivery; revoked or changed knowledge supersedes an unsent reply. Existing sent messages retain their evidence snapshots. Polling does not collapse source excerpts while staff are reading them.
+
+The reviewed import tool is `scripts/import_company_sop.py`. It requires a private PDF, a reviewed JSON manifest with exact page excerpts, and explicit confirmation. It verifies every excerpt against the extracted page and deduplicates the document/manifest. Use the bundled PDF Python runtime or install `pypdf` for this one-time import; the normal server has no extra PDF dependency. Raw PDF text is never treated as system instructions or automatically approved operational policy.
+
+Documents are stored beside the selected database in `company_documents`; reviewed manifests and extraction files should remain in ignored private storage such as `data/knowledge_import`. Back up the database and its document/media directories together. A database-only recovery into another directory will not copy PDF/media files. Obtain permission to send selected support text to the configured model provider before live model testing or production use; do not send entire PDFs, account details or SOP excerpts to public web search.
+
 References: [Meta webhook signature verification](https://developers.facebook.com/docs/graph-api/webhooks/getting-started/), [Meta media API](https://developers.facebook.com/documentation/business-messaging/whatsapp/reference/media/media-api), [OpenAI web search](https://developers.openai.com/api/docs/guides/tools-web-search), [OpenAI image inputs](https://developers.openai.com/api/docs/guides/images-vision).

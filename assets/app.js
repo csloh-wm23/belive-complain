@@ -139,13 +139,13 @@ $('sourcesList').innerHTML=data.sources.map(s=>`<section class="card"><div class
 renderDiscoveries();
 $('memoryExamples').innerHTML=data.examples.map(f=>`<section class="card example-card">
     <p class="eyebrow">${esc(f.provenance||'Staff-reviewed example')}${f.sample_data?' · Fictional data, not a real customer outcome':''}</p>
-    <div class="card-heading"><strong>${f.public_active?'Public auto-reply active':f.public_question?'Outside the current public lesson set':'Writing example'}</strong><button class="text-button" data-case="${esc(f.case_id)}">Source case ${esc(f.case_id)} ↗</button></div>
+    <div class="card-heading"><strong>${f.public_active?'Public auto-reply active':f.public_question?'Outside the current public lesson set':'Writing example'}</strong>${f.case_id?`<button class="text-button" data-case="${esc(f.case_id)}">Source case ${esc(f.case_id)} ↗</button>`:"<span>Shared team memory</span>"}</div>
     ${f.public_question?`<p><b>Matches:</b> ${esc(f.public_question)}</p>`:''}
     <blockquote>${esc(f.text)}</blockquote>
     ${f.public_active?`<p>Matched cases: <strong>${f.matched_cases}</strong></p>`:''}
     ${f.latest_match?`<button class="text-button" data-case="${esc(f.latest_match)}">Latest match ${esc(f.latest_match)} ↗</button>`:''}
     ${f.share?'<p>Shared via authenticated API</p>':''}
-    <div class="case-actions"><button class="danger" data-revoke="${esc(f.case_id)}">Reject & revoke reuse</button></div></section>`).join('')||'<section class="card empty">No reviewed lessons yet. Open a completed complaint and use Teach future replies to add one.</section>';
+    <div class="case-actions">${f.case_id?`<button class="danger" data-revoke="${esc(f.case_id)}">Reject & revoke reuse</button>`:`<button class="danger" data-shared-revoke="experience:${esc(f.id.replace("SHARED-",""))}">Reject & revoke for both computers</button>`}</div></section>`).join('')||'<section class="card empty">No reviewed lessons yet. Open a completed complaint and use Teach future replies to add one.</section>';
 renderKnowledge();renderAdmin();
 $('resources').innerHTML=`<p>${data.condos.length} properties · ${data.tenants.length} verified tenants · ${data.records?.length||0} verified support records</p>`+data.condos.map(c=>`<p><b>${esc(c.id)}</b> — ${esc(c.name)} · ${esc(c.needs_review?'Re-enter verified support guidance':c.rules)}</p>`).join('');
 const outcomes=data.reports.reply_outcomes||{};

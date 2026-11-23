@@ -6,6 +6,7 @@ node_modules/
 .venv/
 artifacts/
 output/qa-python/
+output/knowledge-runtime/
 output/whatsapp-*
 data/
 *.db
@@ -13,3 +14,9 @@ data/
 
 backups/
 recovered/
+shared_memory/
+company_documents/
+whatsapp_media/
+*memory-pairing*.json
+*.knowledge-key
+knowledge-backup.key

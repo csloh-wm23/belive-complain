@@ -15,6 +15,8 @@ def lesson_text(item):
 
 
 def experiences(service,db):
+    from belive import shared_memory
+    if shared_memory.enabled(service,db):return shared_memory.experiences(service,db)
     approved=service.public_lessons(db)
     feedback={f['id']:f for f in service.store.all(db,'feedback')}
     result=[]

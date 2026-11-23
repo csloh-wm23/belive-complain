@@ -44,9 +44,12 @@ def discover(service,db,case_id=None):
 
 def matching(service,db,question,condo_id=None):
     from belive import automation
+    from belive import shared_memory
     results=[]
-    for item in service.store.all(db,'reply_learning'):
-        if not item.get('approved') or item['status']!='APPROVED' or item.get('scope_condo')!=condo_id:continue
+    common=shared_memory.enabled(service,db)
+    items=shared_memory.tips(service,db) if common else service.store.all(db,'reply_learning')
+    for item in items:
+        if not item.get('approved') or item['status']!='APPROVED' or (not common and item.get('scope_condo')!=condo_id):continue
         score=relevance.match_score(question,item['question'])
         general=not relevance.domains(item['question']) and item['category']=='OTHER' and not relevance.domains(question) and not automation.exception_reason(item['question']) and relevance.location_scope(item['question'])=='NONE'
         if score>0 or general:results.append(item)

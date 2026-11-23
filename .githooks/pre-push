@@ -1,0 +1,3 @@
+#!/bin/sh
+# Reject a source-only push when current approved knowledge was not committed.
+python scripts/knowledge_backup.py check || exit 1

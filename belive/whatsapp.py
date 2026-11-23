@@ -148,10 +148,15 @@ def _staff_request(service,db,thread,question,maintenance=False):
 
 
 def sop(service,db,thread):
-    return [x for x in service.store.all(db,'wa_knowledge') if x.get('active') and x.get('verified') and (not x.get('property_ref') or x['property_ref']==thread.get('property_ref'))]
+    from belive.company_sop import eligible
+    from belive.shared_memory import knowledge
+    return [x for x in knowledge(service,db) if eligible(service,db,x) and (not x.get('property_ref') or x['property_ref']==thread.get('property_ref'))]
 
 
 def process_thread(service,tid):
+    from belive import shared_memory
+    with service.store.connect() as db:sharing=shared_memory.enabled(service,db)
+    memory_ready=not sharing or shared_memory.sync(service).get('status')=='ONLINE'
     for _ in range(8):
         with service.lock,service.store.connect() as db:
             pending=[x for x in reversed(service.store.all(db,'wa_turn')) if x['thread_id']==tid and x['status']=='PENDING']
@@ -165,13 +170,28 @@ def process_thread(service,tid):
             messages=[x for x in reversed(service.store.all(db,'wa_message')) if x['thread_id']==tid and x['case_id']==thread['case_id']][-20:]
             instructions=[x for x in reversed(service.store.all(db,'wa_staff')) if x['thread_id']==tid and x['case_id']==thread['case_id'] and x['status']=='ANSWERED'][-3:]
             from belive.reply_learning import matching
-            tips=matching(service,db,next((x['text'] for x in reversed(messages) if x['direction']=='CUSTOMER'),''))
-        steps=[];context={'conversation':[{'role':x['direction'],'text':x['text'],'photo':x.get('vision')} for x in messages],
-            'sop':[{'id':x['id'],'title':x['title'],'text':x['text'],'version':x['version']} for x in knowledge],
+            question=next((x['text'] for x in reversed(messages) if x['direction']=='CUSTOMER'),'')
+            tips=matching(service,db,question)
+            from belive.experience_learning import experiences
+            from belive.relevance import match_score
+            lessons=sorted([x for x in experiences(service,db) if match_score(question,x['question'])>0],key=lambda x:match_score(question,x['question']),reverse=True)[:3]
+            shared_snapshot={x['key']:x['revision'] for x in service.store.all(db,'memory_record')} if sharing else {}
+        from belive.company_sop import retrieve,evidence
+        selected,lookup_uncertain=retrieve(service,knowledge,messages)
+        steps=['Relevant company SOP retrieved'] if selected else []
+        context={'conversation':[{'role':x['direction'],'text':x['text'],'photo':x.get('vision')} for x in messages],
+            'sop':evidence(selected),'sop_lookup_uncertain':lookup_uncertain,
+            'approved_experiences':[{k:x[k] for k in ('id','question','answer','sample_data')} for x in lessons],
+            'latest_sender':messages[-1]['direction'] if messages else '',
+            'explicit_staff_requested':bool(messages and messages[-1]['direction']=='CUSTOMER' and whatsapp_ai.explicit_staff_request(messages[-1]['text'])),
             'staff_guidance':[{'id':x['id'],'verified_solution':x['guidance']} for x in instructions],
             'waiting_for_staff':thread['state']=='WAITING_STAFF','provided_property':thread.get('property_ref'),
             'research_sources':[],'research_attempted':False,'reviewed_writing_tips':[{'id':x['id'],'tip':x['tip']} for x in tips]}
+        used_shared={('sop:'+x['id']) for x in selected}|{('document:'+x['document_id']) for x in selected if x.get('document_id')}
+        used_shared|={('tip:'+x['id'].removeprefix('SHARED-')) for x in tips}|{('experience:'+x['id'].removeprefix('SHARED-')) for x in lessons}
+        shared_revisions={k:shared_snapshot[k] for k in used_shared if k in shared_snapshot}
         try:
+            if not memory_ready:raise ValueError('Shared knowledge unavailable; do not use a potentially revoked local rule')
             for message in messages[-3:]:
                 if message['direction']!='CUSTOMER' or message['kind']!='image' or message.get('vision'):continue
                 media=message.get('media') or download_image(service,message['media_id'])
@@ -202,7 +222,13 @@ def process_thread(service,tid):
                     context.update(research_attempted=True,research_summary=research['summary'],research_sources=research['sources'])
                     steps.append('Company website checked' if draft['research']=='COMPANY' else 'Technical sources searched')
                     draft=whatsapp_ai.reply(service,context)
-            if not urgent and not whatsapp_ai.review(service,context,draft['reply'],draft):raise ValueError('Reply did not pass safety/evidence review')
+            whatsapp_ai.enforce_staff_request(draft,context)
+            if not urgent and not whatsapp_ai.review(service,context,draft['reply'],draft):
+                feedback=context.pop('_review_feedback',{})
+                revised_context={**context,'revision_feedback':feedback,'previous_draft':draft['reply'],'research_attempted':True}
+                draft=whatsapp_ai.reply(service,revised_context);whatsapp_ai.enforce_staff_request(draft,context)
+                if not whatsapp_ai.review(service,context,draft['reply'],draft):raise ValueError('Reply did not pass safety/evidence review')
+                steps.append('Reply revised after evidence review')
             steps.append('Reply reviewed')
         except Exception:
             draft={'reply':'I got your message. I cannot confirm a safe solution yet, so I am asking our team for guidance. You can keep sending details here; I will help you through the next steps.',
@@ -210,7 +236,8 @@ def process_thread(service,tid):
             steps.append('Staff fallback: AI, research or photo check could not complete')
         with service.lock,service.store.connect() as db:
             db.execute('BEGIN IMMEDIATE');current=service.store.get(db,'wa_thread',tid);saved_turn=service.store.get(db,'wa_turn',turn['id'])
-            if current['revision']!=revision or sop(service,db,current)!=knowledge:
+            live_shared={x['key']:x['revision'] for x in service.store.all(db,'memory_record')}
+            if current['revision']!=revision or sop(service,db,current)!=knowledge or any(live_shared.get(k)!=v for k,v in shared_revisions.items()):
                 saved_turn['status']='SUPERSEDED';service.store.put(db,'wa_turn',saved_turn)
                 if not any(x['thread_id']==tid and x['status']=='PENDING' for x in service.store.all(db,'wa_turn')):
                     retry={**turn,'id':'WAT-'+secrets.token_hex(12),'status':'PENDING','at':now()};service.store.put(db,'wa_turn',retry)
@@ -218,23 +245,42 @@ def process_thread(service,tid):
             if draft['needs_staff']:_staff_request(service,db,current,draft['staff_question'],draft['needs_maintenance'])
             else:current['state']='WAITING_STAFF' if any(x['thread_id']==tid and x['status']=='OPEN' for x in service.store.all(db,'wa_staff')) else 'OPEN'
             out={'id':'WAO-'+digest(turn['id'])[:24],'thread_id':tid,'case_id':current['case_id'],'thread_revision':revision,
-                 'text':draft['reply'],'status':'QUEUED','at':now(),'sources':draft.get('sources_used',[]),'research_sources':context['research_sources'],'steps':steps,'tip_ids':[x['id'] for x in tips]}
+                 'text':draft['reply'],'status':'QUEUED','at':now(),'sources':draft.get('sources_used',[]),'research_sources':context['research_sources'],'steps':steps,'tip_ids':[x['id'] for x in tips],
+                 'company_evidence':evidence([x for x in selected if x['id'] in draft.get('sources_used',[])]),
+                 'knowledge_versions':{x['id']:x['version'] for x in selected}}
+            out['shared_revisions']=shared_revisions
             service.store.put(db,'wa_outgoing',out);service.store.put(db,'wa_thread',current)
             saved_turn.update(status='COMPLETE',steps=steps);service.store.put(db,'wa_turn',saved_turn)
         deliver(service,out['id'])
 
 
 def deliver(service,out_id):
+    from belive import shared_memory
+    with service.store.connect() as db:
+        pending=service.store.get(db,'wa_outgoing',out_id)
+        requires_common=bool(pending.get('knowledge_versions') or pending.get('shared_revisions')) and shared_memory.enabled(service,db)
+    if requires_common and shared_memory.sync(service).get('status')!='ONLINE':
+        with service.lock,service.store.connect() as db:
+            pending=service.store.get(db,'wa_outgoing',out_id)
+            if pending['status']=='QUEUED':pending['error']='Shared knowledge is offline; waiting for a current revision before sending';service.store.put(db,'wa_outgoing',pending)
+        return pending
     with service.lock,service.store.connect() as db:
         db.execute('BEGIN IMMEDIATE');out=service.store.get(db,'wa_outgoing',out_id)
         if out['status']!='QUEUED':return out
         thread=service.store.get(db,'wa_thread',out['thread_id'])
-        if out['thread_revision']!=thread['revision']:out['status']='SUPERSEDED'
+        from belive.company_sop import eligible
+        current_knowledge={x['id']:x for x in service.store.all(db,'wa_knowledge')}
+        stale=any(k not in current_knowledge or not eligible(service,db,current_knowledge[k]) or current_knowledge[k]['version']!=v for k,v in out.get('knowledge_versions',{}).items())
+        shared_now={x['key']:x['revision'] for x in service.store.all(db,'memory_record')}
+        stale=stale or any(shared_now.get(k)!=v for k,v in out.get('shared_revisions',{}).items())
+        if out['thread_revision']!=thread['revision'] or stale:out['status']='SUPERSEDED'
         elif datetime.now(timezone.utc).timestamp()-thread.get('last_customer_at',0)>86400:out.update(status='NEEDS_TEMPLATE',error='Customer service window expired; wait for the customer or use an approved WhatsApp template.')
         elif thread['simulated']:out['status']='SIMULATED'
         elif not ready():out.update(status='NOT_CONFIGURED',error='WhatsApp company connection is not configured.')
         else:out['status']='SENDING'
         service.store.put(db,'wa_outgoing',out)
+        if stale and out['thread_revision']==thread['revision'] and not any(x['thread_id']==thread['id'] and x['status']=='PENDING' for x in service.store.all(db,'wa_turn')):
+            service.store.put(db,'wa_turn',{'id':'WAT-'+secrets.token_hex(12),'thread_id':thread['id'],'case_id':thread['case_id'],'message_id':out['id'],'status':'PENDING','at':now()})
     if out['status']=='SENDING':
         c=configuration()
         try:
@@ -255,7 +301,8 @@ def deliver(service,out_id):
                 case.update(status='FOLLOW_UP',handoff=False,next_action='Await customer reply in WhatsApp',ack_due=None,followup_due=None,updated_at=now())
                 case['revision']+=1;service.store.put(db,'case',case)
             from belive.reply_learning import usage
-            tips=[x for x in service.store.all(db,'reply_learning') if x['id'] in out.get('tip_ids',[]) and x.get('approved')]
+            candidates=shared_memory.tips(service,db) if shared_memory.enabled(service,db) else service.store.all(db,'reply_learning')
+            tips=[x for x in candidates if x['id'] in out.get('tip_ids',[]) and x.get('approved')]
             usage(service,db,case,published['id'],tips)
         service.store.event(db,out['case_id'],'WHATSAPP_'+out['status'],'Simulated customer reply' if thread['simulated'] else 'WhatsApp reply delivery state recorded')
     return out
@@ -275,7 +322,9 @@ def command(service,db,name,p):
         old=service.store.get(db,'wa_knowledge',p['id']) if p.get('id') else None
         if old:require(p.get('version')==old['version'],'SOP changed; reload before saving')
         require(p.get('confirmed') is True,'Review this as company-approved SOP before enabling it')
-        item={'id':old['id'] if old else 'SOP-'+secrets.token_hex(8),'title':bounded(p.get('title'),3,160),'text':bounded(p.get('text'),8,18000),
+        if old and old.get('document_id'):
+            require(all(p.get(k,old[k])==old[k] for k in ('title','text','source','property_ref')),'Re-import reviewed document sections to change their wording or scope')
+        item={**(old or {}),'id':old['id'] if old else 'SOP-'+secrets.token_hex(8),'title':bounded(p.get('title'),3,160),'text':bounded(p.get('text'),8,18000),
               'property_ref':bounded(p.get('property_ref',''),0,80),'source':bounded(p.get('source'),3,400),'verified':True,'active':p.get('active',True) is True,
               'version':old['version']+1 if old else 1,'reviewed_by':p.get('_actor','staff'),'at':now()}
         service.store.version(db,'wa_knowledge',item);service.store.put(db,'wa_knowledge',item);return item
@@ -299,6 +348,7 @@ def command(service,db,name,p):
 
 
 def snapshot(service,db):
+    from belive import shared_memory
     threads=service.store.all(db,'wa_thread')[:60];messages=service.store.all(db,'wa_message');outputs=service.store.all(db,'wa_outgoing')
     result=[]
     for thread in threads:
@@ -309,4 +359,5 @@ def snapshot(service,db):
         result.append(copy)
     c=configuration()
     return {'configured':ready(),'webhook_path':'/webhooks/whatsapp','connection_fields':{k:bool(c[k]) for k in ('access_token','app_secret','verify_token','phone_number_id','graph_version','webhook_host')},
-            'threads':result,'knowledge':service.store.all(db,'wa_knowledge'),'pending_turns':sum(x['status']=='PENDING' for x in service.store.all(db,'wa_turn'))}
+            'threads':result,'knowledge':shared_memory.knowledge(service,db),'documents':[{k:v for k,v in x.items() if k!='specification'} for x in shared_memory.documents(service,db)],
+            'pending_turns':sum(x['status']=='PENDING' for x in service.store.all(db,'wa_turn'))}

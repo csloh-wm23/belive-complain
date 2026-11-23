@@ -20,7 +20,9 @@ def plan(**extra):
 class WhatsAppTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.s=Service(Path(self.tmp.name)/'test.db',FakeAI())
-        self.env=patch.dict(os.environ,{'BELIVE_WHATSAPP_ACCESS_TOKEN':'test-only','BELIVE_WHATSAPP_APP_SECRET':'test-secret','BELIVE_WHATSAPP_VERIFY_TOKEN':'verify-test','BELIVE_WHATSAPP_PHONE_NUMBER_ID':'123456','BELIVE_WHATSAPP_GRAPH_VERSION':'v99.0'});self.env.start()
+        # Generated locally for this test only; none is an issued provider credential.
+        self.mock_token=secrets.token_urlsafe(24);self.mock_secret=secrets.token_urlsafe(24);self.mock_verify=secrets.token_urlsafe(24);self.mock_phone_id=str(secrets.randbelow(999999)+1);self.mock_sender='0'*11
+        self.env=patch.dict(os.environ,{'BELIVE_WHATSAPP_ACCESS_TOKEN':self.mock_token,'BELIVE_WHATSAPP_APP_SECRET':self.mock_secret,'BELIVE_WHATSAPP_VERIFY_TOKEN':self.mock_verify,'BELIVE_WHATSAPP_PHONE_NUMBER_ID':self.mock_phone_id,'BELIVE_WHATSAPP_GRAPH_VERSION':'v99.0'});self.env.start()
         self.reply=patch('belive.whatsapp_ai.reply',return_value=plan()).start();self.review=patch('belive.whatsapp_ai.review',return_value=True).start()
         self.net=patch('belive.whatsapp.request_json',side_effect=AssertionError('Unmocked external request')).start()
     def tearDown(self):patch.stopall();self.env.stop();self.tmp.cleanup()
@@ -30,10 +32,25 @@ class WhatsAppTests(unittest.TestCase):
     def incoming(self,text='bro the wifi so suck',customer='alice',**extra):return self.cmd('wa_simulate',customer=customer,text=text,**extra)
     def process(self,r):wa.process_thread(self.s,r['thread_id'])
     def signed(self,payload):
-        raw=json.dumps(payload).encode();return wa.webhook(self.s,raw,'sha256='+hmac.new(b'test-secret',raw,hashlib.sha256).hexdigest())
-    def payload(self,mid='wamid.test',sender='60123456789',timestamp=None):return {'object':'whatsapp_business_account','entry':[{'changes':[{'value':{'metadata':{'phone_number_id':'123456'},'messages':[{'from':sender,'id':mid,'timestamp':str(timestamp or int(datetime.now(timezone.utc).timestamp())),'type':'text','text':{'body':'hello'}}]}}]}]}
+        raw=json.dumps(payload).encode();return wa.webhook(self.s,raw,'sha256='+hmac.new(self.mock_secret.encode(),raw,hashlib.sha256).hexdigest())
+    def payload(self,mid='wamid.test',sender=None,timestamp=None):return {'object':'whatsapp_business_account','entry':[{'changes':[{'value':{'metadata':{'phone_number_id':self.mock_phone_id},'messages':[{'from':sender or self.mock_sender,'id':mid,'timestamp':str(timestamp or int(datetime.now(timezone.utc).timestamp())),'type':'text','text':{'body':'hello'}}]}}]}]}
     def test_short_greeting_and_simulation_never_sends_even_with_credentials(self):
         r=self.incoming('hi');self.process(r);self.assertEqual(self.rows('wa_outgoing')[0]['status'],'SIMULATED');self.net.assert_not_called()
+    def test_direct_staff_requests_are_honoured_even_when_the_model_asks_for_details(self):
+        self.reply.return_value=plan();self.process(self.incoming('Please ask staff to approve my friend staying overnight.'))
+        self.assertEqual(len(self.rows('wa_staff')),1);self.assertEqual(self.rows('wa_thread')[0]['state'],'WAITING_STAFF')
+        self.assertTrue(self.reply.call_args.args[1]['explicit_staff_requested'])
+    def test_informational_staff_mentions_are_not_forced_handoffs(self):
+        from belive.whatsapp_ai import explicit_staff_request
+        for text in ['Do I need to ask staff before a guest visits?','Please tell me whether staff permission is required.','What time do staff work?','请问访客需要员工批准吗？','我想知道员工什么时候上班','Do not ask staff yet.']:
+            with self.subTest(text=text):self.assertFalse(explicit_staff_request(text))
+        for text in ['Please ask staff to approve this.','Can I speak to a human?','Please get staff again.','帮我联系员工','请叫员工来帮忙','我要人工']:
+            with self.subTest(text=text):self.assertTrue(explicit_staff_request(text))
+    def test_review_failure_revises_once_before_needlessly_escalating(self):
+        bad=plan();bad['reply']='A made-up promise.';good=plan();good['reply']='Which device is affected?'
+        self.reply.side_effect=[bad,good];self.review.side_effect=[False,True];self.process(self.incoming())
+        out=self.rows('wa_outgoing')[0];self.assertEqual(out['text'],good['reply']);self.assertIn('Reply revised after evidence review',out['steps']);self.assertEqual(self.rows('wa_staff'),[])
+        self.assertIn('previous_draft',self.reply.call_args.args[1]);self.assertEqual(self.reply.call_count,2)
     def test_duplicates_and_two_customers_are_isolated(self):
         a=self.incoming(message_id='same');self.assertTrue(self.incoming(message_id='same')['duplicate']);b=self.incoming(customer='bob');self.assertNotEqual(a['case_id'],b['case_id']);self.process(a);self.process(b)
         self.assertEqual(len(self.rows('wa_outgoing')),2);self.assertEqual(len(self.rows('wa_turn')),2)
@@ -45,7 +62,7 @@ class WhatsAppTests(unittest.TestCase):
         p=self.payload('wamid.HBgL+test/123==');a=self.signed(p);self.assertEqual(len(a),1);self.assertEqual(self.signed(p),[])
         with self.assertRaises(PermissionError):wa.webhook(self.s,b'{}','sha256=bad')
         p=self.payload('other');p['entry'][0]['changes'][0]['value']['metadata']['phone_number_id']='other';self.assertEqual(self.signed(p),[])
-        self.assertEqual(wa.challenge('hub.mode=subscribe&hub.verify_token=verify-test&hub.challenge=123'),'123')
+        self.assertEqual(wa.challenge('hub.mode=subscribe&hub.verify_token='+self.mock_verify+'&hub.challenge=123'),'123')
     def test_invalid_timestamp_cannot_bypass_window(self):
         with self.assertRaises(ValueError):self.signed(self.payload(timestamp='nan'))
         self.assertEqual(self.rows('wa_thread'),[])
@@ -93,12 +110,12 @@ class WhatsAppTests(unittest.TestCase):
         self.process(r);self.reply.assert_called_once();self.assertTrue(self.reply.call_args.args[1]['staff_guidance'])
     def test_expired_window_and_unknown_delivery_are_not_retried(self):
         ids=self.signed(self.payload());self.net.side_effect=TimeoutError('timeout');wa.process_thread(self.s,ids[0]);out=self.rows('wa_outgoing')[0];self.assertEqual(out['status'],'UNKNOWN');wa.deliver(self.s,out['id']);self.assertEqual(self.net.call_count,1)
-        ids=self.signed(self.payload('old',sender='60987654321',timestamp=1));wa.process_thread(self.s,ids[0]);self.assertEqual(self.rows('wa_outgoing')[0]['status'],'NEEDS_TEMPLATE');self.assertEqual(self.net.call_count,1)
+        ids=self.signed(self.payload('old',sender='0'*10+'1',timestamp=1));wa.process_thread(self.s,ids[0]);self.assertEqual(self.rows('wa_outgoing')[0]['status'],'NEEDS_TEMPLATE');self.assertEqual(self.net.call_count,1)
     def test_new_message_during_generation_supersedes_stale_reply(self):
         def generate(s,ctx):
             self.reply.side_effect=None;self.incoming('Actually it works now, thanks');return plan()
         self.reply.side_effect=generate;self.process(self.incoming());self.assertEqual(len(self.rows('wa_outgoing')),1);self.assertTrue(any(x['status']=='SUPERSEDED' for x in self.rows('wa_turn')))
     def test_snapshot_never_exposes_token_or_full_phone(self):
-        self.signed(self.payload());snapshot=self.s.snapshot()['whatsapp'];encoded=json.dumps(snapshot);self.assertNotIn('60123456789',encoded);self.assertNotIn('test-secret',encoded);self.assertNotIn('test-only',encoded)
+        self.signed(self.payload());snapshot=self.s.snapshot()['whatsapp'];encoded=json.dumps(snapshot);self.assertNotIn(self.mock_sender,encoded);self.assertNotIn(self.mock_secret,encoded);self.assertNotIn(self.mock_token,encoded)
 
 if __name__=='__main__':unittest.main()
