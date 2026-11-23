@@ -36,7 +36,7 @@ LOCAL_FIELDS = {
 
 def uses_direct_api(settings):
     provider = settings.llm_provider
-    return provider == 'openrouter' or (provider == 'openai' and settings.llm_model == DEFAULT_MODELS['openai'])
+    return getattr(settings,'agent_engine','hermes')=='direct' and provider in ENDPOINTS
 
 
 def _prompt_context(value):
@@ -50,9 +50,17 @@ def _prompt_context(value):
     return redact(value) if isinstance(value, str) else value
 
 
-def generate(settings, messages, context, examples, schema, images=None):
+def generate(settings, messages, context, examples, schema, images=None, *, home=None, observer=None, role='', native_tools=None, dispatch=None):
     prompt = {'context': _prompt_context(context),
               'reviewed_examples': [{'id': item['id'], 'text': redact(item['text'])[:320]} for item in examples]}
+    if getattr(settings,'agent_engine','hermes')=='hermes':
+        from belive.hermes_native import native_request
+        actual=[{'role':'system','content':messages[0]['content']},{'role':'user','content':json.dumps(prompt)}]
+        if images:actual[1]['content']=[{'type':'text','text':json.dumps(prompt)}]+[{'type':'image_url','image_url':{'url':x,'detail':'auto'}} for x in images[:3]]
+        return native_request(actual,settings,tools=native_tools or [],dispatch=dispatch,home=home,
+            examples=[{'version_id':x['id'],'approved_reply':redact(x['text'])[:320]} for x in examples],
+            response_schema=schema,observer=observer,role=role,max_steps=6)
+    if getattr(settings,'agent_engine','hermes')!='direct':raise ValueError('AI_UNKNOWN_AGENT_ENGINE')
     response_format = {'type': 'json_object'}
     if schema:
         response_format = {'type': 'json_schema', 'json_schema': {

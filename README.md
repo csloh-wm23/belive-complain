@@ -1,8 +1,10 @@
 # BeLive Tenant Support
 
+Production AI now runs through the **official native Hermes Agent (`run_agent.AIAgent`)**, with GPT/OpenAI as its model provider. Run **Install Hermes Agent.bat** once on each computer before starting BeLive. The interface shows the actual engine and native execution evidence; missing Hermes never silently falls back to a direct model call. See [native Hermes setup and verification](docs/NATIVE_HERMES.md).
+
 An independent prototype for **BeLive Ventures / BeLive CoLiving, Malaysia**, covering **existing-tenant enquiries and complaints only**. It reuses the earlier project's workflow and UI concepts in a separate application, database and memory store. Move-in/out arrangements, inspections, random PIC assignment, owner support, marketing and sales are outside the current scope.
 
-This version has a Python/SQLite backend, hosted models and optional native Hermes integration, tenant-scoped portal access and configurable connectors. It starts with an empty customer database. Approved team knowledge can be restored from the encrypted project backup using the private team recovery key. Fictional records are confined to tests, the opt-in evaluation set, explicitly labelled sample lessons and an enabled demo tenant. Normal AI output always uses the configured real model; test doubles exist only in automated tests.
+This version has a Python/SQLite backend, hosted models executed by native Hermes Agent, tenant-scoped portal access and configurable connectors. It starts with an empty customer database. Approved team knowledge can be restored from the encrypted project backup using the private team recovery key. Fictional records are confined to tests, the opt-in evaluation set, explicitly labelled sample lessons and an enabled demo tenant. Normal AI output always uses the configured real model; test doubles exist only in automated tests.
 
 To upload updates with current SOP and approved self-learning, use **Push BeLive with memory.bat**. The encrypted knowledge file travels with the code; private customer databases and credentials do not. On another computer, import the recovery-key file once under **Self-learning → Team knowledge backup**. See [knowledge backup and restoration](docs/SHARED_MEMORY.md). This is a push/download backup, not live synchronisation.
 
@@ -99,7 +101,7 @@ Copy `.env.example` to `.env` in **this** project, fill only the required settin
 
 | Integration | Implemented | Still needed for live use |
 |---|---|---|
-| Hosted models | GPT-6 Luna through OpenAI or Hermes 4 405B through OpenRouter, with the same BeLive agent stages and reviewed lessons | API project key, credits, Internet access and a successful connection check |
+| Native Agent and model | Official Hermes AIAgent executes support roles and tools; GPT/OpenAI supplies the configured model | Installed native Hermes, provider key, Internet access and a native-engine connection check |
 | Native Hermes | Bounded `AIAgent` loop; triage and investigation/response stages; two read-only tools | Hermes on PATH, an OpenAI-compatible configured model through the supported OpenAI/Ollama options, provider credentials when required; validation of your own connection and broader support quality |
 | MemoryStore | Isolated current-feedback projection; persistence and revocation tested against installed Hermes | Operator-reviewed, redacted examples |
 | Google reviews | Selected authorised Business Profile location; at most 25 recent text reviews | Company-authorised API access/token and live verification |

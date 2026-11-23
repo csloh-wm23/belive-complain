@@ -32,7 +32,7 @@ LEVELS = {
 
 
 def enabled(settings):
-    return bool(settings.decisions_enabled and settings.llm_provider == 'openai'
+    return bool(getattr(settings,'agent_engine','hermes')=='direct' and settings.decisions_enabled and settings.llm_provider == 'openai'
                 and settings.llm_model == 'gpt-6-luna')
 
 

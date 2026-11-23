@@ -53,15 +53,14 @@ class AgentFailure(ValueError):
 
 class SupportAI:
     checks_feedback_reactions = True
-    def __init__(self,settings,home): self.settings,self.home=settings,Path(home)
+    def __init__(self,settings,home): self.settings,self.home=settings,Path(home);self.execution_observer=None
     def readiness(self):
         if hosted_ai.uses_direct_api(self.settings):
             return bool(self.settings.llm_model and self.settings.llm_api_key)
-        if self.settings.llm_provider == 'ollama':
-            return bool(self.settings.llm_model)
+        if self.settings.agent_engine!='hermes':return False
         try: runtime_python()
         except RuntimeError: return False
-        return bool(self.settings.llm_provider in {'openai','ollama'} and self.settings.llm_model and
+        return bool(self.settings.llm_provider in {'openai','openrouter','ollama'} and self.settings.llm_model and
                     (self.settings.llm_provider=='ollama' or self.settings.llm_api_key))
     def _selects_evidence_field(self):
         return hosted_ai.uses_direct_api(self.settings) or (
@@ -146,7 +145,7 @@ class SupportAI:
                 'can_answer':{'type':'boolean'},
                 'topics':{'type':'array','maxItems':3,'items':{'type':'string','enum':list(context['topics'])}},
             },'required':['can_answer','topics'],'additionalProperties':False}
-        if role == 'Connection Check' and hosted_ai.uses_direct_api(self.settings):
+        if role == 'Connection Check':
             shape = {'type':'object','properties':{'ok':{'type':'boolean'}},
                      'required':['ok'],'additionalProperties':False}
         if hosted_ai.uses_direct_api(self.settings):
@@ -160,25 +159,10 @@ class SupportAI:
         return result
 
     def _generate_runtime(self, role, messages, context, examples, shape, dispatch):
-        try:
-            runtime_python()
-        except RuntimeError:
-            if self.settings.llm_provider != 'ollama':
-                raise
-            from urllib.request import Request, urlopen
-            endpoint = self.settings.ollama_base_url.rstrip('/')
-            if urlsplit(endpoint).hostname not in {'127.0.0.1', 'localhost', '::1'}:
-                raise RuntimeError('AI_NOT_CONFIGURED')
-            messages[1]['content'] = json.dumps({'context':context,'reviewed_examples':examples})
-            payload = {'model':self.settings.llm_model,'messages':messages,'stream':False,'format':shape or 'json','think':False}
-            if role in {'Learning Reply Agent', 'Safety Review Agent', 'Reply Feedback Learning Agent'}:
-                payload['options'] = {'temperature': 0}
-            request = Request(endpoint+'/api/chat',json.dumps(payload).encode(),{'Content-Type':'application/json'})
-            with urlopen(request, timeout=90) as reply:
-                return {'text':json.load(reply)['message']['content']}
+        runtime_python()
         return native_request(messages,self.settings,tools=TOOLS,dispatch=dispatch,
             examples=[{'version_id':e['id'],'approved_reply':e['text']} for e in examples],
-            home=self.home,max_steps=5,response_schema=shape)
+            home=self.home,max_steps=5,response_schema=shape,observer=self.execution_observer,role=role)
     def public_reply_preview(self, context):
         high = context.get('complaint_level') == 'HIGH'
         if high:
@@ -579,10 +563,11 @@ class SupportAI:
         if hosted_ai.uses_direct_api(self.settings):
             raise ValueError('Hosted AI reads current reviewed replies automatically.')
         return native_request([],self.settings,mode='memory',home=self.home,
-            examples=[{'version_id':e['id'],'approved_reply':e['text']} for e in examples])
+            examples=[{'version_id':e['id'],'approved_reply':e['text']} for e in examples],observer=self.execution_observer,role='Approved Memory Projection')
 
     def check(self):
         probe=SupportAI(self.settings,self.home.parent/'connection-check')
+        probe.execution_observer=self.execution_observer
         result=probe.generate('Connection Check','Return exactly {"ok":true}. Do not call tools.',{'check':'connection only; no tenant data'},[])
         if set(result)!={'ok'} or result['ok'] is not True:raise ValueError('AI_CONNECTION_SCHEMA_INVALID')
         if decisions.enabled(self.settings):

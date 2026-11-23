@@ -1,5 +1,23 @@
 # Passive WhatsApp support
 
+The actual conversational executor is official native Hermes `AIAgent`, using the configured GPT model. Install it with **Install Hermes Agent.bat**; [engine details and execution evidence](NATIVE_HERMES.md) describe the boundary between the Agent, model, approved memory and delivery layer.
+
+## Tenant Report on the BeLive website
+
+In **Tenant reports · WhatsApp**, save the approved public company number under **Tenant Report website entry**. This requires an administrator; customers do not sign in or provide a tenant code. The public `/belive` site opens the company WhatsApp chat with a short topic message, and the customer presses Send in WhatsApp. Opening the link alone does not create a case or send a message. Existing website complaints remain accessible using Track complaint and the website form.
+
+The link and the AI channel are separate: `wa.me` only opens a chat. The dashboard shows whether API setup is missing, whether a real incoming message was received, whether Meta accepted Hermes's reply, and whether delivery was confirmed for the same public business number. Configuring credentials, running a simulation or merely opening WhatsApp never counts as a verified live connection. Public visitors see that automatic replies are still being connected until real delivery is observed.
+
+Once connected, signed customer messages create cases and run the existing conversational, SOP/experience retrieval, photo, research and staff-guidance agents automatically. A staff solution entered in the backend is private guidance; Hermes adapts and sends the customer-facing reply. Staff review of every ordinary answer is not required. The generic website intake route remains a fallback, rather than pretending to deliver a WhatsApp message.
+
+## Keep the WhatsApp Business mobile app
+
+An already-registered mobile Business app number needs Meta's supported **Coexistence** onboarding if the app is retained. The ordinary Cloud API number-registration screen can reject that number. Do not delete the mobile account, unregister the number, invent business verification details or repeat OTP attempts to work around this distinction. The current program has Cloud API message handling and coexistence mobile-message echo support; it does not claim to grant Tech Provider approval or complete Embedded Signup automatically. Meta approval/onboarding or an authorised coexistence provider and a live HTTPS webhook are still prerequisites for the real number.
+
+Subscribe to `messages` and `smb_message_echoes` through the approved integration. Echoes of occasional mobile staff messages are recorded as staff context, not new customer complaints, and never trigger an unsolicited AI response. A matching AI message echo is deduplicated; historical sync events do not create fresh cases. Phone viewing does not create an echo. Mobile staff replies supersede pending AI drafts; the next customer message resumes the conversation with that context. This does not implement a technical read-only lock in the mobile app.
+
+Official requirements: [Coexistence onboarding](https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/onboarding-business-app-users), [mobile message echoes](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/smb_message_echoes).
+
 Open **WhatsApp inbox**. The private conversation is the primary passive-support flow. Existing website cases and public-review features remain available with their data intact.
 
 ## Try locally now

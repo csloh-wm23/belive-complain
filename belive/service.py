@@ -22,6 +22,7 @@ COMMANDS.add('closure_settings')
 COMMANDS.update({'reply_learning_scan','reply_learning_action'})
 COMMANDS.update({'wa_simulate','wa_knowledge','wa_staff_reply','wa_property'})
 COMMANDS.add('wa_document_action')
+COMMANDS.add('wa_channel')
 
 PROPERTY_DIRECTORY = Path(__file__).resolve().parents[1] / 'assets' / 'property-directory.json'
 
@@ -59,6 +60,7 @@ class Service:
     def __init__(self,path,ai=None,workspace_config=None):
         self.store=Store(path);self.settings=load_settings();self.lock=threading.RLock();self.memory_lock=threading.RLock();self.workspace_config=workspace_config
         self.ai=ai or SupportAI(self.settings,self.store.path.parent/'hermes_memory/support')
+        if isinstance(self.ai,SupportAI):self.ai.execution_observer=self.record_native_execution
         # An interrupted external send is uncertain and must never be retried automatically.
         with self.store.connect() as db:
             for item in self.store.all(db,'outbox'):
@@ -80,6 +82,11 @@ class Service:
                 if item['status']=='SENDING':item.update(status='UNKNOWN',error='Interrupted send: check WhatsApp before retrying');self.store.put(db,'wa_outgoing',item)
             for item in self.store.all(db,'wa_turn'):
                 if item['status']=='PROCESSING':item['status']='PENDING';self.store.put(db,'wa_turn',item)
+    def record_native_execution(self,event):
+        if event.get('engine')!='hermes-native' or event.get('agent_class')!='run_agent.AIAgent':raise ValueError('Unverified native execution record')
+        allowed=('engine','agent_class','version','commit','api_calls','executed_tools','memory_entries','native_memory_loaded','role','mode','provider','model','scope_hash')
+        item={k:event.get(k) for k in allowed};item.update(id='NATIVE-'+secrets.token_hex(10),at=now())
+        with self.lock,self.store.connect() as db:self.store.put(db,'native_execution',item)
     def context(self,db,c):
         from belive.conversations import conversation
         context={'case':{k:c[k] for k in ('title','description','category','severity')},'verified_records':[],
@@ -93,11 +100,12 @@ class Service:
         return automation.add_context(self.store,db,c,context)
     def check_ai(self):
         check={'id':'ai','status':'RUNNING','at':now(),'provider':self.settings.llm_provider,'model':self.settings.llm_model,
+               'engine':self.settings.agent_engine,
                'decisions':decisions.enabled(self.settings)}
         with self.store.connect() as db:self.store.put(db,'health',check)
         try:
             self.ai.check()
-            detail = 'A real configured-provider response passed the connection schema check.'
+            detail = 'A real native Hermes Agent response passed the connection schema check.' if self.settings.agent_engine=='hermes' else 'A real direct-provider response passed the connection schema check (not native Hermes).'
             if decisions.enabled(self.settings):
                 detail += ' Decisions triage also returned valid choices.'
             check.update(status='PASSED',detail=detail)
@@ -224,6 +232,7 @@ class Service:
             result['learning_scenarios']=learning.scenarios(self,db)
             result['learned_styles']=self.store.all(db,'learned_style')
             result['readiness']={'ai':self.ai.readiness(),'scheduler':True,'provider':self.settings.llm_provider,'model':self.settings.llm_model,
+                                 'engine':self.settings.agent_engine,'native_executions':self.store.all(db,'native_execution')[:15],
                                  'hosted':hosted_ai.uses_direct_api(self.settings), 'decisions':decisions.enabled(self.settings)}
             from belive.workspace import selected_database
             active=self.store.path.resolve()
@@ -331,6 +340,9 @@ class Service:
         if name=='wa_document_action':
             from belive.company_sop import document_action
             return document_action(self,db,p)
+        if name=='wa_channel':
+            from belive.whatsapp_channel import save
+            return save(self,db,p)
         if name in {'wa_simulate','wa_knowledge','wa_staff_reply','wa_property'}:
             from belive.whatsapp import command
             return command(self,db,name,p)

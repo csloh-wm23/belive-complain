@@ -117,6 +117,12 @@ def webhook(service,raw,signature):
             for change in entry.get('changes',[]):
                 value=change.get('value',{})
                 if value.get('metadata',{}).get('phone_number_id')!=c['phone_number_id']:continue
+                from belive.whatsapp_channel import proof
+                metadata=value.get('metadata',{})
+                if change.get('field')=='smb_message_echoes':
+                    for echo in value.get('message_echoes',[]):_echo(service,db,echo)
+                    continue
+                if change.get('field') not in {None,'messages'}:continue
                 for status in value.get('statuses',[]):
                     for out in service.store.all(db,'wa_outgoing'):
                         if out.get('external_id')==status.get('id'):
@@ -124,12 +130,33 @@ def webhook(service,raw,signature):
                             new=status.get('status','').upper()
                             if new in rank and rank[new]>=rank.get(out['status'],0):
                                 out['status']=new;service.store.put(db,'wa_outgoing',out)
+                                if new in {'DELIVERED','READ'}:proof(service,db,metadata,last_reply_delivered=now())
                 for msg in value.get('messages',[]):
                     kind=msg.get('type','unsupported')
                     text=msg.get('text',{}).get('body','') if kind=='text' else msg.get('image',{}).get('caption','')
                     result=_ingest(service,db,msg.get('from',''),msg.get('id',''),bounded(text,0,6000),kind,msg.get('timestamp',0),media_id=msg.get('image',{}).get('id') if kind=='image' else None)
+                    proof(service,db,metadata,last_customer_message=now())
                     if not result['duplicate']:threads.add(result['thread_id'])
     return sorted(threads)
+
+
+def _echo(service,db,message):
+    """Mirror a mobile-app message as context; never treat it as a customer request."""
+    external_id=message.get('id','');recipient=str(message.get('to','')).lstrip('+')
+    if not re.fullmatch(r'[A-Za-z0-9_.:=/+\-]{1,512}',external_id) or not re.fullmatch(r'\d{6,20}',recipient):return
+    if any(x.get('external_id')==external_id for x in service.store.all(db,'wa_message')):return
+    tid='WA-'+digest(configuration()['phone_number_id']+':'+recipient)[:20]
+    thread=next((x for x in service.store.all(db,'wa_thread') if x['id']==tid),None)
+    if not thread:return  # Old mobile-only chats never create unsolicited AI complaints/replies.
+    kind=message.get('type','unsupported')
+    text=message.get('text',{}).get('body','') if kind=='text' else 'Staff sent a '+kind+' message from the mobile app.'
+    text=bounded(text,0,6000)
+    service.store.put(db,'wa_message',{'id':'WAM-'+digest('mobile:'+external_id)[:24],'thread_id':tid,'case_id':thread['case_id'],'external_id':external_id,'direction':'STAFF_MOBILE','text':text,'kind':kind,'at':now()})
+    # Supersede drafts made before a real human mobile reply; the next customer message resumes AI.
+    thread['revision']+=1;service.store.put(db,'wa_thread',thread)
+    for turn in service.store.all(db,'wa_turn'):
+        if turn['thread_id']==tid and turn['status']=='PENDING':turn['status']='SUPERSEDED';service.store.put(db,'wa_turn',turn)
+    post(service.store,db,service.store.get(db,'case',thread['case_id']),'SUPPORT',text[:3000] or 'Staff mobile reply.','wa-mobile-'+external_id)
 
 
 def _staff_request(service,db,thread,question,maintenance=False):
@@ -137,7 +164,7 @@ def _staff_request(service,db,thread,question,maintenance=False):
     case=service.store.get(db,'case',thread['case_id'])
     was_maintenance=bool(existing and existing.get('maintenance'))
     item=existing or {'id':'WAS-'+secrets.token_hex(6),'thread_id':thread['id'],'case_id':case['id'],'status':'OPEN','at':now()}
-    item.update(question=question or 'Please review this complaint and provide a verified solution.',maintenance=maintenance or item.get('maintenance',False))
+    item.update(question=question or 'Please review this customer support request and provide verified guidance.',maintenance=maintenance or item.get('maintenance',False))
     service.store.put(db,'wa_staff',item)
     thread['state']='WAITING_STAFF'
     if not existing:
@@ -154,10 +181,16 @@ def sop(service,db,thread):
 
 
 def process_thread(service,tid):
+    from belive.hermes_native import conversation_scope
+    with conversation_scope(tid):return _process_thread(service,tid)
+
+
+def _process_thread(service,tid):
     from belive import shared_memory
     with service.store.connect() as db:sharing=shared_memory.enabled(service,db)
     memory_ready=not sharing or shared_memory.sync(service).get('status')=='ONLINE'
     for _ in range(8):
+        native_started_at=now()
         with service.lock,service.store.connect() as db:
             pending=[x for x in reversed(service.store.all(db,'wa_turn')) if x['thread_id']==tid and x['status']=='PENDING']
             if not pending:return
@@ -249,6 +282,11 @@ def process_thread(service,tid):
                  'company_evidence':evidence([x for x in selected if x['id'] in draft.get('sources_used',[])]),
                  'knowledge_versions':{x['id']:x['version'] for x in selected}}
             out['shared_revisions']=shared_revisions
+            scope_hash=hashlib.sha256(tid.encode()).hexdigest()[:24]
+            executions=[x for x in service.store.all(db,'native_execution') if x.get('scope_hash')==scope_hash and x['at']>=native_started_at]
+            out['native_execution_ids']=[x['id'] for x in executions]
+            out['native_reply_verified']=any(x.get('role')=='WhatsApp Customer Support Agent' and x.get('engine')=='hermes-native' for x in executions)
+            out['native_tools']=sorted({name for x in executions for name in x.get('executed_tools',[])})
             service.store.put(db,'wa_outgoing',out);service.store.put(db,'wa_thread',current)
             saved_turn.update(status='COMPLETE',steps=steps);service.store.put(db,'wa_turn',saved_turn)
         deliver(service,out['id'])
@@ -294,8 +332,11 @@ def deliver(service,out_id):
     with service.lock,service.store.connect() as db:
         service.store.put(db,'wa_outgoing',out)
         if out['status'] in {'ACCEPTED','SIMULATED'}:
-            message={'id':'WAM-'+digest(out['id'])[:24],'thread_id':thread['id'],'case_id':out['case_id'],'direction':'AI','text':out['text'],'kind':'text','at':now(),'delivery':out['status']}
+            message={'id':'WAM-'+digest(out['id'])[:24],'thread_id':thread['id'],'case_id':out['case_id'],'direction':'AI','text':out['text'],'kind':'text','at':now(),'delivery':out['status'],'external_id':out.get('external_id')}
             service.store.put(db,'wa_message',message)
+            if out['status']=='ACCEPTED':
+                from belive.whatsapp_channel import proof
+                proof(service,db,{'phone_number_id':configuration()['phone_number_id']},last_reply_accepted=now())
             case=service.store.get(db,'case',out['case_id']);published=post(service.store,db,case,'AI_SUPPORT',out['text'],'wa-out-'+out['id'])
             if not any(x['thread_id']==thread['id'] and x['status']=='OPEN' for x in service.store.all(db,'wa_staff')):
                 case.update(status='FOLLOW_UP',handoff=False,next_action='Await customer reply in WhatsApp',ack_due=None,followup_due=None,updated_at=now())
@@ -358,6 +399,8 @@ def snapshot(service,db):
         copy['staff_requests']=[x for x in service.store.all(db,'wa_staff') if x['thread_id']==thread['id']]
         result.append(copy)
     c=configuration()
+    from belive.whatsapp_channel import public,observed
     return {'configured':ready(),'webhook_path':'/webhooks/whatsapp','connection_fields':{k:bool(c[k]) for k in ('access_token','app_secret','verify_token','phone_number_id','graph_version','webhook_host')},
+            'tenant_report':public(service,db),'connection_status':observed(service,db),
             'threads':result,'knowledge':shared_memory.knowledge(service,db),'documents':[{k:v for k,v in x.items() if k!='specification'} for x in shared_memory.documents(service,db)],
             'pending_turns':sum(x['status']=='PENDING' for x in service.store.all(db,'wa_turn'))}

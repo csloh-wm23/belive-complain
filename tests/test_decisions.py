@@ -31,7 +31,7 @@ def fixture():
 
 class DecisionsTests(unittest.TestCase):
     def setUp(self):
-        self.settings=Settings(llm_provider='openai',llm_model='gpt-6-luna',
+        self.settings=Settings(agent_engine='direct',llm_provider='openai',llm_model='gpt-6-luna',
                                llm_api_key='fixture-only',decisions_enabled=True)
         self.context={'case':{'title':'Washer fault','description':'The shared washer is broken.'},
                       'conversation':[],'tenant_verified':True,'verified_records':[]}

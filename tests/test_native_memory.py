@@ -5,9 +5,13 @@ import unittest
 from pathlib import Path
 from belive.ai import SupportAI
 from belive.settings import Settings
-from belive.hermes_native import memory_snapshot
+from belive.hermes_native import memory_snapshot,runtime_python
 
-@unittest.skipUnless(shutil.which('hermes'),'Native Hermes is not installed')
+def installed():
+    try:runtime_python();return True
+    except RuntimeError:return False
+
+@unittest.skipUnless(installed(),'Native Hermes is not installed')
 class NativeMemoryTests(unittest.TestCase):
     def test_current_projection_persists_and_revokes(self):
         with tempfile.TemporaryDirectory() as tmp:

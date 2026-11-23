@@ -18,6 +18,7 @@ def load_env():
 
 @dataclass
 class Settings:
+    agent_engine: str = 'hermes'
     llm_provider: str = 'openai'
     llm_model: str = ''
     llm_api_key: str = ''
@@ -32,7 +33,7 @@ def load_settings():
     load_env()
     provider = os.getenv('BELIVE_AI_PROVIDER', 'openai').strip().lower()
     model = os.getenv('BELIVE_AI_MODEL', '').strip() or DEFAULT_MODELS.get(provider, '')
-    return Settings(llm_provider=provider,
+    return Settings(agent_engine=os.getenv('BELIVE_AGENT_ENGINE','hermes').strip().lower(),llm_provider=provider,
         llm_model=model, llm_api_key=os.getenv('BELIVE_AI_KEY','').strip(),
         decisions_enabled=os.getenv('BELIVE_DECISIONS_ENABLED','false').strip().lower()=='true',
         ollama_base_url=os.getenv('BELIVE_OLLAMA_URL','http://127.0.0.1:11434'),

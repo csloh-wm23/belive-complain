@@ -146,7 +146,7 @@ class AIValidationTests(unittest.TestCase):
             'finish_reason': 'stop', 'message': {'content': json.dumps(value)},
         }]}).encode())
 
-    def test_hosted_models_run_both_agents_with_reviewed_replies_without_native_runtime(self):
+    def test_explicit_legacy_direct_transport_retains_its_validation_without_native_runtime(self):
         lesson = {'id':'STYLE-TEST','text':'Ask when the appliance stopped. staff@example.com',
                   'tenant_id':'TENANT-PRIVATE'}
         context = {**self.context, 'property_version': {'id': 'PROPERTY-PRIVATE'},
@@ -155,7 +155,7 @@ class AIValidationTests(unittest.TestCase):
         for provider, model in hosted_ai.DEFAULT_MODELS.items():
             with self.subTest(provider=provider):
                 with patch.dict(os.environ, {
-                    'BELIVE_AI_PROVIDER': provider, 'BELIVE_AI_MODEL': '', 'BELIVE_AI_KEY': 'test-key-only',
+                    'BELIVE_AGENT_ENGINE':'direct','BELIVE_AI_PROVIDER': provider, 'BELIVE_AI_MODEL': '', 'BELIVE_AI_KEY': 'test-key-only',
                 }), patch('belive.settings.load_env'):
                     settings = load_settings()
                 self.assertEqual(settings.llm_model, model)
@@ -200,7 +200,7 @@ class AIValidationTests(unittest.TestCase):
     def test_hosted_connection_check_reports_missing_key_and_safe_auth_failure(self):
         for provider, model in hosted_ai.DEFAULT_MODELS.items():
             with self.subTest(provider=provider):
-                settings = Settings(llm_provider=provider, llm_model=model)
+                settings = Settings(agent_engine='direct',llm_provider=provider, llm_model=model)
                 with patch('belive.service.load_settings', return_value=settings):
                     service = Service(self.root / (provider+'.db'))
                 with (

@@ -19,7 +19,7 @@ if(nav)nav.innerHTML=`
 const overview=document.querySelector('[data-page="overview"]');
 if(overview)overview.innerHTML=`
   <section class="card command-hero">
-    <h2>Tenant support</h2>
+    <h2>Customer support</h2>
     <div class="entry-lanes">
       <article class="entry-lane">
         <h3>Public reviews</h3>
@@ -28,17 +28,17 @@ if(overview)overview.innerHTML=`
         <div class="lane-actions"><button class="primary" data-go="sources">Open public reviews</button></div>
       </article>
       <article class="entry-lane">
-        <h3>Tenant complaints</h3>
+        <h3>Customer Support</h3>
         <p>Open the queue to review replies or take ownership of a case.</p>
         <div class="lane-status" id="reactiveSummary"></div>
-        <div class="lane-actions"><button class="primary" data-go="cases">Open complaints</button></div>
+        <div class="lane-actions"><button class="primary" data-go="cases">Open Customer Support</button></div>
       </article>
     </div>
   </section>
   <div class="metrics" id="metrics"></div>
   <div class="command-grid">
     <div>
-      <section class="card"><div class="card-heading"><div><h2>Unified complaint queue</h2><p>Proactive and reactive complaints appear together.</p></div></div><div class="table-scroll"><table><thead><tr><th>Case</th><th>Urgency</th><th>Status</th><th>Owner</th><th>Next action / deadline</th></tr></thead><tbody id="recentCases"></tbody></table></div></section>
+      <section class="card"><div class="card-heading"><div><h2>Unified support queue</h2><p>Public reports and customer support cases appear together.</p></div></div><div class="table-scroll"><table><thead><tr><th>Case</th><th>Urgency</th><th>Status</th><th>Owner</th><th>Next action / deadline</th></tr></thead><tbody id="recentCases"></tbody></table></div></section>
       <section class="card"><h2>Automatic support</h2><p id="routineSummary"></p></section>
     </div>
     <aside>

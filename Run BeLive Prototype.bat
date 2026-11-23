@@ -7,6 +7,12 @@ if errorlevel 1 (
   exit /b 1
 )
 rem Run Python in its own console so Ctrl+C never reaches a waiting batch job.
+python scripts/install_native_hermes.py --check >nul 2>nul
+if errorlevel 1 (
+  echo Native Hermes Agent is required. Run "Install Hermes Agent.bat" once, then start BeLive again.
+  pause
+  exit /b 1
+)
 if exist "knowledge\team-memory.enc.json" (
   python scripts/knowledge_backup.py runtime
   if errorlevel 1 exit /b 1

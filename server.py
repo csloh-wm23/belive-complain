@@ -165,7 +165,15 @@ def make_handler(service,tasks=None):
                 except ValueError:return self.json(403,{'error':'Webhook verification failed'})
             if not self.valid_host():return self.json(403,{'error':'Local host required'})
             path=urlsplit(self.path).path
+            if path=='/support/whatsapp':
+                from belive.whatsapp_channel import public
+                with service.store.connect() as db:channel=public(service,db)
+                if not channel['available']:return self.json(503,{'error':'The company WhatsApp number has not been configured. Please use the website complaint form.'})
+                self.send_response(302);self.send_header('Location',channel['chat_url']);self.send_header('Cache-Control','no-store');self.end_headers();return
             if path=='/api/auth':return self.json(200,{'setup_required':not access.users(),'user':access.current(self.session()),'csrf_token':csrf})
+            if path=='/api/support-channel':
+                from belive.whatsapp_channel import public
+                with service.store.connect() as db:return self.json(200,public(service,db))
             if path=='/api/demo':
                 from belive.demo import info
                 with service.store.connect() as db:result=info(service,db)
