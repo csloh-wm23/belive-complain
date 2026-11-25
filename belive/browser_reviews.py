@@ -95,7 +95,7 @@ def _google_page(*, headless, profile=None):
             if profile is not None:
                 try:
                     context = playwright.chromium.launch_persistent_context(
-                        profile, channel='chrome', headless=False, timeout=9000, locale='en-MY',
+                        profile, channel='chrome', headless=headless, timeout=9000, locale='en-MY',
                         accept_downloads=False, service_workers='block',
                     )
                 except PlaywrightError:
@@ -266,7 +266,7 @@ def read_browser_review_batch(value):
 
     if listing:
         profile = review_chrome_profile()
-        with _google_page(headless=False, profile=profile if profile and profile.is_dir() else None) as page:
+        with _google_page(headless=True, profile=profile if profile and profile.is_dir() else None) as page:
             return _collect_listing(page, listing), 0
 
     links = [google_review_share_link(link) for link in links]

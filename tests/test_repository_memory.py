@@ -63,6 +63,15 @@ class RepositoryMemoryTests(unittest.TestCase):
         self.export();self.restore();self.assertEqual((self.b.store.path.parent/'company_documents'/(sha+'.pdf')).read_bytes(),body)
         (directory/(sha+'.pdf')).write_bytes(b'corrupted')
         with self.assertRaises(ValueError):self.export()
+    def test_key_alone_without_private_archive_gives_actionable_error_without_changes(self):
+        key=base64.b64encode(secrets.token_bytes(32)).decode()
+        before=self.b.snapshot()
+        with patch('belive.repository_memory.ARCHIVE',self.root/'absent-private-backup.json'),patch('belive.repository_memory.restore') as restore:
+            with self.assertRaisesRegex(ValueError,'Copy the private encrypted backup'):
+                rm.import_key(self.b,key)
+            restore.assert_not_called()
+        self.assertFalse(rm.key_path(self.b).exists())
+        self.assertEqual(self.b.snapshot()['cases'],before['cases'])
     def test_push_check_rejects_stale_knowledge_before_attempting_git(self):
         from scripts import knowledge_backup
         self.seed();self.export()

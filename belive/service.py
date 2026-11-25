@@ -58,7 +58,7 @@ def risk(text):
 
 class Service:
     def __init__(self,path,ai=None,workspace_config=None):
-        self.store=Store(path);self.settings=load_settings();self.lock=threading.RLock();self.memory_lock=threading.RLock();self.workspace_config=workspace_config
+        self.store=Store(path);self.settings=load_settings(path);self.lock=threading.RLock();self.memory_lock=threading.RLock();self.workspace_config=workspace_config
         self.ai=ai or SupportAI(self.settings,self.store.path.parent/'hermes_memory/support')
         if isinstance(self.ai,SupportAI):self.ai.execution_observer=self.record_native_execution
         # An interrupted external send is uncertain and must never be retried automatically.

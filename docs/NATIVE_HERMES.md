@@ -4,7 +4,7 @@ The production default is `BELIVE_AGENT_ENGINE=hermes`. OpenAI/GPT remains the p
 
 ## Installation and startup
 
-On another Windows computer, retain your own `.env`, database, company documents and recovery key. Install Git for Windows and Python, run **Install Hermes Agent.bat** once, then **Run BeLive Prototype.bat**. The installer checks out official `NousResearch/hermes-agent` release **v0.23.3**, installs its locked core dependencies with Python 3.14, and verifies real `AIAgent` and `MemoryStore` imports. It does not install Ubuntu or computer-control/browser extras. Existing modified runtime files are preserved rather than reset. Runtime locations are recorded in ignored `data/hermes-runtime.json`; dependencies and private Agent profiles do not enter GitHub.
+Before updating an existing computer, preserve your own `.env`, data/database, company documents and credential key. Export and privately save the knowledge archive plus its matching recovery key outside the checkout before pulling; older source versions tracked that archive. On another Windows computer, obtain both knowledge files privately and place the archive at `knowledge/team-memory.enc.json` before importing the key. See [private knowledge transfer](SHARED_MEMORY.md). Install Git for Windows and Python, run **Install Hermes Agent.bat** once, then **Run BeLive Prototype.bat**. The installer checks out official `NousResearch/hermes-agent` release **v0.23.3**, installs its locked core dependencies with Python 3.14, and verifies real `AIAgent` and `MemoryStore` imports. It does not install Ubuntu or computer-control/browser extras. Existing modified runtime files are preserved rather than reset. Runtime locations are recorded in ignored `data/hermes-runtime.json`; dependencies and private Agent profiles do not enter GitHub.
 
 `BELIVE_HERMES_PYTHON` can explicitly select an existing Hermes environment. An unavailable native runtime fails closed; the launcher tells the operator to install it, and the application does not silently call GPT directly.
 
@@ -16,13 +16,13 @@ Only explicitly registered BeLive tools are exposed. The Agent cannot acquire te
 
 ## Memory and customer isolation
 
-Canonical approved company knowledge remains in BeLive's versioned records and encrypted push/download backup. It is retrieved by the Agent's evidence tool. Approved writing guidance is projected into official Hermes `MemoryStore`; rejections revoke the projection on the next request. Customer follow-up analysis proposes learning for review rather than automatically publishing private or unverified content.
+Canonical approved company knowledge remains in BeLive's versioned records and private encrypted archive. Code-only GitHub updates do not distribute that archive, its key or the knowledge; authorised teammates exchange both files privately and restore them locally. It is retrieved by the Agent's evidence tool. Approved writing guidance is projected into official Hermes `MemoryStore`; rejections revoke the projection on the next request. Customer follow-up analysis proposes learning for review rather than automatically publishing private or unverified content.
 
 WhatsApp threads use separate hashed native profiles, and each run receives only its current conversation/evidence. Default context files are disabled, while official Hermes memory loading remains enabled in the isolated profile. The worker checks that the native Agent loaded exactly the current approved MemoryStore projection; withdrawn entries are removed before generation. Raw provider keys travel to the subprocess through stdin, never command arguments, status responses or execution records.
 
 ## Verify the engine
 
-Open **System setup → AI & replies → Test AI connection**. The status states the Agent engine separately from the GPT model. **Native Hermes execution evidence** lists the official class, release/commit, role, real model-call count and executed tool names. A WhatsApp output also records the native execution IDs and tools that produced its reply. A memory-only operation with zero model calls is not proof of an inference run.
+Open **System setup → AI & knowledge → Connection settings → Test AI connection**. The status states the Agent engine separately from the GPT model. **Native Hermes execution evidence** lists the official class, release/commit, role, real model-call count and executed tool names. A WhatsApp output also records the native execution IDs and tools that produced its reply. A memory-only operation with zero model calls is not proof of an inference run.
 
 This engine check is separate from WhatsApp connectivity. A website `wa.me` link, an installed Agent or a successful simulated conversation does not authorise the company number. Retaining the phone Business app still requires Meta-supported coexistence onboarding and a reachable production webhook.
 

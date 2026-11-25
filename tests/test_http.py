@@ -14,13 +14,14 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from unittest.mock import patch
 from belive.service import Service
-from server import make_handler
+from server import make_handler,Tasks
 from test_backend import FakeAI
 
 class HttpTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.s=Service(Path(self.tmp.name)/'test.db',FakeAI())
-        self.server=ThreadingHTTPServer(('127.0.0.1',0),make_handler(self.s))
+        self.tasks=Tasks(self.s)
+        self.server=ThreadingHTTPServer(('127.0.0.1',0),make_handler(self.s,self.tasks))
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
         self.url=f'http://127.0.0.1:{self.server.server_port}'
         page=urlopen(self.url).read().decode();self.csrf=re.search('name="csrf-token" content="([^"]+)"',page)[1]
@@ -49,11 +50,12 @@ class HttpTests(unittest.TestCase):
         for path in ['/data/belive.db','/.env','/belive/settings.py','/../server.py']:
             self.assertEqual(self.request(path)[0],404)
         self.assertEqual(self.request('/api/portal',headers={'Authorization':'Bearer invalid'})[0],401)
-    def test_tenant_website_links_to_scoped_portal(self):
+    def test_tenant_website_prioritizes_whatsapp_and_keeps_tracking(self):
         # The public entry page must never grant operator or tenant-record access.
         code,body=self.request('/belive',headers={'Cookie':''})
         self.assertEqual(code,200)
-        self.assertIn(b'href="/portal?view=make"',body)
+        self.assertIn(b'href="/support/whatsapp"',body)
+        self.assertIn(b'href="/portal?view=track"',body)
         self.assertIn(b'href="/portal?view=track"',body)
         self.assertNotIn(b'csrf-token',body)
         for path in ['/assets/tenant-site.css','/assets/tenant-home.svg','/assets/workspace-v2.css','/assets/workspace-v2.js','/portal?topic=wifi']:
@@ -211,6 +213,19 @@ class HttpTests(unittest.TestCase):
         status,body=self.request('/api/auth')
         self.assertEqual(status,200)
         self.assertEqual(self.request('/api/status',headers={'X-CSRF-Token':json.loads(body)['csrf_token']})[0],200)
+
+    def test_status_does_not_report_idle_after_a_stale_snapshot(self):
+        original=self.s.snapshot
+        self.tasks.running.add('source-fixture')
+        def finish_while_snapshot_is_read():
+            snapshot=original()
+            with self.tasks.lock:self.tasks.running.clear()
+            return snapshot
+        with patch.object(self.s,'snapshot',side_effect=finish_while_snapshot_is_read):
+            code,body=self.request('/api/status',headers={'X-CSRF-Token':self.csrf})
+        self.assertEqual(code,200)
+        self.assertEqual(json.loads(body)['tasks'],['source-fixture'])
+        self.assertEqual(json.loads(self.request('/api/status',headers={'X-CSRF-Token':self.csrf})[1])['tasks'],[])
 
     def test_scan_all_honors_saved_interval_and_deduplicates(self):
         headers={'X-CSRF-Token':self.csrf}

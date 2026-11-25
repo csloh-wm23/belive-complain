@@ -82,6 +82,7 @@ def execute(service,run_id):
     selected=None if baseline else run.get('experience')
     tip=None if baseline else run.get('writing_tip')
     ai=SupportAI(service.settings,service.store.path.parent/'hermes_memory/experience-comparison'/run_id/stage) if isinstance(service.ai,SupportAI) else service.ai
+    if isinstance(ai,SupportAI):ai.execution_observer=service.record_native_execution
     try:
         guidance=selected
         if tip:guidance={**(selected or {'question':run['question'],'answer':''}),'writing_tip':tip['tip']}

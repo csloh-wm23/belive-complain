@@ -1,32 +1,45 @@
-# Knowledge backup travels with the project
+# Private knowledge backup and transfer
 
-The team chose **push/download backup**, rather than live GitHub synchronisation. No GitHub account login, VPN or private memory server is needed to read the backup.
+**GitHub carries source code only.** The reviewed-knowledge archive and its recovery key must be kept and transferred privately. Pulling code does not deliver the team's SOP, source documents or approved lessons.
 
-The public project includes `knowledge/team-memory.enc.json`. It contains encrypted reviewed SOP, original reviewed redacted source PDFs, approved general complaint experiences, approved writing improvements, and disabled records retaining revocations. AES-256-GCM authenticates the package. Customer conversations, accounts, passwords, `.env`, model keys and unapproved feedback are excluded.
+Removing the archive from the current tree does not erase previously committed encrypted copies from older Git history; no history rewrite is performed by this update.
 
-## Upload updates
+The runtime still reads `knowledge/team-memory.enc.json` locally. This file can contain encrypted reviewed company material and must not be committed or uploaded, even though it is encrypted. Customer databases, conversations, API credentials and unreviewed feedback are not part of this transfer.
 
-Use **Push BeLive with memory.bat**, or:
+## Existing installation: protect knowledge before pulling
 
-1. Run `python scripts/knowledge_backup.py export`.
-2. Commit your source changes and `knowledge/team-memory.enc.json`.
-3. Run `python scripts/knowledge_backup.py check`, then push.
+1. Wait for current work to finish. Export the latest reviewed local knowledge:
 
-BeLive installs the project's pre-push check when started, if no different hooks path is already configured. Existing hooks are preserved. The check rejects a push if current knowledge is missing from the committed backup. A connector/API push bypasses local hooks, so anyone uploading that way must follow AGENTS.md and export/include/check the package explicitly.
+```sh
+python scripts/knowledge_backup.py export
+```
 
-The wrapper commits already staged changes plus the updated encrypted package. It does not automatically stage unrelated working files. Use normal source-code staging when updating the program. Git authentication for uploading is still needed, just as for any other project push; it is not needed for local AI operation or restoring an already downloaded backup.
+2. Copy `knowledge/team-memory.enc.json` and its matching private `knowledge-backup.key` to safe private storage **outside the project checkout**. The recovery key is beside the active database, under `data` for the default database. Do not print or send its contents in chat.
+3. Retain your own `.env`, `data` folder, database, company documents and `.belive-credentials.key`. The credential key and knowledge recovery key have different purposes.
+4. Only after preserving the archive and key, pull/download the new source. An older version tracked the archive; removing it from the new source tree can remove that old tracked copy on pull. Do not discard local knowledge or resolve a conflict by deleting the only copy.
+5. Place the preserved private archive back at `knowledge/team-memory.enc.json`, then follow the restore steps below if needed.
+
+If export cannot authenticate the existing archive or reports a conflict, preserve the existing files and ask the authorised backup owner to resolve it. Do not replace them with an empty or unrelated backup.
 
 ## Restore on another computer
 
-1. Download the latest project and start **Run BeLive Prototype.bat**. Retain your own `.env` and database when updating an existing installation.
-2. Receive the team's **knowledge-backup.key** privately from the person preparing the backup. It lives beside that person's active database, under `data` by default. Never commit it or post it in a public chat.
-3. In **Self-learning → Team knowledge backup → Restore on another computer**, choose that recovery-key file once.
-4. Confirm the SOP and approved experience counts. No source customer cases are created by restoration.
+1. Obtain the approved **archive and matching recovery-key file** from an authorised teammate through a private transfer. A source download and a key alone are not enough.
+2. Pull/download source code, retaining that computer's own private configuration and data. Install native Hermes if needed.
+3. Copy the received archive into the project at **`knowledge/team-memory.enc.json` before importing the key**. Create the `knowledge` folder if absent.
+4. Start **Run BeLive Prototype.bat**, sign in, then open **Self-learning → Team knowledge backup → Restore on another computer**. Choose the matching private recovery-key file and confirm restoration.
+5. Verify the actual restored knowledge/document counts and current approval state. Resolve any conflicts; do not assume restored examples are tenant-specific facts.
+6. Configure that computer's own authorised model connection and test it. This knowledge transfer does not include API keys, staff accounts or customer conversations.
 
-After that, updated packages restore at app startup following a download/pull using the existing local key. Each computer still has separate customer conversations. New approvals are shared only after the approving person exports and pushes, and the other person downloads and restarts. They are not automatically shared in real time.
+A fresh code-only installation can start with no archive, but its knowledge library is empty. Importing only a recovery key cannot restore a missing archive. Keep the archive and key private and never upload either to GitHub.
 
-## Local changes and revoked experience
+## Later updates
 
-A withdrawn lesson stays disabled in the backup. Origin records do not silently reactivate it. If both people change the same knowledge before exchanging versions, the incoming version is loaded and the local proposal is preserved in the review panel. Review conflicts before publishing another backup. Different source files and local customer cases are not replaced.
+After new knowledge or lessons are reviewed, export again and privately transfer the updated archive. The recipient places it at the same local path and restores using the matching key; startup can detect a privately replaced archive when a matching local key already exists. **Code pull alone never updates knowledge.** This is manual private exchange, not real-time synchronisation.
 
-Keep a private copy of the recovery key. GitHub has the encrypted knowledge, but cannot restore it without the key. A wrong key or damaged package does not replace local knowledge. The launcher installs the cryptography component into the ignored project-local `output/knowledge-runtime` directory when required.
+Use the source update workflow only for code. The historical **Push BeLive with memory** helper name does not authorise staging knowledge or keys; current publishing checks must exclude them. Never use `git add -f` to override their ignore rules.
+
+## Conflicts, revocations and recovery
+
+AES-256-GCM authenticates the archive. A wrong key or damaged archive must not replace existing records. Disabled lessons retain their revocations. Conflicting local edits are preserved for review rather than silently overwritten. Export again only after resolving conflicts.
+
+Keep a private copy of both archive and key. A full private database backup has different scope and may also require document/media folders and the separate credential key. See [connection settings](CREDENTIAL_SETTINGS.md) and [system behavior](FORUM_SYSTEM.md).

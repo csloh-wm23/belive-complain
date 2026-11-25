@@ -1,7 +1,9 @@
 """Build a source-only peer package; company files and credentials never enter the ZIP."""
-import hashlib,json,subprocess,zipfile
+import hashlib,json,subprocess,sys,zipfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT))
+from scripts.knowledge_backup import private_path
 
 def main():
     names=subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z'],cwd=ROOT).decode().split('\0')
@@ -9,7 +11,7 @@ def main():
     allowed={'.py','.js','.html','.css','.svg','.json','.md','.txt','.bat','.toml','.yml','.yaml','.example'}
     with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED) as archive:
         for name in sorted(set(names)):
-            if not name or name.startswith(('data/','output/','artifacts/','backups/','recovered/','.git/')) or 'memory-pairing' in name:continue
+            if not name or private_path(name) or name.startswith(('data/','output/','artifacts/','backups/','recovered/','.git/')) or 'memory-pairing' in name:continue
             p=ROOT/name
             if p.is_symlink() or not p.is_file() or not p.resolve().is_relative_to(ROOT):continue
             if name.startswith('.env') and name!='.env.example':continue

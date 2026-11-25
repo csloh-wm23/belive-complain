@@ -17,12 +17,21 @@ from test_backend import FakeAI
 def plan(**extra):
     return dict(reply='Bro, does this affect only your phone or other devices too?',needs_staff=False,staff_question='',needs_maintenance=False,research='NONE',search_query='',sources_used=[],**extra)
 
+
+def fixture_assessment(service, context):
+    text=next(x['text'] for x in reversed(context['conversation']) if x['role']=='CUSTOMER')
+    return dict(report_type='COMPLAINT',relevance='SUPPORT',category='WIFI',severity='LOW',
+        summary='Fictional support assessment.',level_reason='Fictional safe information request for this isolated test.',
+        uncertainty=False,evidence=text,requires_human=False,complaint_level='SIMPLE',
+        agent_trace=[{'role':'Complaint Analysis Agent','status':'COMPLETED'}])
+
 class WhatsAppTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.s=Service(Path(self.tmp.name)/'test.db',FakeAI())
         # Generated locally for this test only; none is an issued provider credential.
         self.mock_token=secrets.token_urlsafe(24);self.mock_secret=secrets.token_urlsafe(24);self.mock_verify=secrets.token_urlsafe(24);self.mock_phone_id=str(secrets.randbelow(999999)+1);self.mock_sender='0'*11
         self.env=patch.dict(os.environ,{'BELIVE_WHATSAPP_ACCESS_TOKEN':self.mock_token,'BELIVE_WHATSAPP_APP_SECRET':self.mock_secret,'BELIVE_WHATSAPP_VERIFY_TOKEN':self.mock_verify,'BELIVE_WHATSAPP_PHONE_NUMBER_ID':self.mock_phone_id,'BELIVE_WHATSAPP_GRAPH_VERSION':'v99.0'});self.env.start()
+        self.assessment=patch('belive.whatsapp_triage.assess',side_effect=fixture_assessment).start()
         self.reply=patch('belive.whatsapp_ai.reply',return_value=plan()).start();self.review=patch('belive.whatsapp_ai.review',return_value=True).start()
         self.net=patch('belive.whatsapp.request_json',side_effect=AssertionError('Unmocked external request')).start()
     def tearDown(self):patch.stopall();self.env.stop();self.tmp.cleanup()

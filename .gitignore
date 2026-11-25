@@ -20,3 +20,8 @@ whatsapp_media/
 *memory-pairing*.json
 *.knowledge-key
 knowledge-backup.key
+
+.belive-credentials.key
+
+# Reviewed SOP, source documents and learning backups are shared privately.
+/knowledge/

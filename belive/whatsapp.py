@@ -22,7 +22,8 @@ MAX_IMAGE=5*1024*1024
 
 
 def configuration():
-    return {k:os.getenv(PREFIX+k.upper(),'').strip() for k in ('access_token','app_secret','verify_token','phone_number_id','graph_version','webhook_host')}
+    from belive.credentials import get_value
+    return {k:get_value(PREFIX+k.upper(),'').strip() for k in ('access_token','app_secret','verify_token','phone_number_id','graph_version','webhook_host')}
 
 
 def ready():
@@ -163,6 +164,8 @@ def _staff_request(service,db,thread,question,maintenance=False):
     existing=next((x for x in service.store.all(db,'wa_staff') if x['thread_id']==thread['id'] and x['status']=='OPEN'),None)
     case=service.store.get(db,'case',thread['case_id'])
     was_maintenance=bool(existing and existing.get('maintenance'))
+    from belive.routing import destination
+    maintenance_destination=destination(service.store,db,'MAINTENANCE')
     item=existing or {'id':'WAS-'+secrets.token_hex(6),'thread_id':thread['id'],'case_id':case['id'],'status':'OPEN','at':now()}
     item.update(question=question or 'Please review this customer support request and provide verified guidance.',maintenance=maintenance or item.get('maintenance',False))
     service.store.put(db,'wa_staff',item)
@@ -170,8 +173,8 @@ def _staff_request(service,db,thread,question,maintenance=False):
     if not existing:
         if not case.get('handoff'):service.handoff(db,case,'WhatsApp customer needs staff guidance: '+item['question'])
         case['revision']+=1;service.store.put(db,'case',case)
-        if maintenance:service.enqueue(db,case['id'],'STAFF_WORK_ORDER',item['question'],'Maintenance')
-    elif maintenance and not was_maintenance:service.enqueue(db,case['id'],'STAFF_WORK_ORDER',item['question'],'Maintenance')
+        if maintenance:service.enqueue(db,case['id'],'STAFF_WORK_ORDER',item['question'],maintenance_destination)
+    elif maintenance and not was_maintenance:service.enqueue(db,case['id'],'STAFF_WORK_ORDER',item['question'],maintenance_destination)
 
 
 def sop(service,db,thread):
@@ -180,15 +183,36 @@ def sop(service,db,thread):
     return [x for x in knowledge(service,db) if eligible(service,db,x) and (not x.get('property_ref') or x['property_ref']==thread.get('property_ref'))]
 
 
+
+def _local_learning_versions(tips,lessons):
+    from belive.memory_hub import fingerprint
+    tip_fields=('id','question','tip','category','scope_condo','revision','approved','status')
+    lesson_fields=('id','question','answer','category','sample_data')
+    return ({'tip:'+x['id']:fingerprint({k:x.get(k) for k in tip_fields}) for x in tips}
+            | {'experience:'+x['id']:fingerprint({k:x.get(k) for k in lesson_fields}) for x in lessons})
+
+
+def _local_learning_stale(service,db,versions):
+    if not versions:return False
+    from belive import shared_memory
+    from belive.experience_learning import experiences
+    # Native WhatsApp memory projects these same tips; never keep a draft after their approval changes.
+    if shared_memory.enabled(service,db):return True
+    tips=[x for x in service.store.all(db,'reply_learning') if x.get('approved') and x['status']=='APPROVED' and x.get('scope_condo') is None]
+    current=_local_learning_versions(tips,experiences(service,db))
+    return any(current.get(key)!=version for key,version in versions.items())
+
+
 def process_thread(service,tid):
     from belive.hermes_native import conversation_scope
-    with conversation_scope(tid):return _process_thread(service,tid)
+    from belive.credentials import credential_scope
+    with conversation_scope(tid),credential_scope(service.store.path):return _process_thread(service,tid)
 
 
 def _process_thread(service,tid):
     from belive import shared_memory
+    from belive.service import risk
     with service.store.connect() as db:sharing=shared_memory.enabled(service,db)
-    memory_ready=not sharing or shared_memory.sync(service).get('status')=='ONLINE'
     for _ in range(8):
         native_started_at=now()
         with service.lock,service.store.connect() as db:
@@ -198,19 +222,27 @@ def _process_thread(service,tid):
             turn=pending[-1]
             for stale in pending[:-1]:
                 stale['status']='SUPERSEDED';service.store.put(db,'wa_turn',stale)
-            thread=service.store.get(db,'wa_thread',tid);revision=thread['revision'];knowledge=sop(service,db,thread)
+            thread=service.store.get(db,'wa_thread',tid);revision=thread['revision']
+            previous_case=service.store.get(db,'case',thread['case_id']);case_revision=previous_case['revision']
             turn['status']='PROCESSING';service.store.put(db,'wa_turn',turn)
             messages=[x for x in reversed(service.store.all(db,'wa_message')) if x['thread_id']==tid and x['case_id']==thread['case_id']][-20:]
             instructions=[x for x in reversed(service.store.all(db,'wa_staff')) if x['thread_id']==tid and x['case_id']==thread['case_id'] and x['status']=='ANSWERED'][-3:]
-            from belive.reply_learning import matching
             question=next((x['text'] for x in reversed(messages) if x['direction']=='CUSTOMER'),'')
-            tips=matching(service,db,question)
+        urgent=bool(messages and messages[-1]['direction']=='CUSTOMER' and risk(messages[-1]['text']))
+        # The deterministic emergency acknowledgement must not wait for unrelated memory/network work.
+        memory_ready=urgent or not sharing or shared_memory.sync(service).get('status')=='ONLINE'
+        with service.lock,service.store.connect() as db:
+            from belive.reply_learning import matching
             from belive.experience_learning import experiences
             from belive.relevance import match_score
-            lessons=sorted([x for x in experiences(service,db) if match_score(question,x['question'])>0],key=lambda x:match_score(question,x['question']),reverse=True)[:3]
-            shared_snapshot={x['key']:x['revision'] for x in service.store.all(db,'memory_record')} if sharing else {}
+            knowledge=[] if urgent else sop(service,db,thread)
+            tips=[] if urgent else matching(service,db,question)
+            lessons=[] if urgent else sorted([x for x in experiences(service,db) if match_score(question,x['question'])>0],key=lambda x:match_score(question,x['question']),reverse=True)[:3]
+            shared_snapshot={x['key']:x['revision'] for x in service.store.all(db,'memory_record')} if sharing and not urgent else {}
+            local_learning_versions=_local_learning_versions(tips,lessons) if not sharing and not urgent else {}
         from belive.company_sop import retrieve,evidence
-        selected,lookup_uncertain=retrieve(service,knowledge,messages)
+        from belive import whatsapp_triage
+        selected,lookup_uncertain=([],False) if urgent else retrieve(service,knowledge,messages)
         steps=['Relevant company SOP retrieved'] if selected else []
         context={'conversation':[{'role':x['direction'],'text':x['text'],'photo':x.get('vision')} for x in messages],
             'sop':evidence(selected),'sop_lookup_uncertain':lookup_uncertain,
@@ -223,9 +255,11 @@ def _process_thread(service,tid):
         used_shared={('sop:'+x['id']) for x in selected}|{('document:'+x['document_id']) for x in selected if x.get('document_id')}
         used_shared|={('tip:'+x['id'].removeprefix('SHARED-')) for x in tips}|{('experience:'+x['id'].removeprefix('SHARED-')) for x in lessons}
         shared_revisions={k:shared_snapshot[k] for k in used_shared if k in shared_snapshot}
+        assessment=whatsapp_triage.emergency(question) if urgent else None
+        staff_draft=None;delivery_kind='ACKNOWLEDGEMENT'
         try:
-            if not memory_ready:raise ValueError('Shared knowledge unavailable; do not use a potentially revoked local rule')
-            for message in messages[-3:]:
+            if not memory_ready and not urgent:raise ValueError('Shared knowledge unavailable; do not use a potentially revoked local rule')
+            for message in ([] if urgent else messages[-3:]):
                 if message['direction']!='CUSTOMER' or message['kind']!='image' or message.get('vision'):continue
                 media=message.get('media') or download_image(service,message['media_id'])
                 copy={**message,'media':media};data_url='data:'+media['mime']+';base64,'+base64.b64encode(media_path(service,copy).read_bytes()).decode()
@@ -240,8 +274,16 @@ def _process_thread(service,tid):
             # A typed correction takes priority over a potentially mistaken OCR candidate.
             context['photo_confirmation_required']=bool(photos) and not typed_code
             if messages and messages[-1]['kind'] not in {'text','image','staff'}:raise ValueError('Only text and photos are supported')
-            from belive.service import risk
-            urgent=bool(messages and messages[-1]['direction']=='CUSTOMER' and risk(messages[-1]['text']))
+            if not urgent and context['latest_sender']=='CUSTOMER' and photos and any(risk(str(x.get('observations',''))) for x in photos):
+                urgent=True;assessment=whatsapp_triage.emergency(question)
+            if assessment is None:
+                if context['latest_sender']=='STAFF_INTERNAL':
+                    with service.store.connect() as db:assessment=service.store.get(db,'case',thread['case_id']).get('analysis')
+                if not assessment:assessment=whatsapp_triage.assess(service,context)
+                assessment=whatsapp_triage.preserve_priority(assessment,previous_case,thread['state']=='WAITING_STAFF')
+            if assessment['severity']=='CRITICAL' and context['latest_sender']=='CUSTOMER':urgent=True
+            context['assessment']=assessment
+            steps.append('Complaint category and level assessed')
             if urgent:
                 draft={'reply':'Please move away from the hazard and do not touch or repair the equipment. If anyone is in immediate danger, contact local emergency services now. I am alerting our team urgently; you can keep messaging here.', 'needs_staff':True,'staff_question':'Urgent safety report: review immediately and arrange the appropriate response.','needs_maintenance':True,'research':'NONE','search_query':'','sources_used':[]}
             else:draft=whatsapp_ai.reply(service,context)
@@ -263,25 +305,42 @@ def _process_thread(service,tid):
                 if not whatsapp_ai.review(service,context,draft['reply'],draft):raise ValueError('Reply did not pass safety/evidence review')
                 steps.append('Reply revised after evidence review')
             steps.append('Reply reviewed')
+            assessment,draft,delivery_kind,staff_draft=whatsapp_triage.apply_policy(assessment,draft,context,urgent)
         except Exception:
+            assessment=assessment or whatsapp_triage.failed(question)
+            assessment.update(uncertainty=True,requires_human=True)
+            if assessment['severity']=='LOW':assessment['severity']='MEDIUM'
+            assessment=whatsapp_triage.preserve_priority(assessment,previous_case,thread['state']=='WAITING_STAFF')
+            assessment['level_reason']+=' The reply or evidence review could not complete; staff review is required.'
             draft={'reply':'I got your message. I cannot confirm a safe solution yet, so I am asking our team for guidance. You can keep sending details here; I will help you through the next steps.',
                    'needs_staff':True,'staff_question':'Review the customer message/photo and provide a verified safe response.','needs_maintenance':False,'sources_used':[]}
             steps.append('Staff fallback: AI, research or photo check could not complete')
+        if urgent:
+            selected=[];tips=[];shared_revisions={};local_learning_versions={}
         with service.lock,service.store.connect() as db:
             db.execute('BEGIN IMMEDIATE');current=service.store.get(db,'wa_thread',tid);saved_turn=service.store.get(db,'wa_turn',turn['id'])
             live_shared={x['key']:x['revision'] for x in service.store.all(db,'memory_record')}
-            if current['revision']!=revision or sop(service,db,current)!=knowledge or any(live_shared.get(k)!=v for k,v in shared_revisions.items()):
+            if current['revision']!=revision or service.store.get(db,'case',current['case_id'])['revision']!=case_revision or (not urgent and sop(service,db,current)!=knowledge) or any(live_shared.get(k)!=v for k,v in shared_revisions.items()) or (not urgent and _local_learning_stale(service,db,local_learning_versions)):
                 saved_turn['status']='SUPERSEDED';service.store.put(db,'wa_turn',saved_turn)
                 if not any(x['thread_id']==tid and x['status']=='PENDING' for x in service.store.all(db,'wa_turn')):
                     retry={**turn,'id':'WAT-'+secrets.token_hex(12),'status':'PENDING','at':now()};service.store.put(db,'wa_turn',retry)
                 continue
+            case=service.store.get(db,'case',current['case_id'])
+            assessment.update(response=staff_draft or draft['reply'],plan=draft['staff_question'] or 'Continue the support conversation.')
+            case.update(analysis=assessment,category=assessment['category'],severity=assessment['severity'],draft=staff_draft or draft['reply'],updated_at=now())
+            from belive.routing import destination
+            case['staff_destination']=destination(service.store,db,case['category'])
+            case['revision']+=1;service.store.put(db,'case',case)
+            service.store.event(db,case['id'],'WHATSAPP_ASSESSED',assessment['report_type']+'; '+assessment['category']+'; '+assessment['complaint_level']+'; '+case['staff_destination'])
             if draft['needs_staff']:_staff_request(service,db,current,draft['staff_question'],draft['needs_maintenance'])
             else:current['state']='WAITING_STAFF' if any(x['thread_id']==tid and x['status']=='OPEN' for x in service.store.all(db,'wa_staff')) else 'OPEN'
-            out={'id':'WAO-'+digest(turn['id'])[:24],'thread_id':tid,'case_id':current['case_id'],'thread_revision':revision,
+            case=service.store.get(db,'case',current['case_id'])
+            out={'id':'WAO-'+digest(turn['id'])[:24],'thread_id':tid,'case_id':current['case_id'],'thread_revision':revision,'case_revision':case['revision'],
                  'text':draft['reply'],'status':'QUEUED','at':now(),'sources':draft.get('sources_used',[]),'research_sources':context['research_sources'],'steps':steps,'tip_ids':[x['id'] for x in tips],
                  'company_evidence':evidence([x for x in selected if x['id'] in draft.get('sources_used',[])]),
+                 'assessment':assessment,'staff_destination':case['staff_destination'],'delivery_kind':delivery_kind,'staff_draft':staff_draft,
                  'knowledge_versions':{x['id']:x['version'] for x in selected}}
-            out['shared_revisions']=shared_revisions
+            out['shared_revisions']=shared_revisions;out['local_learning_versions']=local_learning_versions
             scope_hash=hashlib.sha256(tid.encode()).hexdigest()[:24]
             executions=[x for x in service.store.all(db,'native_execution') if x.get('scope_hash')==scope_hash and x['at']>=native_started_at]
             out['native_execution_ids']=[x['id'] for x in executions]
@@ -292,11 +351,24 @@ def _process_thread(service,tid):
         deliver(service,out['id'])
 
 
+def _case_blocks_reply(case,out):
+    from belive.workflow import complaint_level
+    known={'SIMPLE','VERIFIED_STAFF_GUIDANCE','ACKNOWLEDGEMENT','URGENT_ACKNOWLEDGEMENT'}
+    return (case['status'] in {'CLOSED','ANSWERED','SKIPPED','VERIFIED'}
+            or out.get('case_revision')!=case['revision'] or out.get('delivery_kind') not in known
+            or (out.get('delivery_kind')=='SIMPLE' and complaint_level(case)!='SIMPLE'))
+
+
 def deliver(service,out_id):
     from belive import shared_memory
-    with service.store.connect() as db:
+    with service.lock,service.store.connect() as db:
         pending=service.store.get(db,'wa_outgoing',out_id)
-        requires_common=bool(pending.get('knowledge_versions') or pending.get('shared_revisions')) and shared_memory.enabled(service,db)
+        if pending['status']!='QUEUED':return pending
+        case=service.store.get(db,'case',pending['case_id'])
+        if _case_blocks_reply(case,pending):
+            pending.update(status='SUPERSEDED',error='The case changed or no longer permits this reply; staff must review the current case before another send.')
+            service.store.put(db,'wa_outgoing',pending);return pending
+        requires_common=pending.get('delivery_kind')!='URGENT_ACKNOWLEDGEMENT' and bool(pending.get('knowledge_versions') or pending.get('shared_revisions')) and shared_memory.enabled(service,db)
     if requires_common and shared_memory.sync(service).get('status')!='ONLINE':
         with service.lock,service.store.connect() as db:
             pending=service.store.get(db,'wa_outgoing',out_id)
@@ -306,18 +378,27 @@ def deliver(service,out_id):
         db.execute('BEGIN IMMEDIATE');out=service.store.get(db,'wa_outgoing',out_id)
         if out['status']!='QUEUED':return out
         thread=service.store.get(db,'wa_thread',out['thread_id'])
+        case=service.store.get(db,'case',out['case_id'])
+        from belive.workflow import complaint_level
+        terminal=case['status'] in {'CLOSED','ANSWERED','SKIPPED','VERIFIED'}
+        case_changed=out.get('case_revision')!=case['revision']
+        policy_changed=out.get('delivery_kind') not in {'SIMPLE','VERIFIED_STAFF_GUIDANCE','ACKNOWLEDGEMENT','URGENT_ACKNOWLEDGEMENT'} or (out.get('delivery_kind')=='SIMPLE' and complaint_level(case)!='SIMPLE')
+        urgent_ack=out.get('delivery_kind')=='URGENT_ACKNOWLEDGEMENT'
         from belive.company_sop import eligible
         current_knowledge={x['id']:x for x in service.store.all(db,'wa_knowledge')}
-        stale=any(k not in current_knowledge or not eligible(service,db,current_knowledge[k]) or current_knowledge[k]['version']!=v for k,v in out.get('knowledge_versions',{}).items())
+        stale=not urgent_ack and any(k not in current_knowledge or not eligible(service,db,current_knowledge[k]) or current_knowledge[k]['version']!=v for k,v in out.get('knowledge_versions',{}).items())
         shared_now={x['key']:x['revision'] for x in service.store.all(db,'memory_record')}
-        stale=stale or any(shared_now.get(k)!=v for k,v in out.get('shared_revisions',{}).items())
-        if out['thread_revision']!=thread['revision'] or stale:out['status']='SUPERSEDED'
+        stale=stale or (not urgent_ack and any(shared_now.get(k)!=v for k,v in out.get('shared_revisions',{}).items()))
+        stale=stale or (not urgent_ack and _local_learning_stale(service,db,out.get('local_learning_versions',{})))
+        if terminal or case_changed or policy_changed:
+            out.update(status='SUPERSEDED',error='The case changed or no longer permits this reply; staff must review the current case before another send.')
+        elif out['thread_revision']!=thread['revision'] or stale:out['status']='SUPERSEDED'
         elif datetime.now(timezone.utc).timestamp()-thread.get('last_customer_at',0)>86400:out.update(status='NEEDS_TEMPLATE',error='Customer service window expired; wait for the customer or use an approved WhatsApp template.')
         elif thread['simulated']:out['status']='SIMULATED'
         elif not ready():out.update(status='NOT_CONFIGURED',error='WhatsApp company connection is not configured.')
         else:out['status']='SENDING'
         service.store.put(db,'wa_outgoing',out)
-        if stale and out['thread_revision']==thread['revision'] and not any(x['thread_id']==thread['id'] and x['status']=='PENDING' for x in service.store.all(db,'wa_turn')):
+        if stale and not (terminal or case_changed or policy_changed) and out['thread_revision']==thread['revision'] and not any(x['thread_id']==thread['id'] and x['status']=='PENDING' for x in service.store.all(db,'wa_turn')):
             service.store.put(db,'wa_turn',{'id':'WAT-'+secrets.token_hex(12),'thread_id':thread['id'],'case_id':thread['case_id'],'message_id':out['id'],'status':'PENDING','at':now()})
     if out['status']=='SENDING':
         c=configuration()
@@ -332,12 +413,14 @@ def deliver(service,out_id):
     with service.lock,service.store.connect() as db:
         service.store.put(db,'wa_outgoing',out)
         if out['status'] in {'ACCEPTED','SIMULATED'}:
-            message={'id':'WAM-'+digest(out['id'])[:24],'thread_id':thread['id'],'case_id':out['case_id'],'direction':'AI','text':out['text'],'kind':'text','at':now(),'delivery':out['status'],'external_id':out.get('external_id')}
+            message={'id':'WAM-'+digest(out['id'])[:24],'thread_id':thread['id'],'case_id':out['case_id'],'direction':'AI','text':out['text'],'kind':'text','at':now(),'delivery':out['status'],'delivery_kind':out.get('delivery_kind'),'external_id':out.get('external_id')}
             service.store.put(db,'wa_message',message)
             if out['status']=='ACCEPTED':
                 from belive.whatsapp_channel import proof
                 proof(service,db,{'phone_number_id':configuration()['phone_number_id']},last_reply_accepted=now())
-            case=service.store.get(db,'case',out['case_id']);published=post(service.store,db,case,'AI_SUPPORT',out['text'],'wa-out-'+out['id'])
+            case=service.store.get(db,'case',out['case_id'])
+            if out.get('delivery_kind') in {'SIMPLE','VERIFIED_STAFF_GUIDANCE'}:case['draft']=out['text'];service.store.put(db,'case',case)
+            published=post(service.store,db,case,'AI_SUPPORT',out['text'],'wa-out-'+out['id'])
             if not any(x['thread_id']==thread['id'] and x['status']=='OPEN' for x in service.store.all(db,'wa_staff')):
                 case.update(status='FOLLOW_UP',handoff=False,next_action='Await customer reply in WhatsApp',ack_due=None,followup_due=None,updated_at=now())
                 case['revision']+=1;service.store.put(db,'case',case)

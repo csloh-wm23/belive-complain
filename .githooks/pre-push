@@ -1,3 +1,4 @@
 #!/bin/sh
-# Reject a source-only push when current approved knowledge was not committed.
+# Keep a current private safety backup and reject private files in the code push.
+python scripts/knowledge_backup.py export || exit 1
 python scripts/knowledge_backup.py check || exit 1

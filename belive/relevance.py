@@ -52,6 +52,8 @@ def location_scope(text):
     if re.search(r'\b(?:my|our|this) (?:building|property|residence).{0,45}(?:polic|rule|pet|visitor)|(?:pets?|visitors?).{0,35}(?:my|our|this) (?:building|property)|我.{0,10}(?:公寓|大楼).{0,15}(?:规定|宠物)',text,re.I):return 'PROPERTY'
     if domains(text)&{'air_conditioning','refrigerator','water_pressure','washer','cleaning','access'}:
         return 'AFFECTED_AREA'
+    if re.search(r'noise|loud music|shouting|bising|噪音|吵闹',text,re.I) and re.search(r'corridor|shared|communal|common area|neighbou?r|hallway|走廊|公共|邻居',text,re.I):
+        return 'AFFECTED_AREA'
     if re.search(r'(?:my|our).{0,35}(?:leak|broken|fault|damage)|(?:leak|broken|fault|damage).{0,30}(?:my|our)|漏水|损坏',text,re.I):return 'AFFECTED_AREA'
     return 'NONE'
 

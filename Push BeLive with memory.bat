@@ -4,14 +4,12 @@ python scripts/knowledge_backup.py runtime
 if errorlevel 1 goto failed
 python scripts/knowledge_backup.py export
 if errorlevel 1 goto failed
-git add -- knowledge/team-memory.enc.json
-if errorlevel 1 goto failed
-git diff --cached --quiet
-if errorlevel 1 git commit -m "Save current approved BeLive knowledge backup"
+python scripts/knowledge_backup.py check
 if errorlevel 1 goto failed
 git push
 if errorlevel 1 goto failed
-echo Code and the encrypted knowledge backup were pushed.
+echo Committed code was pushed. The encrypted knowledge backup stayed on this computer.
+echo Share the backup and recovery key only through a private channel.
 pause
 exit /b 0
 :failed

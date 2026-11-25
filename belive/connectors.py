@@ -8,6 +8,7 @@ import secrets
 from urllib.parse import urlencode,urlsplit
 from urllib.request import Request,build_opener,HTTPRedirectHandler
 from belive.store import bounded,now
+from belive.credentials import get_value,credential_scope
 
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):return None
@@ -75,13 +76,13 @@ def google_review_share_link(value):
 
 def read_source(source):
     platform,resource=source['platform'],source['resource']
-    token=os.getenv('BELIVE_'+platform+'_TOKEN','')
+    token=get_value('BELIVE_'+platform+'_TOKEN','')
     if not token:raise RuntimeError('CONNECTOR_NOT_CONFIGURED')
     if platform=='GOOGLE':
         result=request_json('https://mybusiness.googleapis.com/v4/'+resource+'/reviews?'+urlencode({'pageSize':25,'orderBy':'updateTime desc'}),token)
         return [{'id':resource+'/'+item['reviewId'],'text':item.get('comment','')} for item in result.get('reviews',[])[:25] if item.get('comment')]
     if platform=='FACEBOOK':
-        version=os.getenv('BELIVE_FACEBOOK_VERSION','')
+        version=get_value('BELIVE_FACEBOOK_VERSION','')
         if not re.fullmatch(r'v\d+\.\d+',version):raise RuntimeError('FACEBOOK_VERSION_REQUIRED')
         result=request_json('https://graph.facebook.com/'+version+'/'+resource+'?'+urlencode({'fields':'id,message,created_time','limit':25}),token)
         return [{'id':item['id'],'text':item.get('message','')} for item in result.get('data',[])[:25] if item.get('message')]
@@ -98,7 +99,7 @@ def scan(service,source_id):
     with service.store.connect() as db:source=service.store.get(db,'source',source_id)
     if not source['enabled']:raise ValueError('Resume checks for the selected source before scanning')
     try:
-        rows=read_source(source)
+        with credential_scope(service.store.path):rows=read_source(source)
         results=[]
         for item in rows:
             p={'title':'Public tenant feedback','description':item['text'],'platform':source['platform'],'source_id':item['id']}
@@ -128,7 +129,7 @@ def deliver(service,message_id):
         item=service.store.get(db,'outbox',message_id)
         if not support_notification(item):raise ValueError('Notification is outside tenant complaint support')
         if item['status']!='APPROVED':raise ValueError('Delivery requires an approved message that has not been attempted')
-        url=os.getenv('BELIVE_NOTIFICATION_URL','');secret=os.getenv('BELIVE_NOTIFICATION_SECRET','')
+        url=get_value('BELIVE_NOTIFICATION_URL','',service.store.path);secret=get_value('BELIVE_NOTIFICATION_SECRET','',service.store.path)
         parsed=urlsplit(url)
         if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or not secret:
             raise ValueError('Configure an HTTPS notification gateway and signing secret first')

@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from http.cookies import CookieError,SimpleCookie
 from belive.access import Access
+from belive.credentials import credential_scope
 from belive.backups import operation as backup_operation
 from belive.service import Service
 from belive.store import now
@@ -26,6 +27,7 @@ STATIC={'/':'index.html','/index.html':'index.html','/assets/app.js':'assets/app
 STATIC['/assets/learning-ui.js']='assets/learning-ui.js'
 STATIC['/assets/whatsapp-ui.js']='assets/whatsapp-ui.js'
 STATIC['/assets/shared-memory-ui.js']='assets/shared-memory-ui.js'
+STATIC['/assets/credential-settings-ui.js']='assets/credential-settings-ui.js'
 STATIC['/assets/fyp.css']='assets/fyp.css'
 STATIC['/assets/workspace-v2.css']='assets/workspace-v2.css'
 STATIC['/assets/workspace-v2.js']='assets/workspace-v2.js'
@@ -38,7 +40,8 @@ class Tasks:
             if key in self.running:return False
             self.running.add(key)
         def run():
-            try:fn()
+            try:
+                with credential_scope(self.service.store.path):fn()
             except Exception:
                 with self.service.store.connect() as db:self.service.store.event(db,key,'BACKGROUND_FAILED','Operation failed; inspect case/source state')
             finally:
@@ -104,6 +107,8 @@ class Tasks:
             for c in cases:self.analyse(c)
         return self.start('source-'+source_id,run)
     def loop(self):
+        with credential_scope(self.service.store.path):self._loop()
+    def _loop(self):
         while not self.stop.wait(self.service.settings.scheduler_seconds):
             try:
                 self.service.tick()
@@ -126,12 +131,16 @@ class Tasks:
         for item in outgoing[:4]:self.start('wa-send-'+item['id'],lambda key=item['id']:deliver(self.service,key))
 
 def make_handler(service,tasks=None):
+    from belive.credentials import apply as apply_credentials
+    apply_credentials(service)
     tasks=tasks or Tasks(service);access=Access(service);csrf=secrets.token_urlsafe(32)
     support_routes={'scan-all','import-review','import-review-batch','public-preview','lesson_revoke','learning_start','learning_improve','intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
     support_routes.add('google-reply')
     support_routes.update({'reply_learning_scan','reply_learning_action'})
     support_routes.update({'wa_simulate','wa_staff_reply','wa_property'})
     class Handler(SimpleHTTPRequestHandler):
+        def handle_one_request(self):
+            with credential_scope(service.store.path):return super().handle_one_request()
         extensions_map={**SimpleHTTPRequestHandler.extensions_map,'.js':'text/javascript'}
         def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT),**kwargs)
         def end_headers(self):
@@ -144,7 +153,9 @@ def make_handler(service,tasks=None):
             data=json.dumps(value).encode();self.send_response(code)
             if cookie is not None:self.send_header('Set-Cookie','belive_session='+cookie+'; Path=/; HttpOnly; SameSite=Strict; Max-Age='+('28800' if cookie else '0'))
             if browser_cookie is not None:self.set_browser_cookie(browser_cookie)
-            self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+            self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Content-Length',str(len(data)));self.end_headers()
+            try:self.wfile.write(data)
+            except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass  # The browser may navigate away during polling.
         def token(self):return self.headers.get('Authorization','').removeprefix('Bearer ')
         def _cookie(self, name):
             try:
@@ -190,6 +201,10 @@ def make_handler(service,tasks=None):
                 if not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),csrf):return self.json(403,{'error':'Open the operator dashboard to access this endpoint','code':'STALE_CSRF'})
                 user=access.current(self.session())
                 if not user:return self.json(401,{'error':'Sign in to the operator dashboard'})
+                if path=='/api/credential-settings':
+                    if user['role']!='ADMIN':return self.json(403,{'error':'Administrator access required'})
+                    from belive.credentials import status as credential_status
+                    return self.json(200,credential_status(service.store.path))
                 if path=='/api/users':
                     if user['role']!='ADMIN':return self.json(403,{'error':'Administrator access required'})
                     return self.json(200,{'users':access.users()})
@@ -207,7 +222,8 @@ def make_handler(service,tasks=None):
                         self.send_response(200);self.send_header('Content-Type','application/pdf');self.send_header('Content-Disposition','attachment; filename="company-support-reference.pdf"');self.send_header('Content-Length',str(len(content)));self.end_headers();self.wfile.write(content);return
                     except (ValueError,FileNotFoundError):return self.json(404,{'error':'Document not available'})
                 if path=='/api/status':
-                    snapshot=service.snapshot();snapshot.update(tasks=sorted(tasks.running),operator=user)
+                    with tasks.lock:active_tasks=sorted(tasks.running)
+                    snapshot=service.snapshot();snapshot.update(tasks=active_tasks,operator=user)
                     if user['role']!='ADMIN':snapshot['storage']['can_choose']=False;snapshot['backups']=[]
                     return self.json(200,snapshot)
                 return self.json(404,{'error':'Unknown endpoint'})
@@ -280,6 +296,12 @@ def make_handler(service,tasks=None):
                 if not user:return self.json(401,{'error':'Sign in to the operator dashboard'})
                 if route=='logout':access.logout(self.session());return self.json(200,{'signed_out':True},cookie='')
                 if user['role']!='ADMIN' and route not in support_routes:return self.json(403,{'error':'Administrator access required'})
+                if route=='credential-settings':
+                    from belive.credentials import save as save_credentials
+                    with tasks.lock:
+                        if tasks.running:raise ValueError('Wait for active AI, collection or delivery work to finish before changing connection settings.')
+                        result=save_credentials(service,p,user['id'])
+                    return self.json(200,result)
                 if route=='users':return self.json(200,access.create(p))
                 if route=='deactivate-user':return self.json(200,access.deactivate(p.get('id'),user['id']))
                 if route in {'portal_issue','portal_revoke'}:return self.json(404,{'error':'This access action has been retired'})

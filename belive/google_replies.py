@@ -3,6 +3,7 @@ import os
 import re
 from urllib.error import HTTPError
 from belive.connectors import request_json
+from belive.credentials import get_value
 from belive.store import bounded, digest, now
 
 
@@ -18,7 +19,7 @@ def readiness(store,db,case):
     location=name.split('/reviews/')[0]
     allowed=any(s['platform']=='GOOGLE' and s.get('authorised') and s['resource']==location for s in store.all(db,'source'))
     if not allowed:return {'ready':False,'reason':'Configure the company-authorised Google Business Profile location under Public reviews.'}
-    if not os.getenv('BELIVE_GOOGLE_TOKEN') or os.getenv('BELIVE_GOOGLE_REPLY_ENABLED','').lower()!='true':
+    if not get_value('BELIVE_GOOGLE_TOKEN',database=store.path) or os.getenv('BELIVE_GOOGLE_REPLY_ENABLED','').lower()!='true':
         return {'ready':False,'reason':'Company Google authorization and direct reply publishing must be configured locally first.'}
     if case.get('google_reply',{}).get('status') in {'SENDING','UNKNOWN'}:
         return {'ready':False,'reason':'The previous posting result is unconfirmed. Check the original Google review before another attempt.'}
@@ -51,7 +52,7 @@ def publish(service,p,actor,key):
         service.store.event(db,case['id'],'GOOGLE_REPLY_STARTED',actor+': reviewed public reply requested')
     sending=False
     try:
-        token=os.environ['BELIVE_GOOGLE_TOKEN'];url='https://mybusiness.googleapis.com/v4/'+name
+        token=get_value('BELIVE_GOOGLE_TOKEN',database=service.store.path);url='https://mybusiness.googleapis.com/v4/'+name
         review=request_json(url,token)
         require(review.get('name')==name,'Google returned a different review; no reply posted')
         require(bounded(review.get('comment'),1,6000)==description,'The Google review changed; import and review its latest text before posting')

@@ -1,37 +1,44 @@
-# Connect BeLive to GPT-6 Luna
+# Configure native Hermes and its model
 
-GPT-6 Luna is the default for a new BeLive setup. The model runs on OpenAI. BeLive runs the complaint workflow and stores cases and reviewed replies in its own database. The hosted setup uses Python, Internet access and an OpenAI API project with available credits.
+Production support uses official native Hermes `run_agent.AIAgent` with OpenAI GPT-6 Luna as the model provider. Internet access, an authorised API project and provider credits are required. Private customer data, credentials and reviewed company documents are not distributed through source code.
 
-## Set up the project key
+## Install once
 
-1. Create a key in your [OpenAI API project](https://platform.openai.com/api-keys). For the company handover, use BeLive's own API project.
-2. Open the BeLive folder containing `server.py`. Copy `.env.example` to `.env` if there is no `.env` yet. On Windows, show file extensions to confirm the file is named exactly `.env`.
-3. Set these four lines in `.env`. Keep the other entries.
+Run **Install Hermes Agent.bat**, then **Run BeLive Prototype.bat**. The installer checks official Agent/MemoryStore imports in the project runtime. See [native setup](NATIVE_HERMES.md). Missing native Hermes must fail honestly rather than silently use direct GPT transport.
+
+## Save a private connection
+
+1. Sign in as an administrator for the active database.
+2. Open **System setup → AI & knowledge → Connection settings**.
+3. Choose provider `openai`, model `gpt-6-luna`, and enter an authorised model key privately.
+4. Select **Save connection settings**, then **Test AI connection**.
+5. Wait for the actual result and inspect native execution evidence. A configured field alone is not a passed test.
+
+Secret fields are blank on readback. Leaving a secret blank preserves it. **Use .env settings instead** removes database overrides without editing the private environment file. Changes require idle background work. Expand **Platform API access** only for the services you are authorised to configure. A token does not grant missing platform permissions.
+
+The existing `.env` fallback remains supported beside `server.py`:
 
 ```dotenv
+BELIVE_AGENT_ENGINE=hermes
 BELIVE_AI_PROVIDER=openai
 BELIVE_AI_MODEL=gpt-6-luna
-BELIVE_DECISIONS_ENABLED=true
-BELIVE_AI_KEY=PASTE_YOUR_OPENAI_PROJECT_KEY_HERE
+BELIVE_AI_KEY=YOUR_AUTHORISED_PRIVATE_KEY
 ```
 
-Store the key in the machine's local `.env` or server environment. Git ignores the local file. Use your existing BeLive staff credentials to sign in to the app.
+Keep the file ignored and restart after changing it. Never paste a key into chat, screenshots or a repository. See [connection settings](CREDENTIAL_SETTINGS.md) for encryption, fallback and recovery.
 
-## Check the connection
+## Understand what passed
 
-1. Restart BeLive with **Run BeLive Prototype.bat** or `python server.py`.
-2. Sign in as an administrator and open **AI & knowledge**, then **AI & replies**.
-3. Click **Test AI connection**. Look for **PASSED** under `openai / gpt-6-luna`. The check sends a neutral prompt with no tenant records and may use API credits.
-4. Submit a fictional complaint and open **AI assessment**, then **Decisions assessment** to see the message type, topic, level and model estimates. The response agent writes a draft using approved knowledge. Safety and staff-routing rules apply before any automatic SIMPLE reply.
+A genuine native-model connection check passed in the measured preparation. It recorded the native executor separately from the model and kept direct Decisions classification off. Each installation still needs its own authorised key and check.
 
-## Learn from customer responses
+Native mode deliberately disables the direct Decisions API classification path, including when an older environment flag is set. The explicit legacy direct transport is retained for regression testing; it is not an automatic fallback.
 
-Open **Self-learning** and find **Improve replies from customer feedback**. When a customer replies after a support answer, Luna checks the exchange for frustration, dissatisfaction or positive feedback. It proposes a writing tip when the exchange shows a problem. Staff can edit and approve the tip, then select **Test improved reply** to compare the original with an unsent new draft. Future matching replies retrieve the approved tip automatically. Each card shows how many replies received the tip and how many later received positive or dissatisfied feedback. Check the source conversation to verify what happened.
+A model check does not connect WhatsApp or enable platform monitoring. Real company support needs authorised onboarding, webhook and delivery evidence; official scheduled sources require their own permissions/resources/tokens. See [WhatsApp support](WHATSAPP.md).
 
-If the check fails, confirm the key, project credits and model access. BeLive sends cases that require unavailable AI to staff. The model receives relevant complaint text, guidance and reviewed writing examples during case analysis. Use fictional reports to verify the setup.
+## Knowledge and reviewed learning
 
-[GPT-6 Luna model and pricing](https://developers.openai.com/api/docs/models/gpt-6-luna)
+A code-only download has no team knowledge archive. Obtain that archive and its matching recovery key privately; place the archive at `knowledge/team-memory.enc.json` before choosing the key under **Self-learning → Team knowledge backup → Restore on another computer**. Before pulling an older installation, export/preserve both files outside the checkout and retain your own `.env`, data and separate credential key. Never upload either knowledge file to GitHub. See [the migration and restore order](SHARED_MEMORY.md).
 
-## Other model setups
+Inspect approved knowledge and current citations in the staff dashboard. A past reply is not verified policy. A reviewed completed-case lesson can be reused on a later matching request, while customer-reaction feedback requires review before a writing improvement is activated. Keep SAMPLE / TEST labels and compare actual replies without inventing quality scores.
 
-The hosted OpenRouter setup uses `BELIVE_AI_PROVIDER=openrouter`, `BELIVE_AI_MODEL=nousresearch/hermes-4-405b` and an OpenRouter key in `BELIVE_AI_KEY`. To run Qwen on this computer, follow the [local Ollama guide](THURSDAY_DEMO.md).
+For safe opt-in rehearsal commands and non-identifying results, use [the checklist](FRIDAY_DEMO_CHECKLIST.md). Existing model alternatives are preserved, but the measured workflow uses native Hermes with GPT-6 Luna.

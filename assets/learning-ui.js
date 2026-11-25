@@ -88,9 +88,9 @@ function render(status){
         lessonRun=run?.id;
     }
     const messages={BASELINE_QUEUED:'Starting the first reply…',BASELINE_RUNNING:'The agents are preparing the first reply…',BASELINE_READY:'First reply ready. Review the lesson below, then generate the next reply.',IMPROVED_QUEUED:'Starting the reply with reviewed feedback…',IMPROVED_RUNNING:'The agents are using the reviewed lesson for the next reply…',STALE:'The knowledge changed. Start a fresh comparison.',INTERRUPTED:'This run was interrupted. Start a fresh comparison.'};
-    let text=run?messages[run.status]||'':pending?'Starting your new comparison…':!data.demo?.available
-        ?'Prepare the demo in Setup, then generate a reply to begin.'
-        :'Choose a practice topic and generate the first reply for this question.';
+    let text=run?messages[run.status]||'':pending?'Starting your new comparison…':!data.readiness?.ai
+        ?'Set up the AI model in System setup to generate replies. You can still open Past comparisons to read a saved run.'
+        :'Enter your question and generate the first reply, or open Past comparisons to view a saved run.';
     if(run?.status==='FAILED'){
         const errors={
             AI_LEARNING_TOPIC_MISMATCH:'The question did not match the chosen guide. Pick a different topic or edit the question.',

@@ -1,4 +1,4 @@
-"""Portable, authenticated-encrypted knowledge backup accompanying source-code pushes."""
+"""Private authenticated-encrypted reviewed-knowledge export and restore."""
 import base64,hashlib,json,os,secrets,sys,threading
 from pathlib import Path
 from belive.memory_hub import clean,fingerprint
@@ -113,7 +113,7 @@ def payload(service):
     from belive import shared_memory as sm
     with service.store.connect() as db:
         c=sm.connection(service,db);records=[{k:x[k] for k in ('key','kind','value','revision','updated_at','actor')} for x in service.store.all(db,'memory_record')]
-        if any(x.get('status')=='OPEN' for x in service.store.all(db,'memory_conflict')):raise ValueError('Review knowledge conflicts before pushing a memory backup')
+        if any(x.get('status')=='OPEN' for x in service.store.all(db,'memory_conflict')):raise ValueError('Review knowledge conflicts before exporting a private backup')
     documents={}
     for item in records:
         if item['kind']!='document':continue
@@ -182,6 +182,7 @@ def startup(service,path=None):
 
 
 def import_key(service,value):
+    if not ARCHIVE.is_file():raise ValueError('Copy the private encrypted backup to knowledge/team-memory.enc.json before importing its matching recovery key. Existing knowledge was preserved.')
     try:key=base64.b64decode(value.strip(),validate=True)
     except Exception:raise ValueError('Choose the original team recovery-key file') from None
     if len(key)!=32:raise ValueError('Choose the original team recovery-key file')

@@ -5,10 +5,11 @@ from unittest.mock import patch
 from belive.service import Service
 from belive import company_sop as cs,whatsapp as wa,whatsapp_ai
 from test_backend import FakeAI
-from test_whatsapp import plan
+from test_whatsapp import plan,fixture_assessment
 
 class CompanySopTests(unittest.TestCase):
     def setUp(self):
+        self.assessment_patch=patch('belive.whatsapp_triage.assess',side_effect=fixture_assessment);self.assessment_patch.start()
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.s=Service(self.root/'test.db',FakeAI())
         self.pdf=self.root/'company-template.pdf';self.pdf.write_bytes(b'%PDF-1.7\nSynthetic test source only')
         self.pages=['Guests need written permission.','Quiet hours are 10 pm to 8 am. Refund processing may take 30 working days.','Another refund clause says 14 working days.']
@@ -17,7 +18,7 @@ class CompanySopTests(unittest.TestCase):
             section('quiet','Quiet hours are 10 pm to 8 am','GENERAL_GUIDANCE',['quiet','noise'],[(2,'Quiet hours are 10 pm to 8 am.')]),
             section('refund','Refund timing has conflicting clauses','CONFLICT_REVIEW',['refund'],[(2,'Refund processing may take 30 working days.'),(3,self.pages[2])])]
         self.issues=[{'title':'Refund conflict','pages':[2,3],'detail':'Company must confirm the applicable term.'}]
-    def tearDown(self):self.tmp.cleanup()
+    def tearDown(self):self.assessment_patch.stop();self.tmp.cleanup()
     def rows(self,kind):
         with self.s.store.connect() as db:return self.s.store.all(db,kind)
     def cmd(self,name,**p):return self.s.command(name,p,secrets.token_hex(16))
@@ -69,11 +70,14 @@ class CompanySopTests(unittest.TestCase):
         with patch('belive.whatsapp_ai.select_sop',return_value=[quiet['id']]),patch('belive.whatsapp_ai.reply',return_value=draft),patch('belive.whatsapp_ai.review',return_value=True):wa.process_thread(self.s,r['thread_id'])
         out=self.rows('wa_outgoing')[0];self.assertEqual(out['status'],'SIMULATED');self.assertEqual(out['company_evidence'][0]['pages'],[2]);self.assertEqual(self.rows('wa_staff'),[])
     def test_withdrawn_document_cannot_be_sent_from_an_old_queued_reply(self):
-        self.imported();entry=self.rows('wa_knowledge')[0];r=self.cmd('wa_simulate',customer='test',text='A general policy question')
-        out={'id':'WAO-TEST','thread_id':r['thread_id'],'case_id':r['case_id'],'thread_revision':1,'text':'A reply based on old terms','status':'QUEUED','knowledge_versions':{entry['id']:entry['version']}}
-        with self.s.store.connect() as db:
-            self.s.store.put(db,'wa_outgoing',out)
-            for turn in self.s.store.all(db,'wa_turn'):turn['status']='COMPLETE';self.s.store.put(db,'wa_turn',turn)
+        self.imported();entry=next(x for x in self.rows('wa_knowledge') if 'Quiet' in x['title'])
+        r=self.cmd('wa_simulate',customer='test',text='What are the quiet hours?')
+        draft={**plan(),'reply':'The supplied house rules set quiet hours from 10 pm to 8 am.','sources_used':[entry['id']]}
+        # Prepare a genuine queued reply through the current assessment contract, then revoke its source.
+        with patch('belive.whatsapp_ai.select_sop',return_value=[entry['id']]),patch('belive.whatsapp_ai.reply',return_value=draft), \
+             patch('belive.whatsapp_ai.review',return_value=True),patch('belive.whatsapp.deliver'):
+            wa.process_thread(self.s,r['thread_id'])
+        out=self.rows('wa_outgoing')[0];self.assertEqual(out['delivery_kind'],'SIMPLE');self.assertEqual(out['status'],'QUEUED')
         d=self.rows('sop_document')[0];self.cmd('wa_document_action',id=d['id'],revision=d['revision'],active=False)
         with patch('belive.whatsapp.request_json',side_effect=AssertionError('No old terms may be sent')):result=wa.deliver(self.s,out['id'])
         self.assertEqual(result['status'],'SUPERSEDED');self.assertTrue(any(x['status']=='PENDING' for x in self.rows('wa_turn')))
