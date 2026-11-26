@@ -307,6 +307,14 @@ def make_handler(service,tasks=None):
                 if route in {'portal_issue','portal_revoke'}:return self.json(404,{'error':'This access action has been retired'})
                 if route=='tenant_feedback':raise ValueError('Tenant feedback requires tenant portal access')
                 p={**p,'_actor':user['id']}
+                if route=='source' and p.get('platform')=='THREADS' and p.get('resource')=='me/threads':
+                    from belive.connectors import resolve_threads_account
+                    with credential_scope(service.store.path):p=resolve_threads_account(p)
+                    with service.store.connect() as db:
+                        existing=next((s for s in service.store.all(db,'source')
+                                       if s['platform']=='THREADS' and s['resource']==p['resource']),None)
+                    from belive.store import digest
+                    p['id']=existing['id'] if existing else 'SRC-threads-'+digest(p['resource'])[:12]
                 if route.startswith('shared-memory-'):
                     from belive import shared_memory
                     if route=='shared-memory-import-key':

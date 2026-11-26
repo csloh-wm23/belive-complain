@@ -70,6 +70,24 @@ function publicSourceLink(c){
     }
     return `<p><a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${label} ↗</a></p>`;
 }
+function sourceName(source){
+    if(source.platform==='THREADS'&&source.resource.endsWith('/threads')){
+        const account=source.account_name?' @'+String(source.account_name).replace(/^@/,''):'';
+        return 'Threads'+account+' · New posts & replies';
+    }
+    return source.platform+' · '+source.resource;
+}
+function sourceScanSummary(source){
+    if(!source.last_scan)return 'Waiting for the first check';
+    const checkedAt=new Date(source.last_scan).toLocaleString();
+    if(typeof source.last_new_count==='number'){
+        const counts=[`${source.last_new_count} new or changed cases`];
+        if(typeof source.last_seen_count==='number')counts.push(`${source.last_seen_count} items seen`);
+        if(source.last_deferred_count>0)counts.push(`${source.last_deferred_count} queued for next check`);
+        return counts.join(' · ')+' · '+checkedAt;
+    }
+    return `${source.last_count??0} items checked · ${checkedAt}`;
+}
 function renderDiscoveries(){
     const platformNames={GOOGLE:'Google Reviews',FACEBOOK:'Facebook',THREADS:'Threads'};
     const matches=data.cases.filter(c=>Object.hasOwn(platformNames,c.platform)&&c.status!=='SKIPPED');
@@ -97,7 +115,7 @@ function renderDiscoveries(){
     const tasks=new Set(data.tasks||[]);
     const running=sources.some(source=>tasks.has('source-'+source.id));
     $('scanAllSources').disabled=running||!sources.length;
-    $('scanAllSources').textContent=running?'Collecting…':'Collect reviews now';
+    $('scanAllSources').textContent=running?'Collecting…':'Collect feedback now';
     $('scanSummary').textContent=sources.length
         ? `${sources.length} enabled source(s). Scheduled checks every ${data.source_interval_minutes} min while BeLive is running.`
         : 'An administrator needs to connect an authorised Google Reviews, Facebook or Threads source first.';
@@ -107,9 +125,9 @@ function renderDiscoveries(){
     $('scanResults').innerHTML=sources.map(source=>{
         const result=tasks.has('source-'+source.id)?'Reading recent items…'
             :source.error?scanErrors[source.error]||'Platform read failed'
-            :source.last_scan?`${source.last_count??0} items checked · ${new Date(source.last_scan).toLocaleString()}`
-            :'Waiting for the first check';
-        return `<li><strong>${esc(platformNames[source.platform])}</strong> · ${esc(result)}</li>`;
+            :sourceScanSummary(source);
+        const name=source.platform==='THREADS'&&source.resource.endsWith('/threads')?sourceName(source):platformNames[source.platform];
+        return `<li><strong>${esc(name)}</strong> · ${esc(result)}</li>`;
     }).join('');
     if(document.activeElement!==$('scanInterval'))$('scanInterval').value=data.source_interval_minutes;
 }
@@ -135,7 +153,7 @@ setText('learningCount',String(data.examples.length));
 setText('learningSummary',data.examples.length?`${data.public_lesson_count||0} available for public replies. Open Self-learning to see which cases matched them.`:'Close a verified case and review its outcome before the system learns from it.');
 $('attention').innerHTML=needs.slice(0,3).map(c=>`<div class="attention-item"><small>${esc(c.id)} · ${esc(alertReason(c))}</small><h3>${esc(c.title)}</h3><p>${esc(c.review_reason)}</p><button data-case="${c.id}">Review case →</button></div>`).join('')||'<p class="empty">No cases currently awaiting staff.</p>';
 $('outboxList').innerHTML=data.outbox.map(m=>`<article class="record-card"><div class="card-heading"><strong>${esc(m.kind)} · ${esc(m.target)}</strong>${pill(m.status)}</div><p class="source-text">${esc(m.text)}</p><small>${esc(m.entity)} · ${esc(m.id)}</small><p class="muted">${esc(m.outcome||'No delivery confirmed')}</p><div class="case-actions">${m.status==='PENDING_APPROVAL'?`<button data-approve="${m.id}">Approve this exact message</button><button data-reject="${m.id}">Reject</button>`:''}${m.status==='APPROVED'?`<button class="primary" data-deliver="${m.id}">Deliver approved message</button>`:''}</div></article>`).join('')||'<p class="empty">No queued notifications.</p>';
-$('sourcesList').innerHTML=data.sources.map(s=>`<section class="card"><div class="card-heading"><h2>${esc(s.platform)} · ${esc(s.resource)}</h2>${pill(s.enabled?'MONITORING':'PAUSED')}</div><p>${esc(s.status)} · ${esc(s.error||'No reported error')} · Last read: ${esc(s.last_scan||'Never')}${s.enabled?` · Next check: ${esc(new Date(s.next_scan).toLocaleString())}`:''}</p>${s.enabled&&data.operator.role==='ADMIN'?`<button data-scan="${s.id}">Check recent posts</button>`:''}<button data-admin data-toggle-source="${s.id}">${s.enabled?'Pause checks':'Resume checks'}</button></section>`).join('')||'<section class="card empty">No source configured. Nothing is collected automatically.</section>';
+$('sourcesList').innerHTML=data.sources.map(s=>`<section class="card"><div class="card-heading"><h2>${esc(sourceName(s))}</h2>${pill(s.enabled?'MONITORING':'PAUSED')}</div><p>${esc(s.status)} · ${esc(s.error||'No reported error')} · ${esc(sourceScanSummary(s))}${s.enabled?` · Next check: ${esc(new Date(s.next_scan).toLocaleString())}`:''}</p>${s.enabled&&data.operator.role==='ADMIN'?`<button data-scan="${s.id}">Check recent posts</button>`:''}<button data-admin data-toggle-source="${s.id}">${s.enabled?'Pause checks':'Resume checks'}</button></section>`).join('')||'<section class="card empty">No source configured. Nothing is collected automatically.</section>';
 renderDiscoveries();
 $('memoryExamples').innerHTML=data.examples.map(f=>`<section class="card example-card">
     <p class="eyebrow">${esc(f.provenance||'Staff-reviewed example')}${f.sample_data?' · Fictional data, not a real customer outcome':''}</p>
@@ -294,7 +312,26 @@ ${c.status==='CLOSED'&&c.closure_reason!=='CUSTOMER_INACTIVE'?'<section class="c
 
 function formData(form){const p=Object.fromEntries(new FormData(form));form.querySelectorAll('[type="checkbox"]').forEach(e=>p[e.name]=e.checked);return p;}
 function bindForm(id,route,convert=p=>p){$(id).onsubmit=async e=>{e.preventDefault();try{const value=await run(route,convert(formData(e.target)));if(id==='intakeForm'){$('intakeDialog').close();openCase(value.id);}else e.target.reset();}catch(err){const el=e.target.querySelector('.form-error');if(el)el.textContent=err.message;notice(err.message,true);}};}
-bindForm('intakeForm','intake');bindForm('tenantForm','tenant');bindForm('recordForm','record');bindForm('sourceForm','source',p=>({...p,enabled:true}));bindForm('condoForm','condo');
+bindForm('intakeForm','intake');bindForm('tenantForm','tenant');bindForm('recordForm','record');bindForm('sourceForm','source',p=>({...p,resource:p.platform==='THREADS'?'me/threads':p.resource,enabled:true}));bindForm('condoForm','condo');
+const sourceForm=$('sourceForm');
+const sourcePlatform=sourceForm.elements.platform;
+const sourceResource=sourceForm.elements.resource;
+let enteredSourceResources={};
+function updateSourceFields(){
+    const threads=sourcePlatform.value==='THREADS';
+    $('sourceResourceLabel').hidden=threads;
+    $('sourceThreadsNote').hidden=!threads;
+    sourceResource.required=!threads;
+    sourceResource.value=threads?'me/threads':enteredSourceResources[sourcePlatform.value]||'';
+    sourceResource.placeholder=sourcePlatform.value==='FACEBOOK'?'PAGE_ID/feed or POST_ID/comments':'accounts/123/locations/456';
+}
+sourceResource.addEventListener('input',()=>{enteredSourceResources[sourcePlatform.value]=sourceResource.value;});
+sourcePlatform.addEventListener('change',updateSourceFields);
+sourceForm.addEventListener('reset',()=>{
+    enteredSourceResources={};
+    queueMicrotask(updateSourceFields);
+});
+updateSourceFields();
 $('discoveryPlatform').onchange=renderDiscoveries;
 $('sourceScheduleForm').onsubmit=async event=>{
     event.preventDefault();

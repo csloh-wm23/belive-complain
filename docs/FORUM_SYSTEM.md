@@ -86,7 +86,7 @@ Tenant feedback records what the customer reports. It does not independently ver
 
 | Diagram step | Current implementation | Practical boundary |
 |---|---|---|
-| External monitoring and relevance | Selected source API reads, persisted versions, native AI triage | 25 recent text entries per scan, not platform-wide or complete history; live APIs need credentials/access |
+| External monitoring and relevance | Selected source API reads, persisted versions, native AI triage | Google/Facebook and selected Threads posts read up to 25 recent text entries. Threads account monitoring checks up to 25 recent parent posts and up to 25 top-level replies per parent, importing at most 25 new or changed replies per run. Live APIs need credentials/access; these bounds do not provide complete history. |
 | Deduplication and private contact | Stable source IDs/content versions; exact repeated intake reuse; unverified public case gets contact-in-private draft | No automated public reply publisher; operator uses an authorised channel and verifies tenancy |
 | Internal/private intake | Signed WhatsApp messages, explicit local simulator and retained browser-scoped complaint form | Simulator is QA only; individual tenancy/account decisions require appropriate verified records |
 | High-risk branch | Deterministic early screen, AI high-risk validation, staff queue and acknowledgement timer | Keyword screen is not exhaustive; staff alerts remain visible locally and require approval/configured gateway for external delivery |
@@ -115,6 +115,16 @@ Failed analysis jobs preserve fixed, allowlisted error codes (for example `AI_UN
 ## Timers, delivery and failure
 
 While the launcher runs, a 30-second loop checks pending AI, due acknowledgements/follow-ups and configured sources. Source scans run no more often than their persisted 15-minute schedule; an operator can request a bounded scan manually. Saving an authorised source starts its checks by default. Existing paused sources remain paused across restarts. Operators can pause/resume checks for an individual source; there is no server-enable setting. Background tasks are deduplicated per case/source.
+
+### Threads account monitoring
+
+In **Public reviews → Configure platform sources**, choosing Threads monitors the connected account. The form submits `me/threads`; the server reads the saved Threads user's API identity and saves the exact numeric `USER_ID/threads` resource. The saved source is therefore pinned to the authorised account. The operator does not need to paste a new post ID whenever that account publishes another post. The retained `POST_ID/replies` resource continues to support an explicitly selected single post.
+
+Every manual or scheduled account check discovers up to 25 recent parent posts from that account and reads up to 25 top-level replies under each parent. Only reply text becomes complaint intake; the parent post is discovery context. A run imports at most 25 new or changed reply versions. Remaining discovered reply versions are deferred for a later check, and the interface distinguishes discovered items, new cases and deferred work. Repeating a check does not create another case for the same source ID and text. An edited reply remains an immutable new source version. These bounded reads do not search the whole Threads platform, paginate complete history or guarantee that every old reply will be recovered. The local server must remain running for scheduled checks.
+
+The connector sends read-only requests to the fixed official `https://graph.threads.com` host with the saved token in the Bearer header. Redirects remain blocked. Tokens stay in the private encrypted connection settings or local environment fallback and do not enter public source-code exports. API-provided reply permalinks and timestamps are retained as source provenance; the app does not manufacture a review/post URL from a share code.
+
+Collected replies enter the existing complaint queue and native Hermes assessment workflow. This addition changes collection scope, not the SIMPLE/MODERATE/HIGH rules, staff approval or model execution engine. Public responses remain drafts or previews during testing; a successful read, a collected case or a saved response does not establish that a reply was sent on Threads.
 
 The prototype defaults are 30 minutes for acknowledgement and 24 hours for follow-up. Two acknowledgement escalations target backup support and then management. Two recorded follow-up cycles return an unanswered case to staff. These timers record queued attempts, not confirmed customer contact. Timers never approve a message or claim a repair. The separate configurable inactivity policy can close a case waiting for a customer reply after seven days by default, recording an unconfirmed outcome rather than verified resolution.
 

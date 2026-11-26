@@ -102,13 +102,13 @@ if(settings){
 const sourceHeading=document.querySelector('[data-page="sources"] h2');
 if(sourceHeading)sourceHeading.textContent='Proactive complaint discovery';
 const sourceIntro=document.querySelector('[data-page="sources"] h2 + p');
-if(sourceIntro)sourceIntro.textContent='Add an authorised source for each platform. Scans read up to 25 recent items per source while BeLive is running.';
+if(sourceIntro)sourceIntro.textContent='Connect the public sources you are allowed to read. Threads follows replies on your connected account’s recent posts. Scheduled checks run while BeLive is running.';
 const sourcesPage=document.querySelector('[data-page="sources"]');
 if(sourcesPage){
   const monitor=document.createElement('section');
   monitor.className='card';
   monitor.innerHTML=`<h2>Collect public feedback</h2>
-    <button class="primary" id="scanAllSources" type="button" disabled>Collect reviews now</button>
+    <button class="primary" id="scanAllSources" type="button" disabled>Collect feedback now</button>
     <p id="scanSummary" role="status"></p>
     <ul id="scanResults" class="scan-results" aria-label="Latest collection results" hidden></ul>
     <details data-admin><summary>Collection schedule</summary><form id="sourceScheduleForm">

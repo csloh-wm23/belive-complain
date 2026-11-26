@@ -15,7 +15,7 @@ class PublicConnectorTests(unittest.TestCase):
              {'reviews': [{'reviewId': 'test-review', 'comment': 'The Wi-Fi disconnects every evening.'}]}),
             ('FACEBOOK', '123_456/comments', 'graph.facebook.com',
              {'data': [{'id': 'test-comment', 'message': 'The Wi-Fi disconnects every evening.'}]}),
-            ('THREADS', '123/replies', 'graph.threads.net',
+            ('THREADS', '123/replies', 'graph.threads.com',
              {'data': [{'id': 'test-reply', 'text': 'The Wi-Fi disconnects every evening.'}]}),
         ]
         for platform, resource, host, response in sources:
