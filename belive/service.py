@@ -525,6 +525,19 @@ class Service:
         if name=='source':
             from belive.connectors import validate_source
             source=validate_source(p)
+            existing=self.store.all(db,'source')
+            selected=next((s for s in existing if p.get('id') and s['id']==p['id']),None)
+            matching=next((s for s in existing if s['platform']==source['platform'] and s['resource']==source['resource']),None)
+            if selected:
+                require(selected['platform']==source['platform'],'Update a source within its existing platform')
+                require(not matching or matching['id']==selected['id'],'This API resource already has a saved source. Update that source instead.')
+            previous=selected or matching
+            if previous:
+                config={k:v for k,v in source.items() if k in {'platform','resource','authorised','enabled','lookback_days','account_name'}}
+                if 'enabled' not in p:config['enabled']=previous['enabled']
+                changed=any(previous.get(k,30 if k=='lookback_days' else None)!=v for k,v in config.items())
+                source={**previous,**config,'id':previous['id']}
+                if changed:source.update(next_scan=now(),status='READY',error='')
             self.store.put(db,'source',source);self.store.event(db,source['id'],'SOURCE_CONFIGURED','Explicit operator-selected API resource');return source
         if name in {'approve_message','reject_message'}:
             m=self.store.get(db,'outbox',p.get('id'));require(support_notification(m),'Notification is outside tenant complaint support');require(m['status']=='PENDING_APPROVAL','Message already decided or attempted')

@@ -89,7 +89,7 @@ class PublicRepliesTests(unittest.TestCase):
         if path.endswith('/111_222'): return {'id': '111_222', 'from': {'id': self.parent_owner}}
         if path.endswith('/222/replies'): return {'data': [{'id': '333', 'text': self.source_text}]}
         if path.endswith('/111_222/comments'):
-            return {'data': [{'id': '777', 'message': self.source_text, 'can_comment': True}]}
+            return {'data': [{'id': '777', 'message': self.source_text, 'can_comment': True, 'from': {'id': '999'}}]}
         if path.endswith('/111_333'):
             return {'id': '111_333', 'message': self.source_text, 'from': {'id': self.parent_owner}}
         raise AssertionError('Unexpected fixture read path: ' + path)
@@ -128,6 +128,62 @@ class PublicRepliesTests(unittest.TestCase):
         result = self.send()
         self.assertEqual(result['status'], 'POSTED')
         self.assertTrue(self.writes()[0][0].endswith('/777/comments'))
+
+    def feed_comment_fixture(self):
+        self.case = self.seed('FACEBOOK', comment=True)
+        with self.service.store.connect() as db:
+            source = self.service.store.get(db, 'source', 'SRC-FACEBOOK')
+            source['resource'] = '111/feed'
+            self.service.store.put(db, 'source', source)
+            case = self.service.store.get(db, 'case', self.case['id'])
+            case.update(public_source_kind='FACEBOOK_COMMENT', parent_source_id='111_222',
+                        parent_public_url='https://www.facebook.com/111/posts/222',
+                        public_url='https://www.facebook.com/111/posts/222?comment_id=777')
+            case['public_reply_preview']['input_fingerprint'] = public_preview.fingerprint(public_preview.context(case, []))
+            self.service.store.put(db, 'case', case)
+        self.source_text = self.case['description']
+
+    def test_page_monitored_comment_publishes_only_to_exact_comment_after_parent_verification(self):
+        self.feed_comment_fixture()
+        result = self.send()
+        self.assertEqual(result['status'], 'POSTED')
+        self.assertEqual(len(self.writes()), 1)
+        self.assertEqual(self.writes()[0][0], 'https://graph.facebook.com/v27.0/777/comments')
+        self.assertEqual(self.writes()[0][1], {'message':self.payload()['text']})
+        reads = [url for url,body,_ in self.requests if body is None]
+        self.assertTrue(any(urlsplit(url).path.endswith('/111_222') for url in reads))
+        self.assertTrue(any(urlsplit(url).path.endswith('/111_222/comments') for url in reads))
+
+    def test_page_monitored_comment_cannot_publish_under_another_pages_post(self):
+        self.feed_comment_fixture()
+        self.parent_owner = '999'
+        result = self.send()
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertEqual(self.writes(), [])
+
+    def test_page_monitored_comment_requires_exact_live_membership_and_unchanged_text(self):
+        self.feed_comment_fixture()
+        original = self.api
+        def different_comment(url, token, payload=None, **kwargs):
+            if urlsplit(url).path.endswith('/111_222/comments'):
+                return {'data':[{'id':'888','message':self.source_text,'can_comment':True,'from':{'id':'999'}}]}
+            return original(url,token,payload=payload,**kwargs)
+        self.net.side_effect = different_comment
+        result = self.send()
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertEqual(self.writes(), [])
+        self.net.side_effect = self.api
+        self.source_text = 'Changed fixture customer text after the saved assessment.'
+        result = self.send(key='fixture-updated-comment')
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertEqual(self.writes(), [])
+
+    def test_page_monitored_comment_without_parent_does_not_fall_back_to_post_publication(self):
+        self.feed_comment_fixture()
+        self.change(parent_source_id=None)
+        with self.assertRaises(ValueError):
+            self.send()
+        self.assertEqual(self.writes(), [])
 
     def test_single_facebook_comment_source_fallback_requires_exact_live_membership(self):
         self.case = self.seed('FACEBOOK', comment=True);self.source_text = self.case['description']

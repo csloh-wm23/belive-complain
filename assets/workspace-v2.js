@@ -102,7 +102,7 @@ if(settings){
 const sourceHeading=document.querySelector('[data-page="sources"] h2');
 if(sourceHeading)sourceHeading.textContent='Proactive complaint discovery';
 const sourceIntro=document.querySelector('[data-page="sources"] h2 + p');
-if(sourceIntro)sourceIntro.textContent='Connect the public sources you are allowed to read. Threads follows replies on your connected account’s recent posts. Scheduled checks run while BeLive is running.';
+if(sourceIntro)sourceIntro.textContent='Connect the public sources you are allowed to read. Choose how many recent days each API source covers. Facebook collects comments under Page posts; Threads follows replies on your connected account’s posts. Google API collection needs authorised Business Profile access. Scheduled checks run while BeLive is running.';
 const sourcesPage=document.querySelector('[data-page="sources"]');
 if(sourcesPage){
   const monitor=document.createElement('section');

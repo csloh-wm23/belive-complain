@@ -9,7 +9,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 
 from belive import google_replies, public_preview
-from belive.connectors import request_json, THREADS_API
+from belive.connectors import request_json, THREADS_API, FACEBOOK_COMMENT_LIMIT
 from belive.credentials import get_value
 from belive.store import bounded, digest, now
 
@@ -94,6 +94,7 @@ def _provenance(service, db, case):
 
 def _binding(service, db, case):
     platform, target = case.get('platform'), case.get('source_id', '')
+    facebook_comment=(platform=='FACEBOOK' and case.get('public_source_kind')=='FACEBOOK_COMMENT')
     _check(_object_id(target), 'This case has no exact official platform object ID. A webpage link alone cannot be used to send.')
     sources = [s for s in service.store.all(db, 'source') if s.get('platform') == platform
                and s.get('authorised') is True]
@@ -112,7 +113,12 @@ def _binding(service, db, case):
         comment_sources = []
         for source in sources:
             resource = source.get('resource', '')
+            if re.fullmatch(r'\d+/feed',resource) and facebook_comment:
+                parent=case.get('parent_source_id','')
+                if _object_id(parent):
+                    return {'target':target,'parent':parent,'account':resource.split('/')[0],'source':source}
             if re.fullmatch(r'\d+/feed', resource) and target.startswith(resource.split('/')[0] + '_'):
+                if facebook_comment:continue
                 return {'target': target, 'parent': None, 'account': resource.split('/')[0], 'source': source}
             if re.fullmatch(r'\d+(?:_\d+)*/comments', resource):
                 parent = resource.rsplit('/', 1)[0]
@@ -182,8 +188,10 @@ def _verify_target(platform, binding, token, version, description):
         _check(owner.get('id') == parent and owner_id == account, 'The selected parent is not owned by the connected company account. No reply was sent.')
         field = 'text' if platform == 'THREADS' else 'message'
         fields = 'id,' + field + (',can_comment' if platform == 'FACEBOOK' else '')
+        query={'fields':fields,'limit':100}
+        if platform=='FACEBOOK':query.update(limit=FACEBOOK_COMMENT_LIMIT,filter='toplevel',order='reverse_chronological')
         response = _api(base + parent + ('/replies?' if platform == 'THREADS' else '/comments?')
-                        + urlencode({'fields': fields, 'limit': 100}), token)
+                        + urlencode(query), token)
         item = next((x for x in response.get('data', []) if isinstance(x, dict) and x.get('id') == target), None)
         _check(item is not None, 'The exact complaint could not be confirmed under the authorised parent. Refresh collection before sending.')
         if platform == 'FACEBOOK':

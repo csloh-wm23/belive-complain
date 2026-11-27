@@ -254,7 +254,10 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(read.call_count,6)
         self.assertEqual(status['source_interval_minutes'],7)
         self.assertEqual({c['platform'] for c in status['cases']},{'GOOGLE','FACEBOOK','THREADS'})
-        self.assertTrue(all(s['last_count']==1 and s['next_scan']>s['last_scan'] for s in status['sources']))
+        self.assertTrue(all(s['last_seen_count']==1 and s['last_new_count']==0
+                            and s['next_scan']>s['last_scan'] for s in status['sources']))
+        for source in status['sources']:
+            self.assertEqual(source['last_count'], 0 if source['platform']=='FACEBOOK' else 1)
 
     def test_public_link_intake_only_accepts_supported_platforms(self):
         payload={'title':'Fictional public complaint','description':'Smoke and sparks from the socket.'}

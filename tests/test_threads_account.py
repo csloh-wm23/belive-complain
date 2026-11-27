@@ -3,6 +3,7 @@ import json
 import tempfile
 import threading
 import unittest
+from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -17,9 +18,13 @@ from server import Tasks, make_handler
 
 
 def reply(reply_id, text='TEST: The shared washing machine has been broken for five days.', **extra):
-    return dict(id=str(reply_id), text=text,
-                permalink='https://www.threads.com/@fixture/post/reply' + str(reply_id),
-                timestamp='2026-11-26T12:00:00+0000', **extra)
+    return {'id':str(reply_id), 'text':text,
+            'permalink':'https://www.threads.com/@fixture/post/reply' + str(reply_id),
+            'timestamp':(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat(), **extra}
+
+
+def parent(post_id, **extra):
+    return {'id':str(post_id), 'timestamp':(datetime.now(timezone.utc)-timedelta(minutes=2)).isoformat(), **extra}
 
 
 class ThreadsAccountTests(unittest.TestCase):
@@ -101,7 +106,7 @@ class ThreadsAccountTests(unittest.TestCase):
         request.assert_not_called()
 
     def test_reader_collects_replies_only_from_selected_accounts_posts(self):
-        posts = [{'id':'400','text':'A parent announcement, not a tenant complaint.'}, {'id':'500'}]
+        posts = [parent(400,text='A parent announcement, not a tenant complaint.'), parent(500)]
         data = {'400':[reply(401)], '500':[reply(501, 'TEST: The shared air conditioner is leaking water.') ]}
         with patch.object(connectors, 'get_value', return_value='fixture-token'), \
                 patch.object(connectors, 'request_json', side_effect=self.transport(posts, data)) as request:
@@ -111,7 +116,7 @@ class ThreadsAccountTests(unittest.TestCase):
         self.assertFalse(any(row['id'] in {'400','500'} for row in rows))
 
     def test_future_posts_are_discovered_and_unchanged_replies_do_not_duplicate(self):
-        posts = [{'id':'400'}]
+        posts = [parent(400)]
         replies = {'400':[reply(401)]}
         first, _ = self.scan(posts, replies)
         second, _ = self.scan(posts, replies)
@@ -120,7 +125,7 @@ class ThreadsAccountTests(unittest.TestCase):
         cases, source = self.snapshot()
         self.assertEqual(len(cases), 1)
         self.assertEqual(source['last_new_count'], 0)
-        posts.insert(0, {'id':'500'})
+        posts.insert(0, parent(500))
         replies['500'] = [reply(501, 'TEST: The shared refrigerator has stopped cooling.')]
         future, _ = self.scan(posts, replies)
         self.assertEqual(len(future), 1)
@@ -132,9 +137,36 @@ class ThreadsAccountTests(unittest.TestCase):
         self.assertEqual(source['last_seen_count'], 2)
         self.assertEqual({case['source_id'] for case in cases}, {'401','501'})
 
+    def test_own_reply_flag_and_confirmed_receipts_do_not_create_feedback_cases(self):
+        previous = self.service.command('intake', {
+            'platform':'THREADS','source_id':'700','title':'Earlier Threads fixture',
+            'description':'TEST: An earlier fictional customer support complaint.',
+        }, 'fixture-earlier-threads')
+        facebook = self.service.command('intake', {
+            'platform':'FACEBOOK','source_id':'701','title':'Earlier Facebook fixture',
+            'description':'TEST: A separate fictional customer support complaint.',
+        }, 'fixture-earlier-facebook')
+        with self.service.store.connect() as db:
+            previous['public_reply'] = {'status':'POSTED','receipt_id':'790'}
+            facebook['public_reply'] = {'status':'POSTED','receipt_id':'792'}
+            self.service.store.put(db,'case',previous)
+            self.service.store.put(db,'case',facebook)
+            self.service.store.put(db,'public_reply_attempt',{
+                'id':'fixture-threads-posted-attempt','case_id':previous['id'],
+                'result':{'platform':'THREADS','status':'POSTED','receipt_id':'791'},
+            })
+        self.scan([parent(400)], {'400':[
+            reply(777,is_reply_owned_by_me=True),reply(778,is_reply_owned_by_me=False),
+            reply(790),reply(791),reply(7909),reply(792),
+        ]})
+        cases,_ = self.snapshot()
+        self.assertEqual({case['source_id'] for case in cases if case['platform']=='THREADS'},
+                         {'700','778','7909','792'})
+        self.assertEqual(len([case for case in cases if case['platform']=='FACEBOOK']),1)
+
     def test_reply_provenance_is_preserved_without_replacing_stable_id(self):
         item = reply(401)
-        self.scan([{'id':'400'}], {'400':[item]})
+        self.scan([parent(400)], {'400':[item]})
         cases, _ = self.snapshot()
         case = cases[0]
         self.assertEqual(case['source_id'], '401')
@@ -148,9 +180,9 @@ class ThreadsAccountTests(unittest.TestCase):
 
     def test_changed_reply_retains_an_immutable_version_and_can_be_reassessed(self):
         item = reply(401)
-        first, _ = self.scan([{'id':'400'}], {'400':[item]})
+        first, _ = self.scan([parent(400)], {'400':[item]})
         changed = dict(item, text='TEST: The washing machine is still broken after seven days and three reports.')
-        second, _ = self.scan([{'id':'400'}], {'400':[changed]})
+        second, _ = self.scan([parent(400)], {'400':[changed]})
         self.assertEqual(len(first), 1)
         self.assertEqual(len(second), 1)
         self.assertNotEqual(first, second)
@@ -160,7 +192,7 @@ class ThreadsAccountTests(unittest.TestCase):
         self.assertEqual({version['text'] for version in versions}, {item['text'],changed['text']})
 
     def test_each_scan_imports_at_most_25_and_defers_remaining_unseen_replies(self):
-        posts = [{'id':'400'}, {'id':'500'}]
+        posts = [parent(400), parent(500)]
         replies = {'400':[reply(4000 + i) for i in range(25)],
                    '500':[reply(5000 + i) for i in range(5)]}
         first, _ = self.scan(posts, replies)
@@ -177,7 +209,7 @@ class ThreadsAccountTests(unittest.TestCase):
         self.assertEqual(self.scan(posts, replies)[0], [])
 
     def test_account_reader_bounds_post_and_reply_pages_and_never_follows_paging(self):
-        posts = [{'id':str(400 + i)} for i in range(26)]
+        posts = [parent(400+i) for i in range(26)]
         replies = {str(400 + i):[reply((400+i)*100+j) for j in range(26)] for i in range(26)}
         with patch.object(connectors, 'get_value', return_value='fixture-token'), \
                 patch.object(connectors, 'request_json', side_effect=self.transport(posts, replies)) as request:
@@ -186,7 +218,7 @@ class ThreadsAccountTests(unittest.TestCase):
         self.assertEqual(len(rows), 625)
 
     def test_partial_account_read_failure_is_not_reported_as_success(self):
-        result, _ = self.scan([{'id':'400'}, {'id':'500'}], {
+        result, _ = self.scan([parent(400), parent(500)], {
             '400':[reply(401)], '500':RuntimeError('Fixture transport failure'),
         })
         self.assertEqual(result, [])
@@ -203,7 +235,7 @@ class ThreadsAccountTests(unittest.TestCase):
                 with self.subTest(payload=malformed, stage=stage), \
                         patch.object(connectors, 'get_value', return_value='fixture-token'), \
                         patch.object(connectors, 'request_json', side_effect=(
-                            [malformed] if stage=='posts' else [{'data':[{'id':'400'}]}, malformed])):
+                            [malformed] if stage=='posts' else [{'data':[parent(400)]}, malformed])):
                     self.assertEqual(connectors.scan(self.service, source['id']), [])
                     cases, saved = self.snapshot()
                     self.assertEqual(cases, [])

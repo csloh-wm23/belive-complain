@@ -60,11 +60,37 @@ function renderCases(){
         button.querySelector('span').textContent=data.cases.filter(complaintQueues[queue]).length;
     });
 }
+function publicSourceName(c){
+    if(c.platform==='THREADS'&&c.public_source_kind==='THREADS_OWN_REPLY')return /^\s*TEST(?:\s|—|:|-)/i.test(c.description)?'Threads account reply · earlier test':'Threads account reply · earlier capture';
+    if(c.platform!=='FACEBOOK')return ({GOOGLE:'Google Reviews',THREADS:'Threads'})[c.platform]||c.platform;
+    if(c.public_source_kind==='FACEBOOK_COMMENT')return 'Facebook comment';
+    if(c.public_source_kind==='FACEBOOK_PAGE_POST')return /^\s*TEST(?:\s|—|:|-)/i.test(c.description)?'Facebook Page post · earlier test':'Facebook Page post · earlier capture';
+    return 'Facebook · source type not recorded';
+}
+function publicSourceNotice(c){
+    if(c.platform==='THREADS'&&c.public_source_kind==='THREADS_OWN_REPLY')return '<p class="muted">Earlier reply from the connected Threads account. Current monitoring excludes the account’s own replies. This saved case remains as earlier evidence, even when a fresh scan finds no new customer items.</p>';
+    if(c.platform!=='FACEBOOK')return '';
+    const note=c.public_source_kind==='FACEBOOK_PAGE_POST'
+        ?'This earlier capture contains the Page post itself. Current Facebook monitoring collects public comments under Page posts.'
+        :c.public_source_kind==='FACEBOOK_COMMENT'
+            ?'Collected from a public Facebook comment.'+(!c.tenant_id?' The author’s tenancy has not been verified.':'')
+            :'The saved source type is not recorded. Check the source before presenting this as a customer comment.';
+    return `<p class="muted">${esc(note)}</p>`;
+}
 function publicSourceLink(c){
+    if(c.platform==='FACEBOOK'&&c.public_source_kind==='FACEBOOK_COMMENT'){
+        const links=[];
+        if(c.public_url&&c.public_url!==c.parent_public_url)links.push(`<a href="${esc(c.public_url)}" target="_blank" rel="noopener noreferrer">Open original Facebook comment ↗</a>`);
+        if(c.parent_public_url)links.push(`<a href="${esc(c.parent_public_url)}" target="_blank" rel="noopener noreferrer">Open parent post ↗</a>`);
+        const missing=!c.public_url||c.public_url===c.parent_public_url;
+        const note=c.parent_public_url?'Exact comment link unavailable. The parent-post link provides context only.':'Exact comment link unavailable.';
+        return (links.length?'<p>'+links.join(' · ')+'</p>':'')+(missing?`<p class="muted">${note}</p>`:'');
+    }
     const href=c.review_url||c.public_url;
     if(!href)return '';
     let label='Open original source';
-    if(c.platform==='GOOGLE'){
+    if(c.platform==='FACEBOOK')label=c.public_source_kind==='FACEBOOK_PAGE_POST'?'Open Facebook Page post':'Open Facebook source';
+    else if(c.platform==='GOOGLE'){
         if(c.review_url||/^https:\/\/(?:www\.)?google\.com\/maps\/(?:reviews\/|contrib\/\d+\/place\/[^/?#]+)/i.test(href))label='Open original Google review';
         else if(/^https:\/\/(?:www\.)?google\.com\/maps\/place\//i.test(href))label='Open Google Maps listing';
         else label='Open Google Maps source';
@@ -72,6 +98,7 @@ function publicSourceLink(c){
     return `<p><a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${label} ↗</a></p>`;
 }
 function sourceName(source){
+    if(source.platform==='FACEBOOK')return source.resource.endsWith('/feed')?'Facebook · Page customer comments · '+source.resource:'Facebook · Selected post comments · '+source.resource;
     if(source.platform==='THREADS'&&source.resource.endsWith('/threads')){
         const account=source.account_name?' @'+String(source.account_name).replace(/^@/,''):'';
         return 'Threads'+account+' · New posts & replies';
@@ -88,6 +115,17 @@ function sourceScanSummary(source){
         return counts.join(' · ')+' · '+checkedAt;
     }
     return `${source.last_count??0} items checked · ${checkedAt}`;
+}
+function sourceScope(source){
+    const days=esc(source.lookback_days||30);
+    if(source.platform==='GOOGLE')return `<p class="muted">Reads up to 25 reviews updated within the last ${days} days from the authorised Google Business Profile API. This setting does not change individual review-link imports or the separate browser collection tool. It does not provide complete review history.</p>`;
+    if(source.platform==='THREADS')return source.resource.endsWith('/threads')
+        ?`<p class="muted">Checks up to 25 connected-account posts and 25 top-level replies per post within the last ${days} days. Imports up to 25 new or changed replies per run; remaining discovered replies wait for another check. Your account’s own replies are excluded. This does not search all Threads posts or provide complete history.</p>`
+        :`<p class="muted">Reads up to 25 top-level replies from the last ${days} days on this selected post. The parent post can be older. Your account’s own replies are excluded. This does not provide complete reply history.</p>`;
+    if(source.platform!=='FACEBOOK')return '';
+    return source.resource.endsWith('/feed')
+        ?`<p class="muted">Checks up to 25 Page-owned posts and 25 top-level comments per post within the last ${days} days. Imports up to 25 new or changed comments per run; remaining discovered comments wait for another check. Your Page’s own posts and replies are excluded. This does not read complete comment history or verify the authors as tenants.</p>`
+        :`<p class="muted">Reads up to 25 top-level comments from the last ${days} days on this selected post. The parent post can be older. Your Page’s own replies are excluded. This does not read complete comment history or verify the authors as tenants.</p>`;
 }
 function renderDiscoveries(){
     const platformNames={GOOGLE:'Google Reviews',FACEBOOK:'Facebook',THREADS:'Threads'};
@@ -106,9 +144,10 @@ function renderDiscoveries(){
     }
     $('discoveryFindings').innerHTML=matches.filter(c=>!selectedPlatform||c.platform===selectedPlatform).map(c=>{
         const duplicates=platformsByText.get(signature(c));
-        return `<article class="record-card"><div class="card-heading"><strong>${esc(platformNames[c.platform])}</strong>${pill(c.status)}</div>
+        return `<article class="record-card"><div class="card-heading"><strong>${esc(publicSourceName(c))}</strong>${pill(c.status)}</div>
             <button class="case-link" data-case="${esc(c.id)}">${esc(c.title)} · ${esc(c.id)}</button>
             <p>${esc(c.description)}</p><small>Source: ${esc(c.source_id)} · Found ${esc(new Date(c.created_at).toLocaleString())}</small>
+            ${publicSourceNotice(c)}
             ${publicSourceLink(c)}
             ${duplicates.size>1?'<p>Possible cross-platform duplicate: identical text was found on another platform.</p>':''}</article>`;
     }).join('')||'<p>No matching discoveries yet.</p>';
@@ -127,7 +166,7 @@ function renderDiscoveries(){
         const result=tasks.has('source-'+source.id)?'Reading recent items…'
             :source.error?scanErrors[source.error]||'Platform read failed'
             :sourceScanSummary(source);
-        const name=source.platform==='THREADS'&&source.resource.endsWith('/threads')?sourceName(source):platformNames[source.platform];
+        const name=source.platform==='FACEBOOK'||(source.platform==='THREADS'&&source.resource.endsWith('/threads'))?sourceName(source):platformNames[source.platform];
         return `<li><strong>${esc(name)}</strong> · ${esc(result)}</li>`;
     }).join('');
     if(document.activeElement!==$('scanInterval'))$('scanInterval').value=data.source_interval_minutes;
@@ -154,8 +193,9 @@ setText('learningCount',String(data.examples.length));
 setText('learningSummary',data.examples.length?`${data.public_lesson_count||0} available for public replies. Open Self-learning to see which cases matched them.`:'Close a verified case and review its outcome before the system learns from it.');
 $('attention').innerHTML=needs.slice(0,3).map(c=>`<div class="attention-item"><small>${esc(c.id)} · ${esc(alertReason(c))}</small><h3>${esc(c.title)}</h3><p>${esc(c.review_reason)}</p><button data-case="${c.id}">Review case →</button></div>`).join('')||'<p class="empty">No cases currently awaiting staff.</p>';
 $('outboxList').innerHTML=data.outbox.map(m=>`<article class="record-card"><div class="card-heading"><strong>${esc(m.kind)} · ${esc(m.target)}</strong>${pill(m.status)}</div><p class="source-text">${esc(m.text)}</p><small>${esc(m.entity)} · ${esc(m.id)}</small><p class="muted">${esc(m.outcome||'No delivery confirmed')}</p><div class="case-actions">${m.status==='PENDING_APPROVAL'?`<button data-approve="${m.id}">Approve this exact message</button><button data-reject="${m.id}">Reject</button>`:''}${m.status==='APPROVED'?`<button class="primary" data-deliver="${m.id}">Deliver approved message</button>`:''}</div></article>`).join('')||'<p class="empty">No queued notifications.</p>';
-$('sourcesList').innerHTML=data.sources.map(s=>`<section class="card"><div class="card-heading"><h2>${esc(sourceName(s))}</h2>${pill(s.enabled?'MONITORING':'PAUSED')}</div><p>${esc(s.status)} · ${esc(s.error||'No reported error')} · ${esc(sourceScanSummary(s))}${s.enabled?` · Next check: ${esc(new Date(s.next_scan).toLocaleString())}`:''}</p>${s.enabled&&data.operator.role==='ADMIN'?`<button data-scan="${s.id}">Check recent posts</button>`:''}<button data-admin data-toggle-source="${s.id}">${s.enabled?'Pause checks':'Resume checks'}</button></section>`).join('')||'<section class="card empty">No source configured. Nothing is collected automatically.</section>';
+$('sourcesList').innerHTML=data.sources.map(s=>`<section class="card"><div class="card-heading"><h2>${esc(sourceName(s))}</h2>${pill(s.enabled?'MONITORING':'PAUSED')}</div><p>${esc(s.status)} · ${esc(s.error||'No reported error')} · ${esc(sourceScanSummary(s))}${s.enabled?` · Next check: ${esc(new Date(s.next_scan).toLocaleString())}`:''}</p>${sourceScope(s)}${s.enabled&&data.operator.role==='ADMIN'?`<button data-scan="${s.id}">Check recent feedback</button>`:''}<button data-admin data-toggle-source="${s.id}">${s.enabled?'Pause checks':'Resume checks'}</button></section>`).join('')||'<section class="card empty">No source configured. Nothing is collected automatically.</section>';
 renderDiscoveries();
+if(!sourceForm.contains(document.activeElement))updateSourceFields();
 $('memoryExamples').innerHTML=data.examples.map(f=>`<section class="card example-card">
     <p class="eyebrow">${esc(f.provenance||'Staff-reviewed example')}${f.sample_data?' · Fictional data, not a real customer outcome':''}</p>
     <div class="card-heading"><strong>${f.public_active?'Public auto-reply active':f.public_question?'Outside the current public lesson set':'Writing example'}</strong>${f.case_id?`<button class="text-button" data-case="${esc(f.case_id)}">Source case ${esc(f.case_id)} ↗</button>`:"<span>Shared team memory</span>"}</div>
@@ -282,6 +322,7 @@ if(!active)actions+='<button data-act="reopen">Reopen for staff</button>';
 $('caseDetail').innerHTML=`<div class="dialog-heading"><div><span class="eyebrow">${esc(c.id)}</span><h2>${esc(c.title)}</h2></div><button data-close="caseDialog" aria-label="Close case">×</button></div>
 <div class="case-tags">${pill(c.status)}${pill(level(c))}${pill(c.category)}</div><p>${esc(urgencyReason)}</p>${c.staff_destination?`<p><strong>Assigned team</strong> ${esc(c.staff_destination)}</p>`:''}
 <section class="case-next-step"><h3>Next step</h3><p>${esc(complaintNextStep(c))}</p></section>
+${c.platform==='FACEBOOK'||c.public_source_kind==='THREADS_OWN_REPLY'?`<p><strong>${esc(publicSourceName(c))}</strong></p>${publicSourceNotice(c)}`:''}
 ${publicSourceLink(c)}
 ${c.entrypoint==='TENANT_WEBSITE'? `<section class="case-section"><h3>Reported rental location</h3><p>${c.reported_location ? esc([c.reported_location.property,c.reported_location.unit].filter(Boolean).join(' · ')) : 'Location was not provided.'}</p>${c.reported_location?.address?`<p>${esc(c.reported_location.address)}</p>`:''}</section>` : ''}
 <section class="case-section"><h3>Conversation</h3>${chat(c.conversation)}<p class="muted">Only published messages are shown to the tenant.</p></section>
@@ -334,23 +375,47 @@ ${c.status==='CLOSED'&&c.closure_reason!=='CUSTOMER_INACTIVE'?'<section class="c
 
 function formData(form){const p=Object.fromEntries(new FormData(form));form.querySelectorAll('[type="checkbox"]').forEach(e=>p[e.name]=e.checked);return p;}
 function bindForm(id,route,convert=p=>p){$(id).onsubmit=async e=>{e.preventDefault();try{const value=await run(route,convert(formData(e.target)));if(id==='intakeForm'){$('intakeDialog').close();openCase(value.id);}else e.target.reset();}catch(err){const el=e.target.querySelector('.form-error');if(el)el.textContent=err.message;notice(err.message,true);}};}
-bindForm('intakeForm','intake');bindForm('tenantForm','tenant');bindForm('recordForm','record');bindForm('sourceForm','source',p=>({...p,resource:p.platform==='THREADS'?'me/threads':p.resource,enabled:true}));bindForm('condoForm','condo');
+bindForm('intakeForm','intake');bindForm('tenantForm','tenant');bindForm('recordForm','record');bindForm('sourceForm','source',p=>{
+    const source={...p,resource:p.platform==='THREADS'?'me/threads':p.resource.trim(),lookback_days:Number(p.lookback_days||30),enabled:true};
+    const saved=data.sources.find(item=>item.platform===p.platform&&item.resource===source.resource);
+    if(saved)source.id=saved.id;
+    return source;
+});bindForm('condoForm','condo');
 const sourceForm=$('sourceForm');
 const sourcePlatform=sourceForm.elements.platform;
 const sourceResource=sourceForm.elements.resource;
+const sourceLookback=sourceForm.elements.lookback_days;
 let enteredSourceResources={};
+let enteredSourceHistory={};
 function updateSourceFields(){
     const threads=sourcePlatform.value==='THREADS';
+    const facebook=sourcePlatform.value==='FACEBOOK';
+    const platform=sourcePlatform.value;
+    const saved=data.sources.find(item=>item.platform===platform&&(!threads||item.resource.endsWith('/threads')))
+        ||data.sources.find(item=>item.platform===platform);
+    if(!threads&&!enteredSourceResources[platform]&&saved)enteredSourceResources[platform]=saved.resource;
+    if(enteredSourceHistory[platform]===undefined&&saved)enteredSourceHistory[platform]=saved.lookback_days||30;
     $('sourceResourceLabel').hidden=threads;
     $('sourceThreadsNote').hidden=!threads;
+    $('sourceFacebookNote').hidden=!facebook;
+    $('sourceFacebookLookbackLabel').hidden=false;
+    sourceLookback.required=true;
+    sourceLookback.disabled=false;
+    sourceLookback.value=String(enteredSourceHistory[platform]??30);
+    $('sourceHistoryHelp').textContent='1–365 days; default 30. '+(threads
+        ?'For recent account posts and replies. A selected-post source keeps its parent target and filters its replies by these days.'
+        :facebook?'For recent Page posts and comments. A selected-post source keeps its parent target and filters its comments by these days.'
+            :'For reviews updated through the Google Business Profile API. Individual review-link imports are unchanged.');
     sourceResource.required=!threads;
     sourceResource.value=threads?'me/threads':enteredSourceResources[sourcePlatform.value]||'';
     sourceResource.placeholder=sourcePlatform.value==='FACEBOOK'?'PAGE_ID/feed or POST_ID/comments':'accounts/123/locations/456';
 }
 sourceResource.addEventListener('input',()=>{enteredSourceResources[sourcePlatform.value]=sourceResource.value;});
+sourceLookback.addEventListener('input',()=>{enteredSourceHistory[sourcePlatform.value]=sourceLookback.value;});
 sourcePlatform.addEventListener('change',updateSourceFields);
 sourceForm.addEventListener('reset',()=>{
     enteredSourceResources={};
+    enteredSourceHistory={};
     queueMicrotask(updateSourceFields);
 });
 updateSourceFields();

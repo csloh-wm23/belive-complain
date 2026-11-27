@@ -3,10 +3,12 @@ import copy
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import urlsplit
 from unittest.mock import Mock, patch
 
 from belive import automation, connectors, public_diagnostics, public_preview
 from belive.service import Service
+from belive.store import now
 
 
 class PublicConnectorTests(unittest.TestCase):
@@ -20,11 +22,12 @@ class PublicConnectorTests(unittest.TestCase):
     def test_each_source_records_one_case_even_when_polled_twice(self):
         sources = [
             ('GOOGLE', 'accounts/123/locations/456', 'mybusiness.googleapis.com',
-             {'reviews': [{'reviewId': 'test-review', 'comment': 'The Wi-Fi disconnects every evening.'}]}),
+             {'reviews': [{'reviewId': 'test-review', 'comment': 'The Wi-Fi disconnects every evening.', 'updateTime':now()}]}),
             ('FACEBOOK', '123_456/comments', 'graph.facebook.com',
-             {'data': [{'id': 'test-comment', 'message': 'The Wi-Fi disconnects every evening.'}]}),
+             {'data': [{'id': '777', 'message': 'The Wi-Fi disconnects every evening.',
+                        'from': {'id': '999'}, 'created_time':now()}]}),
             ('THREADS', '123/replies', 'graph.threads.com',
-             {'data': [{'id': 'test-reply', 'text': 'The Wi-Fi disconnects every evening.'}]}),
+             {'data': [{'id': 'test-reply', 'text': 'The Wi-Fi disconnects every evening.', 'timestamp':now()}]}),
         ]
         for platform, resource, host, response in sources:
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as directory:
@@ -33,7 +36,12 @@ class PublicConnectorTests(unittest.TestCase):
                     'platform': platform, 'resource': resource, 'authorised': True
                 }, 'demo-source')
                 env = {f'BELIVE_{platform}_TOKEN': 'fixture-only', 'BELIVE_FACEBOOK_VERSION': 'v23.0'}
-                with patch.dict('os.environ', env), patch.object(connectors, 'request_json', return_value=response) as read:
+                def api(url, token):
+                    if platform == 'FACEBOOK' and urlsplit(url).path.endswith('/123_456'):
+                        return {'id':'123_456','from':{'id':'123'},
+                                'permalink_url':'https://www.facebook.com/123/posts/456'}
+                    return response
+                with patch.dict('os.environ', env), patch.object(connectors, 'request_json', side_effect=api) as read:
                     first = connectors.scan(service, source['id'])
                     second = connectors.scan(service, source['id'])
                 self.assertEqual(len(first), 1)
@@ -384,10 +392,11 @@ class PublicConnectorTests(unittest.TestCase):
             tasks = Tasks(service)
             tasks.stop = Mock()
             tasks.stop.wait.side_effect = [False, False, True]
+            fixture_time = now()
             def read(url, token):
                 if 'mybusiness.googleapis.com' in url:
-                    return {'reviews':[{'reviewId':'review-1','comment':'The Wi-Fi drops every evening.'}]}
-                return {'data':[{'id':'reply-1','text':'The washing machine is broken.'}]}
+                    return {'reviews':[{'reviewId':'review-1','comment':'The Wi-Fi drops every evening.','updateTime':fixture_time}]}
+                return {'data':[{'id':'reply-1','text':'The washing machine is broken.','timestamp':fixture_time}]}
 
             with patch.dict('os.environ', {'BELIVE_GOOGLE_TOKEN':'fixture','BELIVE_THREADS_TOKEN':'fixture'}), \
                     patch.object(connectors, 'request_json', side_effect=read) as request, \

@@ -21,6 +21,31 @@ On a prepared installation, choose the labelled saved Google review by topic usi
 
 If the page is unavailable, name saved evidence as saved evidence. **Record a public complaint** is a manual fallback; do not call it an automatic crawl.
 
+## Collect Facebook customer comments
+
+1. Save the authorised test Page's token and compatible Graph API version in **System setup → AI & knowledge → Connection settings → Platform API access → Facebook**.
+2. Open **Public reviews → Configure platform sources**, select **Facebook customer comments**, and enter `PAGE_ID/feed`. **Look back (days)** starts at 30 and accepts 1–365. If a Facebook source already exists, the form prefills its resource and saved days. Change the days here, confirm this selected source is authorised, and use the same **Save source & start checks** button to update it. The source follows comments under recent posts from that Page; you do not need to enter each new post ID or create another source for a new history window.
+3. Use a clearly labelled student test post on the authorised Page. Place the fictional complaint as a comment from a permitted test account, using that account's identity rather than the Page's identity. A Page-authored comment is excluded, as are confirmed replies previously sent by BeLive.
+4. Open **Scheduled collection with API access** and press **Collect feedback now**. The same source is also checked on the saved interval while BeLive runs.
+5. Under **Discovered complaints**, open a case labelled **Facebook comment**. Inspect its actual comment text and stable source ID. **Open original Facebook comment** opens the exact API-provided comment permalink when available. **Open parent post** is a separate context link. If an exact comment link is unavailable, say so; the parent link is not proof that an individual-comment link was captured.
+6. Show the saved **AI assessment**, reason for SIMPLE/MODERATE/HIGH, staff destination and tailored draft on that comment's case. The author is a public commenter whose tenancy is not automatically verified. Keep the reply in preview for a read-only demo; **Send reply to Facebook** is a separate deliberate action that writes publicly.
+7. Collect again and compare case IDs/counts. An unchanged comment should reuse its case. The results distinguish items seen, new or changed cases and comments queued for the next check.
+
+The Page check discovers up to 25 Page-owned posts within your chosen number of days and up to 25 top-level comments per post, importing at most 25 new or changed comments per run. Comments must also be within the selected window. Remaining discovered comments wait for another check. Increasing the days does not remove these collection limits or provide complete historical or nested-reply coverage. To monitor one specific post, use `POST_ID/comments`; that selected-post source permits an older parent but reads up to 25 comments within the selected days. **Collection schedule** separately controls how often checks run.
+
+The earlier washing-machine Page-post test remains an earlier **Page post**, not evidence of collecting a customer's comment. Use the newly labelled **Facebook comment** case to demonstrate this corrected workflow. A fictional comment read from the live Facebook API proves collection wiring; it does not prove a real tenant complaint or completed repair.
+
+## Set API collection history for Google and Threads
+
+Use **Public reviews → Configure platform sources → Look back (days)** for any of the three platforms. Enter 1–365 days; 30 is the default. Each platform retains its own entered value when you switch the Service selector. Change the value on the existing source and use the same **Save source & start checks** button. The history window and the interval under **Collection schedule** are separate settings.
+
+- **Google Business Profile reviews:** select the official Google service, use the authorised `accounts/ACCOUNT_ID/locations/LOCATION_ID` resource and choose the days. BeLive reads up to 25 recent reviews and retains those updated within that window, using creation time if an update time is absent. A saved window does not provide API approval or authorisation; verify a real read only after the company connection is available. An individual review-link import remains age-independent, and this setting does not promise a date filter for browser bulk collection.
+- **Threads connected account:** select Threads, choose the days and save. The form uses the account already connected by its token, so it does not ask for each new post ID. The account scan covers up to 25 parent posts and 25 top-level replies per parent within the selected days, with up to 25 new or changed replies imported per run. Your account’s own replies are excluded. Existing selected-post sources can retain an older parent; their replies must still fit the chosen window.
+
+The source card shows the saved days and collection limits. Collect twice to check that the same source IDs/text reuse their saved cases. Changing the days does not delete older saved cases or prove that all history was retrieved. Missing or invalid dates are not invented. Keep external replies in preview during the collection test.
+
+An earlier **Threads account reply · earlier test/capture** case came from the connected account itself. Keep it labelled as earlier evidence. Current monitoring excludes that account's own replies, so the next scan can correctly find zero new customer items while the historical case is still visible. Use a permitted different account's comment to test new customer-reply collection; the comment still does not establish a verified tenancy.
+
 ## Optional batch collection
 
 **Collect up to 10 reviews** reads visible written low-rated reviews from the selected listing, or individual review links entered one per line. It may return fewer than ten. Repeated content should reopen existing cases rather than create duplicates.
@@ -59,7 +84,7 @@ The measured native run used four model calls across those two roles. It saved a
 The main action is **Send reply to Google**, **Send reply to Facebook**, or **Send reply to Threads**, according to the selected case. Review the original-source link and editable text before pressing it. That click approves the displayed text; there is no second approval checkbox. Automatic assessment and draft generation never press Send.
 
 - Google requires the exact official review resource, an authorised verified Business Profile location and reply-enabled credentials. A Maps browser import alone cannot enable sending.
-- Facebook sends a comment to the exact saved Page post or comment after checking its configured Page binding and current source text.
+- Facebook replies under the exact saved customer comment after checking its configured Page binding, parent-post ownership, recent comment membership and current source text. Earlier explicitly captured Page-post targets retain their separate legacy handling; collection now produces customer-comment cases.
 - Threads creates a reply container whose `reply_to_id` is the exact saved complaint, then publishes that container after it is ready. It does not create an unrelated root post or reply to a different parent.
 
 The outcome is saved with an idempotency key. A platform receipt is required for **POSTED**. **PENDING** means a saved Threads container is still processing and can be continued without creating another container. **FAILED** records a rejected or blocked attempt. **UNKNOWN** requires checking the original platform; do not repeat an uncertain write. Sending a public reply does not close the case, change its severity or mark staff work complete.
