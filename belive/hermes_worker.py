@@ -1,4 +1,4 @@
-"""Private subprocess entry point: one real AIAgent conversation per request."""
+"""Private worker: fresh AIAgent and current memory projection for each request."""
 
 import contextlib
 import json
@@ -8,9 +8,8 @@ import sys
 import threading
 
 
-def main():
+def handle_request(request):
     output = sys.stdout
-    request = json.loads(sys.stdin.readline())
     def emit(event):
         output.write(json.dumps(event) + "\n")
         output.flush()
@@ -97,7 +96,7 @@ def main():
                         api_key=request["api_key"], max_iterations=request["max_steps"],
                         enabled_toolsets=["belive_support"] if request["tools"] else [],
                         quiet_mode=True, skip_context_files=True, skip_memory=False,skip_background_review=True,
-                        save_trajectories=False, tool_delay=0, max_tokens=2500, **options)
+                        save_trajectories=False, tool_delay=0, max_tokens=request.get('max_tokens',2500), **options)
         actual = {tool["function"]["name"] for tool in agent.tools}
         if actual != allowed:
             raise RuntimeError("HERMES_TOOLSET_MISMATCH")
@@ -119,13 +118,18 @@ def main():
                   memory_entries=len(store.memory_entries)))
 
 
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as exc:
-        # No provider response, prompt or key is emitted as an error diagnostic.
-        fixed = {"HERMES_TOOL_OUTSIDE_ALLOWLIST", "HERMES_TOOLSET_MISMATCH"}
-        code = str(exc) if str(exc) in fixed else "HERMES_NATIVE_" + type(exc).__name__.upper()
-        event=dict(type='error',code=code)
-        if isinstance(exc,ModuleNotFoundError):event['missing_module']=exc.name
-        print(json.dumps(event),flush=True)
+def main():
+    while True:
+        line=sys.stdin.readline()
+        if not line:return
+        try:handle_request(json.loads(line))
+        except Exception as exc:
+            # No provider response, prompt or key is emitted as an error diagnostic.
+            fixed = {"HERMES_TOOL_OUTSIDE_ALLOWLIST", "HERMES_TOOLSET_MISMATCH"}
+            code = str(exc) if str(exc) in fixed else "HERMES_NATIVE_" + type(exc).__name__.upper()
+            event=dict(type='error',code=code)
+            if isinstance(exc,ModuleNotFoundError):event['missing_module']=exc.name
+            print(json.dumps(event),flush=True)
+
+
+if __name__ == "__main__":main()

@@ -20,7 +20,7 @@ NOTIFICATION_KINDS = {'STAFF_ALERT','TENANT_RESPONSE','STAFF_WORK_ORDER','ACK_TI
 COMMANDS.add('source_schedule')
 COMMANDS.add('closure_settings')
 COMMANDS.update({'reply_learning_scan','reply_learning_action'})
-COMMANDS.update({'wa_simulate','wa_knowledge','wa_staff_reply','wa_property'})
+COMMANDS.update({'wa_simulate','wa_knowledge','wa_staff_reply','wa_staff_complete','wa_property'})
 COMMANDS.add('wa_document_action')
 COMMANDS.add('wa_channel')
 
@@ -84,7 +84,7 @@ class Service:
                 if item['status']=='PROCESSING':item['status']='PENDING';self.store.put(db,'wa_turn',item)
     def record_native_execution(self,event):
         if event.get('engine')!='hermes-native' or event.get('agent_class')!='run_agent.AIAgent':raise ValueError('Unverified native execution record')
-        allowed=('engine','agent_class','version','commit','api_calls','executed_tools','memory_entries','native_memory_loaded','role','mode','provider','model','scope_hash')
+        allowed=('engine','agent_class','version','commit','api_calls','executed_tools','memory_entries','native_memory_loaded','role','mode','provider','model','scope_hash','elapsed_ms','queue_ms','reused_worker')
         item={k:event.get(k) for k in allowed};item.update(id='NATIVE-'+secrets.token_hex(10),at=now())
         with self.lock,self.store.connect() as db:self.store.put(db,'native_execution',item)
     def context(self,db,c):
@@ -263,21 +263,22 @@ class Service:
         require(support_notification({'kind':kind,'entity':entity}),'Notification is outside tenant complaint support')
         if kind=='TENANT_RESPONSE':
             for old in self.store.all(db,'outbox'):
-                if old['entity']==entity and old['kind']==kind and old['target']==target and old['text']==redact(text) and old['status']!='REJECTED':
+                if old['entity']==entity and old['kind']==kind and old['target']==target and old['text']==redact(text) and old['status'] not in {'REJECTED','CANCELLED'}:
                     return old
         item={'id':uid('MSG'),'entity':entity,'kind':kind,'text':redact(text),'target':target,
               'status':'PENDING_APPROVAL','created_at':now(),'outcome':''}
         self.store.put(db,'outbox',item)
         self.store.event(db,entity,'NOTIFICATION_QUEUED',kind+'; no external message sent')
         return item
-    def handoff(self,db,c,reason):
+    def handoff(self,db,c,reason,target=None,notify=True):
         c.pop('staff_followup',None)
         c.pop('waiting_since',None);c.pop('closure_reason',None)
         c.update(status='HUMAN_REVIEW',handoff=True,review_reason=reason,next_action='Staff assessment required',action_due=None,followup_due=None,ack_due=due(self.settings.acknowledgement_minutes),escalation=0)
         from belive.routing import destination
-        c['staff_destination']=destination(self.store,db,c['category'])
-        self.enqueue(db,c['id'],'STAFF_ALERT',reason,c['staff_destination'])
+        c['staff_destination']=target or destination(self.store,db,c['category'])
+        notification=self.enqueue(db,c['id'],'STAFF_ALERT',reason,c['staff_destination']) if notify else None
         automation.handover_receipt(self.store,db,c)
+        return notification
     def create(self,db,p):
         title=bounded(p.get('title'),4,120);description=bounded(p.get('description'),10,6000)
         platform=p.get('platform','INTERNAL')
@@ -343,7 +344,7 @@ class Service:
         if name=='wa_channel':
             from belive.whatsapp_channel import save
             return save(self,db,p)
-        if name in {'wa_simulate','wa_knowledge','wa_staff_reply','wa_property'}:
+        if name in {'wa_simulate','wa_knowledge','wa_staff_reply','wa_staff_complete','wa_property'}:
             from belive.whatsapp import command
             return command(self,db,name,p)
         if name in {'reply_learning_scan','reply_learning_action'}:

@@ -56,12 +56,12 @@ class CompanySopTests(unittest.TestCase):
         self.assertEqual(len(items),1);self.assertEqual(items[0]['policy'],'CONFLICT_REVIEW');self.assertFalse(uncertain)
     def test_model_cannot_bypass_conflict_with_online_research(self):
         self.imported();entry=next(x for x in self.rows('wa_knowledge') if x['policy']=='CONFLICT_REVIEW')
-        draft=plan();draft.update(research='COMPANY',search_query='company deposit return')
+        draft=plan();draft.update(handling='RESEARCH',decision_reason='Look up public company guidance.',research='COMPANY',search_query='company deposit return')
         with patch('belive.whatsapp_ai.ask',return_value=draft):r=whatsapp_ai.reply(self.s,{'sop':cs.evidence([entry]),'staff_guidance':[]})
         self.assertTrue(r['needs_staff']);self.assertEqual(r['research'],'NONE');self.assertIn(entry['title'],r['staff_question'])
     def test_staff_confirmed_answer_can_resolve_conflict_without_repeated_escalation(self):
         self.imported();entry=next(x for x in self.rows('wa_knowledge') if x['policy']=='CONFLICT_REVIEW')
-        draft=plan();draft['sources_used']=['STAFF-VERIFIED']
+        draft=plan();draft.update(handling='ANSWER',decision_reason='Relay the verified staff timeline.',sources_used=['STAFF-VERIFIED'])
         with patch('belive.whatsapp_ai.ask',return_value=draft):r=whatsapp_ai.reply(self.s,{'sop':cs.evidence([entry]),'staff_guidance':[{'id':'STAFF-VERIFIED','verified_solution':'Staff confirmed this case timeline.'}]})
         self.assertFalse(r['needs_staff'])
     def test_reply_records_original_source_pages_and_general_questions_need_no_property(self):

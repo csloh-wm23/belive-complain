@@ -51,6 +51,11 @@ class ChannelHttpTests(unittest.TestCase):
     setUp=test_http.HttpTests.setUp
     tearDown=test_http.HttpTests.tearDown
     request=test_http.HttpTests.request
+    def test_pending_photo_preview_returns_controlled_not_available_response(self):
+        with self.s.store.connect() as db:self.s.store.put(db,'wa_message',{'id':'WAM-pending-photo','kind':'image','media':None})
+        code,body=self.request('/api/wa-photo/WAM-pending-photo',headers={'X-CSRF-Token':self.csrf})
+        self.assertEqual(code,404);self.assertEqual(json.loads(body)['error'],'Photo not available')
+        self.assertEqual(self.request('/api/wa-photo/WAM-pending-photo',headers={'Cookie':'','X-CSRF-Token':self.csrf})[0],401)
     def test_whatsapp_redirect_uses_only_the_configured_company_number(self):
         from http.client import HTTPConnection
         self.s.command('wa_channel',{'public_number':'60'+'1'+'0'*8,'confirmed':True},secrets.token_hex(16))

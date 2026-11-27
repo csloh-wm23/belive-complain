@@ -18,5 +18,5 @@ if exist "knowledge\team-memory.enc.json" (
   if errorlevel 1 exit /b 1
 )
 python scripts/knowledge_backup.py install-hooks >nul 2>nul
-start "BeLive tenant support" python "%~dp0server.py" %*
+start "BeLive + WhatsApp - keep this window open" python "%~dp0scripts\start_belive.py" %*
 exit /b

@@ -26,6 +26,7 @@ STATIC={'/':'index.html','/index.html':'index.html','/assets/app.js':'assets/app
 
 STATIC['/assets/learning-ui.js']='assets/learning-ui.js'
 STATIC['/assets/whatsapp-ui.js']='assets/whatsapp-ui.js'
+STATIC['/assets/whatsapp-staff-ui.js']='assets/whatsapp-staff-ui.js'
 STATIC['/assets/shared-memory-ui.js']='assets/shared-memory-ui.js'
 STATIC['/assets/credential-settings-ui.js']='assets/credential-settings-ui.js'
 STATIC['/assets/fyp.css']='assets/fyp.css'
@@ -137,7 +138,7 @@ def make_handler(service,tasks=None):
     support_routes={'scan-all','import-review','import-review-batch','public-preview','lesson_revoke','learning_start','learning_improve','intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
     support_routes.add('google-reply')
     support_routes.update({'reply_learning_scan','reply_learning_action'})
-    support_routes.update({'wa_simulate','wa_staff_reply','wa_property'})
+    support_routes.update({'wa_simulate','wa_staff_reply','wa_staff_complete','wa_property'})
     class Handler(SimpleHTTPRequestHandler):
         def handle_one_request(self):
             with credential_scope(service.store.path):return super().handle_one_request()
@@ -176,6 +177,9 @@ def make_handler(service,tasks=None):
                 except ValueError:return self.json(403,{'error':'Webhook verification failed'})
             if not self.valid_host():return self.json(403,{'error':'Local host required'})
             path=urlsplit(self.path).path
+            if path=='/startup-health':
+                import hashlib
+                return self.json(200,{'service':'belive','protocol':1,'database':hashlib.sha256(str(service.store.path.resolve()).casefold().encode()).hexdigest()})
             if path=='/support/whatsapp':
                 from belive.whatsapp_channel import public
                 with service.store.connect() as db:channel=public(service,db)
@@ -250,7 +254,13 @@ def make_handler(service,tasks=None):
                     webhook(service,self.rfile.read(size),self.headers.get('X-Hub-Signature-256',''));tasks.whatsapp_pending()
                     return self.json(200,{'received':True})
                 except PermissionError:return self.json(403,{'error':'Invalid webhook signature'})
-                except (ValueError,TypeError,KeyError):return self.json(400,{'error':'Invalid WhatsApp payload'})
+                except (ValueError,TypeError,KeyError) as exc:
+                    import traceback
+                    frames=traceback.extract_tb(exc.__traceback__)[-6:]
+                    with service.store.connect() as db:
+                        service.store.put(db,'wa_webhook_error',{'id':'latest','at':now(),'error_type':type(exc).__name__,
+                            'locations':[Path(f.filename).name+':'+str(f.lineno)+':'+f.name for f in frames]})
+                    return self.json(400,{'error':'Invalid WhatsApp payload'})
             if not self.valid_host():return self.json(403,{'error':'Local host required'})
             origin=self.headers.get('Origin')
             if origin and origin not in {f'http://127.0.0.1:{self.server.server_port}',f'http://localhost:{self.server.server_port}'}:return self.json(403,{'error':'Foreign origin rejected'})
@@ -329,8 +339,11 @@ def make_handler(service,tasks=None):
                     if route=='shared-memory-network':return self.json(200,shared_memory.network_status())
                     if route=='shared-memory-private-serve':return self.json(200,shared_memory.enable_private_service(service))
                     raise ValueError('Unknown shared memory action')
-                if route in {'wa_simulate','wa_knowledge','wa_staff_reply','wa_property','wa_document_action'}:
+                if route in {'wa_simulate','wa_knowledge','wa_staff_reply','wa_staff_complete','wa_property','wa_document_action'}:
                     result=service.command(route,p,key);tasks.memory_pending();tasks.whatsapp_pending();return self.json(200,result)
+                if route=='wa-signup-start':
+                    from belive.meta_signup import new_link
+                    return self.json(200,new_link(service))
                 if route in {'learning_start','learning_improve'}:
                     result=service.command(route,p,key);tasks.learning(result['id'])
                     return self.json(200,result)

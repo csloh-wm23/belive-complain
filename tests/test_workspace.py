@@ -21,7 +21,7 @@ class WorkspaceTests(unittest.TestCase):
         target=self.root/'Selected workspace.db'
         self.command('database_location',{'path':str(target)})
         snapshot=self.service.snapshot()
-        self.assertEqual(snapshot['storage']['active'],str(self.active));self.assertEqual(snapshot['storage']['selected'],str(target))
+        self.assertEqual(Path(snapshot['storage']['active']),self.active);self.assertEqual(Path(snapshot['storage']['selected']),target)
         self.assertTrue(snapshot['storage']['restart_required']);self.assertFalse(target.exists())
         self.assertEqual(selected_database(self.config),target)
         reopened=Service(self.active,FakeAI(),workspace_config=self.config)

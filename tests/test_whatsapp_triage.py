@@ -47,6 +47,20 @@ class WhatsAppTriageTests(unittest.TestCase):
     def test_uncertain_low_assessment_is_not_a_simple_automatic_reply(self):
         self.prepared('LOW',True);self.incoming();out=self.rows('wa_outgoing')[0]
         self.assertEqual(out['assessment']['complaint_level'],'MODERATE');self.assertEqual(out['delivery_kind'],'ACKNOWLEDGEMENT')
+    def test_reviewed_low_followup_during_open_handover_is_sent_without_closing_staff_task(self):
+        first=self.incoming('Can you help with my Wi-Fi?')
+        with self.s.store.connect() as db:
+            thread=self.s.store.get(db,'wa_thread',first['thread_id']);thread['state']='WAITING_STAFF';self.s.store.put(db,'wa_thread',thread)
+            case=self.s.store.get(db,'case',first['case_id']);case.update(status='HUMAN_REVIEW',handoff=True);self.s.store.put(db,'case',case)
+            self.s.store.put(db,'wa_staff',{'id':'WAS-pending-test','thread_id':thread['id'],'case_id':case['id'],'status':'OPEN','question':'Existing request remains open.'})
+        self.reply.return_value={**plan(),'reply':'Hi! What would you like to ask?'}
+        self.incoming('Hi')
+        out=self.rows('wa_outgoing')[0]
+        self.assertEqual(out['delivery_kind'],'ACKNOWLEDGEMENT');self.assertEqual(out['status'],'SIMULATED')
+        self.assertEqual(out['text'],'Hi! What would you like to ask?');self.assertTrue(self.rows('case')[0]['handoff'])
+        self.assertEqual(self.rows('case')[0]['status'],'HUMAN_REVIEW')
+        self.assertEqual(len(self.rows('wa_staff')),1);self.assertEqual(self.rows('wa_staff')[0]['status'],'OPEN')
+        self.review.assert_called();self.net.assert_not_called()
     def test_danger_precedes_all_normal_models_and_retrieval(self):
         with patch('belive.company_sop.retrieve',side_effect=AssertionError('No routine retrieval before danger screen')) as lookup:
             self.incoming('Smoke and sparks are coming from the washer.')
@@ -128,9 +142,24 @@ class WhatsAppTriageTests(unittest.TestCase):
         self.assertEqual(out['delivery_kind'],'VERIFIED_STAFF_GUIDANCE');self.assertEqual(case['draft'],out['text'])
         self.assertEqual(out['status'],'SIMULATED');self.assertFalse(self.rows('wa_staff')[0]['status']=='OPEN')
 
+class StaffContinuationPolicyTests(unittest.TestCase):
+    def test_verified_same_issue_continues_despite_uncertain_fault(self):
+        a={'severity':'MEDIUM','uncertainty':True,'level_reason':'Unconfirmed fault.','requires_human':True}
+        draft={**plan(),'handling':'ANSWER','related_request_id':'staff-one','sources_used':['staff-one']}
+        ctx={'latest_sender':'CUSTOMER','staff_guidance':[{'id':'staff-one','verified_solution':'Collect location, then record it.'}],
+             'support_requests':[{'id':'staff-one','status':'ANSWERED'}]}
+        _,result,kind,private=triage.apply_policy(a,draft,ctx)
+        self.assertEqual(kind,'VERIFIED_STAFF_GUIDANCE');self.assertFalse(result['needs_staff']);self.assertIsNone(private)
+        for change in ({'staff_guidance':[]},{'support_requests':[{'id':'staff-one','status':'CLOSED'}]},
+                       {'staff_guidance':[{'id':'other-issue','verified_solution':'Unrelated instructions'}]},
+                       {'sop_lookup_uncertain':True},{'explicit_staff_requested':True}):
+            with self.subTest(change=change):
+                self.assertNotEqual(triage.apply_policy(a,draft,{**ctx,**change})[2],'VERIFIED_STAFF_GUIDANCE')
+        self.assertNotEqual(triage.apply_policy({**a,'severity':'HIGH'},draft,ctx)[2],'VERIFIED_STAFF_GUIDANCE')
+
 class WhatsAppAssessmentValidationTests(unittest.TestCase):
     def context(self):return {'conversation':[{'role':'CUSTOMER','text':'The washer stopped.'},{'role':'AI','text':'A previous answer.'},{'role':'CUSTOMER','text':'It still does not start.'}]}
-    def result(self):return dict(report_type='COMPLAINT',category='MAINTENANCE',severity='MEDIUM',summary='The washer is not starting.',level_reason='A physical shared-appliance fault requires staff investigation.',uncertainty=False,evidence_index=2)
+    def result(self):return dict(report_type='COMPLAINT',category='MAINTENANCE',severity='MEDIUM',summary='The washer is not starting.',level_reason='A physical shared-appliance fault requires staff investigation.',uncertainty=False,evidence_index=2,research='NONE',search_query='')
     def test_exact_customer_evidence_is_extracted_and_shape_is_recorded(self):
         with patch('belive.whatsapp_ai.ask',return_value=self.result()) as ask:a=triage.assess(None,self.context())
         self.assertEqual(a['evidence'],'It still does not start.');self.assertEqual(a['complaint_level'],'MODERATE')

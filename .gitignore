@@ -8,6 +8,8 @@ artifacts/
 output/qa-python/
 output/knowledge-runtime/
 output/whatsapp-*
+output/reconnect-*.log
+output/tools/
 data/
 *.db
 *.db-*
