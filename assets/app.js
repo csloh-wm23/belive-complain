@@ -2,13 +2,14 @@ const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,
 let token=document.querySelector('meta[name="csrf-token"]').content;
 const labels={ANSWERED:'Answer accepted',AI_PENDING:'AI assistance',AWAITING_CONTACT:'Awaiting private contact',HUMAN_REVIEW:'Needs staff',IN_PROGRESS:'Staff handling',FOLLOW_UP:'Follow-up',VERIFIED:'Verified',CLOSED:'Closed',SKIPPED:'Not a support request'};
 let data={cases:[],tenants:[],condos:[],examples:[],outbox:[],sources:[],audit:[],reports:{},tasks:[]}, selected=null,busy=false,authState=null,linkedCaseHandled=false;
+const publicSendKeys=new Map();
 const setText=(id,text)=>{const element=$(id);if(element)element.textContent=text;};
 function notice(text,error=false){$('notice').hidden=false;$('notice').textContent=text;$('notice').className=error?'error':'';}
 const connectionLostMessage='Connection lost. Keep the BeLive launcher running.';
-async function request(route,p){
+async function request(route,p,requestKey){
     const hasBody=p!==undefined;
     const options={method:hasBody?'POST':'GET',headers:{'Content-Type':'application/json','X-CSRF-Token':token},body:hasBody?JSON.stringify(p):undefined};
-    if(hasBody)options.headers['Idempotency-Key']=crypto.randomUUID();
+    if(hasBody)options.headers['Idempotency-Key']=requestKey||crypto.randomUUID();
     let response=await fetch('/api/'+route,options);
     let value=await response.json();
     if(response.status===403&&value.code==='STALE_CSRF'){
@@ -23,7 +24,7 @@ async function request(route,p){
     if(route==='auth'&&value.csrf_token)token=value.csrf_token;
     return value;
 }
-async function run(route,p){if(busy)throw Error('Wait for the current operation.');busy=true;const locked=[...document.querySelectorAll('button,input,textarea,select')].filter(e=>!e.disabled);locked.forEach(e=>e.disabled=true);try{const value=await request(route,p);await refresh();notice('Saved.');return value;}finally{locked.forEach(e=>e.disabled=false);busy=false;}}
+async function run(route,p,requestKey){if(busy)throw Error('Wait for the current operation.');busy=true;const locked=[...document.querySelectorAll('button,input,textarea,select')].filter(e=>!e.disabled);locked.forEach(e=>e.disabled=true);try{const value=await request(route,p,requestKey);await refresh();notice('Saved.');return value;}finally{locked.forEach(e=>e.disabled=false);busy=false;}}
 function navigate(view){if(!document.querySelector(`[data-page="${CSS.escape(view)}"]`))view='overview';if(location.hash!=='#'+view)history.pushState(null,'','#'+view);document.querySelectorAll('[data-page]').forEach(e=>e.hidden=e.dataset.page!==view);document.querySelectorAll('[data-view]').forEach(e=>{e.classList.toggle('active',e.dataset.view===view);e.setAttribute('aria-current',e.dataset.view===view?'page':'false');});const names={'maintenance-queue':'Maintenance queue','customer-records':'Customer records','staff-help':'Staff help',whatsapp:'Customer Support',overview:'Command center',cases:'Support cases',notifications:'Messages',sources:'Public reviews',memory:'Self-learning',settings:'AI & knowledge',database:'Data & backups',activity:'Reports & activity'};const nav=document.querySelector(`[data-view="${view}"]`);if(nav?.closest('details'))nav.closest('details').open=true;$('pageTitle').textContent=names[view];$('crumb').textContent=names[view];window.scrollTo(0,0);}
 const level=c=>c.complaint_level||({LOW:'SIMPLE',MEDIUM:'MODERATE',HIGH:'HIGH',CRITICAL:'HIGH'}[c.severity]||'CHECKING');
 const side=c=>['GOOGLE','FACEBOOK','THREADS','MANUAL_PUBLIC'].includes(c.platform)?'Proactive discovery':'Reactive support';
@@ -187,12 +188,12 @@ async function refresh(watchedCase){
     const snapshot=await request('status');
     if(snapshot.operator.role==='ADMIN')snapshot.users=(await request('users')).users;
     if(watchedCase && (busy||caseEdited||!$('caseDialog').open||selected!==watchedCase.id))return;
-    const pending=assessmentPending(watchedCase);
+    const pending=caseWorkState(watchedCase);
     data=snapshot;
     render();
     if(watchedCase){
         const current=data.cases.find(c=>c.id===watchedCase.id);
-        if(current && (current.revision!==watchedCase.revision || assessmentPending(current)!==pending)){
+        if(current && (current.revision!==watchedCase.revision || caseWorkState(current)!==pending)){
             renderDetail($('caseAssessment').open);
         }
     }
@@ -216,7 +217,15 @@ function assessmentPending(c,snapshot=data){
         (!c.analysis&&!['HIGH','CRITICAL'].includes(c.severity)&&
             (['AI_PENDING','AWAITING_CONTACT'].includes(c.status)||c.ai_assistance_pending)));
 }
+function publicDraftPending(c){return Boolean(c&&['QUEUED','RUNNING'].includes(c.public_reply_job?.status));}
+function caseWorkState(c){return JSON.stringify([Boolean(assessmentPending(c)),c?.public_reply_job?.status,c?.public_reply_job?.current_input,c?.public_reply_job?.error]);}
 function complaintNextStep(c){
+    if(c.entrypoint==='PUBLIC_SOURCE'&&!['CLOSED','SKIPPED','VERIFIED','ANSWERED'].includes(c.status)){
+        if(assessmentPending(c))return 'Hermes is assessing this complaint, then it will prepare a public reply automatically.';
+        if(publicDraftPending(c))return 'Hermes is preparing the reply automatically. It will appear below when ready.';
+        if(c.public_preview_current)return 'Read or edit the draft below, then choose Send reply to post it to the original platform. Any maintenance or staff work remains open.';
+        if(['FAILED','STALE'].includes(c.public_reply_job?.status))return 'The automatic draft did not finish. Read the error below and choose Retry draft.';
+    }
     if(c.status==='FOLLOW_UP'&&c.staff_followup)return 'Staff follow-up is still open. Record the next update or resume handling. Close only after checking the outcome. This is not a wait for customer feedback and will not close automatically after 7 days.';
     if(c.status==='FOLLOW_UP')return c.tenant_resolution?.resolved
         ?'The customer confirmed the issue is resolved. Record the outcome, check the confirmation, then close the complaint.'
@@ -248,6 +257,10 @@ const preview=c.public_reply_preview?.source_version===c.source_versions.at(-1)?
 const previewCurrent=Boolean(preview&&c.public_preview_current);
 const canPreview=active&&c.status!=='VERIFIED'&&c.analysis?.report_type==='COMPLAINT'
     &&c.analysis.relevance==='SUPPORT'&&!c.analysis.uncertainty;
+const draftJob=c.public_reply_job||{},draftPending=publicDraftPending(c);
+const platformName=({GOOGLE:'Google',FACEBOOK:'Facebook',THREADS:'Threads'})[c.platform]||c.platform;
+const posting=c.public_posting||{ready:false,reason:'Connect company access for this platform before sending.'};
+const posted=c.public_reply||c.google_reply;
 const urgencyReason=c.severity==='CRITICAL'?'Immediate safety concern. Staff handles this case directly.'
     :c.severity==='HIGH'?'AI flagged this for urgent review. Staff confirms the urgency and decides how to respond.'
     :c.severity==='MEDIUM'?'The issue needs staff investigation or action.'
@@ -286,16 +299,19 @@ ${c.review_reason?`<p class="verification">${esc(c.review_reason)}</p>`:''}
 ${!checking&&active&&!['HIGH','CRITICAL'].includes(c.severity)&&!['FOLLOW_UP','VERIFIED'].includes(c.status)?`<button data-analyse="${c.id}">Retry assessment</button>`:''}
 </details>
 <details class="case-section" id="caseSourceEvidence"><summary>Source evidence and activity</summary><p>${esc(c.description)}</p><p>Platform ${esc(c.platform)} · Saved versions ${esc(c.source_versions.join(', '))}</p>${c.platform==='GOOGLE'&&c.entrypoint==='PUBLIC_SOURCE'?`<label>Individual Google review link<input id="caseReviewLink" type="url" maxlength="2000" value="${esc(c.review_url||'')}"></label><p class="muted">In Google Maps, select Share on the review itself and copy its link.</p><button type="button" data-save-review-link>Save review link</button>`:''}${c.analysis?`<p>Exact source quote: ${esc(c.analysis.evidence)}</p>`:''}${(c.analysis?.record_refs||[]).map(r=>`<p><b>${esc(r.id)} · v${r.version}</b> ${esc(r.source)}<br>${esc(r.text)}</p>`).join('')}${(c.activity||[]).map(a=>`<p><b>${esc(caseActivityLabels[a.action] ?? a.action)}</b> · ${esc(new Date(a.created_at).toLocaleString())}<br>${esc(a.detail)}</p>`).join('')}</details>
-${publicSource?`<section class="case-section"><h3>Public reply preview</h3>
-       <p class="muted">Hermes prepares a case-specific draft. It can ask for missing device details and check official manufacturer guidance when the exact details are available. Review it before copying; nothing is posted automatically.</p>
-       ${preview&&!previewCurrent?'<p class="verification">This is an earlier draft. Choose Rewrite reply to use the current assessment, customer details and reply style.</p>':''}
-       ${preview||c.draft?`<label>Reply to copy to the original platform<textarea id="publicReplyText" maxlength="3000">${esc(preview?.text||c.draft)}</textarea></label><small>${preview?(previewCurrent?'Generated by ':'Earlier draft by ')+esc(preview.agent):'Existing suggested wording'}</small><button type="button" data-copy-public-reply>Copy public reply</button><p class="muted">Edits here are for copying. They do not change the saved AI preview or post a reply.</p>`:''}
+${publicSource?`<section class="case-section"><h3>Public reply</h3>
+       <p class="muted">Hermes prepares the draft automatically after assessment. Read or edit it, then press Send reply to post to the original ${esc(platformName)} item.</p>
+       ${draftPending?`<p class="verification" role="status">${draftJob.status==='RUNNING'?'Hermes is preparing your reply. It will appear here automatically.':'Your reply is queued. Hermes will prepare it automatically.'}</p>`:''}
+       ${['FAILED','STALE'].includes(draftJob.status)?`<p class="error" role="status">${esc(draftJob.error||'The automatic draft did not finish. You can retry below.')}</p>`:''}
+       ${preview&&!previewCurrent?`<details><summary>Earlier saved draft</summary><p>This is an earlier draft. Hermes uses the current assessment and customer details for the next version.</p><p>${esc(preview.text)}</p></details>`:''}
+       ${previewCurrent?`<label>Reply to ${esc(platformName)}${c.platform==='THREADS'?' · maximum 500 characters':''}<textarea id="publicReplyText" maxlength="3000">${esc(preview.text)}</textarea></label><small>Generated by ${esc(preview.agent)}</small>`:!draftPending?'<p>The tailored reply will appear here once the complaint assessment and draft checks finish.</p>':''}
+       ${canPreview?`<div class="case-actions"><button type="button" class="primary" data-send-public="${esc(c.id)}" ${posting.ready&&previewCurrent&&!draftPending?'':'disabled'}>Send reply to ${esc(platformName)}</button>${['FAILED','STALE'].includes(draftJob.status)&&!draftPending?`<button type="button" data-public-preview="${esc(c.id)}">Retry draft</button>`:''}</div><p class="muted">Pressing Send reply approves this exact text for public posting on ${esc(platformName)}. Preparing or editing a draft does not send it.</p><p class="muted">${esc(posting.reason)}</p>`:''}
+       ${posted?`<p role="status"><strong>${esc(platformName)} reply: ${esc(posted.status)}</strong> · ${esc(posted.detail||'Check the original source for delivery details.')}</p>${posted.reply_url&&/^https:\/\//.test(posted.reply_url)?`<a href="${esc(posted.reply_url)}" target="_blank" rel="noopener noreferrer">Open posted reply</a>`:''}`:''}
        ${(c.public_followups||[]).length?`<details><summary>Customer follow-ups (${c.public_followups.length})</summary>${c.public_followups.map(item=>`<p>${esc(item.text)}</p>${item.source_url?`<a href="${esc(item.source_url)}" target="_blank" rel="noopener noreferrer">Open observed reply</a>`:''}`).join('')}</details>`:''}
-       ${canPreview?`<details><summary>Customer answered? Add their reply</summary><label>Customer's latest reply<textarea id="publicFollowupText" maxlength="3000" placeholder="Paste the reply from the original conversation, including any brand, exact model, display code and checks already tried."></textarea></label><label>Link to that reply (optional)<input id="publicFollowupLink" type="url" maxlength="2000"></label><p class="muted">This records the observed reply on this complaint. The next draft uses it; the app does not identify a customer automatically from similar wording.</p></details><div class="case-actions"><button class="primary" data-public-preview="${esc(c.id)}">${preview?'Rewrite reply':'Prepare reply'}</button></div>`:''}
+       ${canPreview?`<details><summary>Customer answered? Add their reply</summary><label>Customer's latest reply<textarea id="publicFollowupText" maxlength="3000" placeholder="Paste the reply from the original conversation, including any brand, exact model, display code and checks already tried."></textarea></label><label>Link to that reply (optional)<input id="publicFollowupLink" type="url" maxlength="2000"></label><p class="muted">Save the observed answer on this complaint. Hermes prepares the next draft; the app does not identify a customer automatically from similar wording.</p><button type="button" data-public-preview="${esc(c.id)}" ${draftPending?'disabled':''}>Update draft with this answer</button></details><details><summary>More reply options</summary><button type="button" data-public-preview="${esc(c.id)}" ${draftPending?'disabled':''}>Rewrite reply</button>${previewCurrent?'<button type="button" data-copy-public-reply>Copy reply</button>':''}${c.platform==='GOOGLE'?'<label><input id="googleReplyReplace" type="checkbox"> Replace an existing company reply on this Google review</label>':''}</details>`:''}
        ${previewCurrent&&preview.research_state?`<p class="muted">${esc(({NEEDS_DETAILS:'The draft asks for the missing device details, such as its exact model or display code.',NO_RELIABLE_SOURCE:'Safe, applicable manufacturer guidance could not be confirmed. The draft follows up without guessing a fix.',RESEARCH_READY:'Official manufacturer evidence was checked for this draft.',STAFF_ONLY:'Urgent safety concern: routine troubleshooting is paused.'})[preview.research_state]||'')}</p>`:''}
        ${previewCurrent&&(preview.sources||[]).length?`<details open><summary>Manufacturer sources used</summary>${preview.sources.map(source=>`<p><a href="${esc(source.url)}" target="_blank" rel="noopener noreferrer">${esc(source.title)}</a></p>`).join('')}</details>`:''}
        ${previewCurrent&&(preview.checked_sources||[]).length?`<details><summary>Sources checked</summary>${preview.checked_sources.map(source=>`<p><a href="${esc(source.url)}" target="_blank" rel="noopener noreferrer">${esc(source.title)}</a></p>`).join('')}</details>`:''}
-       ${c.platform==='GOOGLE'?`<div class="google-publishing"><p class="muted">${esc(c.google_posting?.reason||'Connect the company Google Business Profile before direct posting.')}</p>${preview||c.draft?'<label><input id="googleReplyConfirmed" type="checkbox"> I reviewed this exact reply and approve posting it publicly as the company.</label><label><input id="googleReplyReplace" type="checkbox"> Allow replacing an existing company reply on this review (optional).</label>':''}<button type="button" class="primary" data-publish-google ${c.google_posting?.ready&&(preview||c.draft)?'':'disabled'}>Publish to Google</button>${c.google_reply?`<p role="status">Google reply: ${esc(c.google_reply.status)} · ${esc(c.google_reply.detail||'Check the original review before another posting attempt.')}</p>`:''}</div>`:''}
      </section>`:`<section class="case-section"><h3>Reply to customer</h3>${c.conversation?.length? `<div class="muted"><strong>Latest customer message</strong><p>${esc([...c.conversation].reverse().find(m=>['TENANT','REPORTED_ISSUE'].includes(m.sender))?.text||'')}</p></div>`:''}${c.automatic_answer?'<p class="verification">Hermes has replied automatically. Staff can take ownership if further help is needed.</p>':'<p>Review or edit the reply, then send it directly to the customer’s private conversation.</p>'}<label>Reply<textarea id="caseDraft" maxlength="2500" ${!active?'readonly':''}>${esc(c.draft)}</textarea></label>${active?'<label><input id="caseConfirmed" type="checkbox"> I reviewed this reply.</label><div class="case-actions"><button class="primary" data-act="send_reply">Send reply</button></div>':''}</section>`}
 <section class="case-section" data-handling><h3>Case progress</h3>${c.tenant_resolution?`<p>Customer feedback: ${c.tenant_resolution.resolved?'Confirmed resolved':'Still unresolved'}</p><p>${esc(c.tenant_resolution.note)}</p>`:''}
 <p class="muted">${c.owner?'Handled by '+esc(c.owner):'No staff owner yet.'}</p><label>Internal note / work completed<textarea id="caseNote" maxlength="2000" placeholder="Describe the work or evidence (at least 8 characters). This note is private."></textarea></label>
@@ -428,7 +444,23 @@ document.addEventListener('click',async e=>{const b=e.target.closest('button');i
 try{
 if(b.id==='reloadCase'){await run('status');renderDetail($('caseAssessment').open);}
 if(b.hasAttribute('data-copy-public-reply')){const reply=$('publicReplyText');if(!reply.value.trim())throw Error('Enter a reply before copying.');try{await navigator.clipboard.writeText(reply.value);notice('Reply copied. Open the original review and post it from the company account. Nothing has been posted by BeLive.');}catch{reply.focus();reply.select();notice('Select the reply and press Ctrl+C to copy it. Nothing has been posted by BeLive.');}}
-if(b.hasAttribute('data-publish-google')){const c=data.cases.find(c=>c.id===selected);const result=await run('google-reply',{id:c.id,revision:c.revision,text:$('publicReplyText').value,confirmed:$('googleReplyConfirmed').checked,replace_existing:$('googleReplyReplace').checked});renderDetail();notice(result.detail,result.status!=='POSTED');}
+if(b.dataset.sendPublic){
+    const c=data.cases.find(item=>item.id===b.dataset.sendPublic);
+    const text=$('publicReplyText')?.value.trim();
+    if(!text)throw Error('Wait for the draft, then review the reply before sending.');
+    if(c.platform==='THREADS'&&Array.from(text).length>500)throw Error('Threads allows 500 characters. Shorten the edited reply before sending.');
+    if(!c.public_preview_current||publicDraftPending(c))throw Error('Wait for the current reply draft before sending.');
+    const replace=$('googleReplyReplace')?.checked===true;
+    const sendIdentity=JSON.stringify([c.id,text,replace]);
+    if(!publicSendKeys.has(sendIdentity))publicSendKeys.set(sendIdentity,crypto.randomUUID());
+    const label=b.textContent;b.textContent='Sending reply…';
+    try{
+        const result=await run('public-reply',{id:c.id,revision:c.revision,text,confirmed:true,replace_existing:replace},publicSendKeys.get(sendIdentity));
+        if(result.status==='FAILED')publicSendKeys.delete(sendIdentity);
+        renderDetail();
+        notice(result.detail||'Reply result recorded. Check the source for public display.',result.status!=='POSTED');
+    }finally{b.textContent=label;}
+}
 if(b.dataset.act){const more=!!b.closest('[data-more]');const c=data.cases.find(c=>c.id===selected);await run('case_action',{id:c.id,revision:c.revision,action:b.dataset.act,note:b.dataset.act==='draft'?$('caseDraft').value:$('caseNote').value,reviewed_reply:['send_reply','publish_response'].includes(b.dataset.act)?$('caseDraft').value:undefined,owner:data.operator.name,category:$('staffCategory')?.value,severity:$('staffSeverity')?.value,due_at:$('caseDue').value?new Date($('caseDue').value).toISOString():null,confirmed:['verify_close','verify_staff_close'].includes(b.dataset.act)?$('caseResolutionConfirmed')?.checked??false:$('caseConfirmed')?.checked??false});renderDetail();if(more)document.querySelector('#caseDetail [data-more]').open=true;}
 if(b.dataset.workorder){const c=data.cases.find(c=>c.id===selected);await run('case_action',{id:c.id,revision:c.revision,action:'complete_workorder',workorder_id:b.dataset.workorder,note:$('caseNote').value});renderDetail();}
 if(b.dataset.feedback){await run('feedback',{id:selected,verdict:b.dataset.feedback,text:$('correctedExample').value,share:$('shareExample').checked,publish_public:$('publishPublicLesson').checked,public_question:$('publicLessonQuestion').value});renderDetail();}
@@ -452,11 +484,13 @@ if(b.dataset.publicPreview){
             c=data.cases.find(item=>item.id===c.id);
             if($('publicFollowupText'))$('publicFollowupText').value='';
         }
-        await run('public-preview',{id:c.id,revision:c.revision});
+        let result;
+        if(followup&&(c.public_preview_current||publicDraftPending(c))){result=c.public_preview_current?{text:c.public_reply_preview.text}:{status:'QUEUED'};}
+        else result=await run('public-preview',{id:c.id,revision:c.revision});
+        renderDetail();
+        notice(['QUEUED','RUNNING'].includes(result.status)?'Hermes is preparing the reply. This case updates automatically.':'Public reply draft is ready. Review it before sending.');
     }
     finally{b.textContent=buttonLabel;}
-    renderDetail();
-    notice('Public reply preview saved.');
 }
 if(b.dataset.analyse){await run('analyse',{id:b.dataset.analyse});renderDetail(true);}
 if(b.dataset.approve)await run('approve_message',{id:b.dataset.approve});if(b.dataset.reject)await run('reject_message',{id:b.dataset.reject});
@@ -471,7 +505,7 @@ setInterval(async()=>{
     if(!authState?.user||busy||polling||document.querySelector('input:focus,textarea:focus,select:focus'))return;
     const dialog=document.querySelector('dialog[open]');
     const current=data.cases.find(c=>c.id===selected);
-    if(dialog && (dialog.id!=='caseDialog'||caseEdited||!assessmentPending(current)))return;
+    if(dialog && (dialog.id!=='caseDialog'||caseEdited||!(assessmentPending(current)||publicDraftPending(current))))return;
     polling=true;
     try{await refresh(dialog?current:undefined);}
     catch{

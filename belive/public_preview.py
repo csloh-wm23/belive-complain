@@ -4,12 +4,12 @@ import json
 from belive.store import digest
 from belive.workflow import complaint_level
 
-VERSION = 2
+VERSION = 3
 
 
 def context(case, followups=()):
     return {
-        'title': case['title'], 'report': case['description'],
+        'title': case['title'], 'report': case['description'], 'platform': case['platform'],
         'category': case['category'], 'complaint_level': complaint_level(case),
         'assessment_summary': (case.get('analysis') or {}).get('summary', ''),
         'public_followups': [

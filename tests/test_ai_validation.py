@@ -131,6 +131,18 @@ class AIValidationTests(unittest.TestCase):
         with patch.object(self.ai, 'generate', return_value={'reply': expected}):
             self.assertEqual(self.ai.public_reply_preview(context), expected)
 
+    def test_threads_draft_respects_platform_characters_without_truncating_chinese(self):
+        context = {'platform':'THREADS','complaint_level':'MODERATE',
+                   'report':'The shared kitchen has not been cleaned.'}
+        reply = ('很抱歉，公共厨房仍未清洁。请说明受影响的区域和已经报告的情况。' * 30)[:500]
+        self.assertGreater(len(reply.encode('utf-8')), 500)
+        with patch.object(self.ai, 'generate', return_value={'reply':reply}) as generate:
+            self.assertEqual(self.ai.public_reply_preview(context), reply)
+        self.assertIn('500 characters', generate.call_args.args[1])
+        with patch.object(self.ai, 'generate', return_value={'reply':reply+'。'}):
+            with self.assertRaises(ValueError):
+                self.ai.public_reply_preview(context)
+
     def test_public_preview_keeps_a_complete_reply_longer_than_the_old_opening_limit(self):
         expected = (
             'We’re sorry the shared washer has remained unusable after your earlier report, especially '

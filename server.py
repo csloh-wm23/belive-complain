@@ -48,7 +48,10 @@ class LocalHTTPServer(ThreadingHTTPServer):
         super().server_bind()
 
 class Tasks:
-    def __init__(self,service):self.service=service;self.running=set();self.lock=threading.Lock();self.stop=threading.Event()
+    def __init__(self,service):
+        self.service=service;self.running=set();self.lock=threading.Lock();self.stop=threading.Event()
+        from belive import public_draft_jobs
+        public_draft_jobs.recover(service)
     def start(self,key,fn):
         with self.lock:
             if key in self.running:return False
@@ -61,12 +64,34 @@ class Tasks:
             finally:
                 with self.lock:self.running.discard(key)
         threading.Thread(target=run,daemon=True).start();return True
-    def analyse(self,c):
+    def assess_and_preview(self,case_id):
+        result=self.service.analyse(case_id)
+        self.public_preview(case_id)
+        return result
+    def public_preview(self,case):
+        from belive import public_draft_jobs
+        case_id=case['id'] if isinstance(case,dict) else case
+        with self.service.store.connect() as db:current=self.service.store.get(db,'case',case_id)
+        try:
+            queued=public_draft_jobs.queue(self.service,case_id,current['revision'],'Automatic public reply draft')
+        except ValueError as exc:
+            if str(exc).startswith('Case changed'):return False
+            raise
+        if queued:self.public_drafts()
+        return bool(queued)
+    def public_drafts(self,backfill=False):
+        from belive import public_draft_jobs
+        if backfill:public_draft_jobs.queue_next(self.service)
+        if public_draft_jobs.has_queued(self.service):
+            return self.start('public-draft-worker',lambda:public_draft_jobs.run_next(self.service))
+        return False
+    def analyse(self,c,draft_existing=True):
         with self.service.store.connect() as db:c=self.service.store.get(db,'case',c['id'])
         if c.get('entrypoint')=='WHATSAPP':return
         pending=c['status'] in {'AI_PENDING','AWAITING_CONTACT'} or (c['status']=='HUMAN_REVIEW' and c.get('ai_assistance_pending'))
         if pending and c['severity'] not in {'HIGH','CRITICAL'} and not c.get('analysis'):
-            self.start('ai-'+c['id'],lambda:self.service.analyse(c['id']))
+            return self.start('ai-'+c['id'],lambda:self.assess_and_preview(c['id']))
+        if draft_existing:return self.public_preview(c)
     def analyse_batch(self, cases):
         with self.lock:
             keys = ['ai-'+c['id'] for c in cases if c['status']=='AWAITING_CONTACT'
@@ -82,7 +107,7 @@ class Tasks:
                     if self.stop.is_set():
                         break
                     try:
-                        self.service.analyse(key.removeprefix('ai-'))
+                        self.assess_and_preview(key.removeprefix('ai-'))
                     except Exception:
                         with self.service.store.connect() as db:
                             self.service.store.event(db,key,'BACKGROUND_FAILED','Review assessment did not complete')
@@ -126,6 +151,7 @@ class Tasks:
     def loop(self):
         with credential_scope(self.service.store.path):self._loop()
     def _loop(self):
+        self.public_drafts(backfill=True)
         while not self.stop.wait(self.service.settings.scheduler_seconds):
             try:
                 self.service.tick()
@@ -133,7 +159,8 @@ class Tasks:
                 self.whatsapp_pending()
                 self.pending_reply_feedback()
                 snapshot=self.service.snapshot()
-                for c in snapshot['cases']:self.analyse(c)
+                for c in snapshot['cases']:self.analyse(c,draft_existing=False)
+                self.public_drafts(backfill=True)
                 for source in snapshot['sources']:
                     if source['enabled'] and source['next_scan']<=now():self.scan(source['id'])
             except Exception:
@@ -152,7 +179,7 @@ def make_handler(service,tasks=None):
     apply_credentials(service)
     tasks=tasks or Tasks(service);access=Access(service);csrf=secrets.token_urlsafe(32)
     support_routes={'scan-all','import-review','import-review-batch','public-preview','public_followup','lesson_revoke','learning_start','learning_improve','intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
-    support_routes.add('google-reply')
+    support_routes.update({'google-reply','public-reply'})
     support_routes.update({'reply_learning_scan','reply_learning_action'})
     support_routes.update({'wa_simulate','wa_staff_reply','wa_staff_complete','wa_property','customer_profile_link'})
     support_routes.add('maintenance_progress')
@@ -394,14 +421,20 @@ def make_handler(service,tasks=None):
                 if route=='google-reply':
                     from belive.google_replies import publish
                     return self.json(200,publish(service,p,user['id'],key))
+                if route=='public-reply':
+                    from belive.public_replies import publish
+                    return self.json(200,publish(service,p,user['id'],key))
                 if route=='public-preview':
-                    return self.json(200,service.prepare_public_preview(p.get('id'),p.get('revision'),user['id']))
+                    from belive.public_draft_jobs import prepare
+                    return self.json(200,prepare(service,p.get('id'),p.get('revision'),user['id'],manual=True))
                 if route=='public_followup':
-                    return self.json(200,service.command(route,{**p,'_actor':user['id']},key))
+                    result=service.command(route,{**p,'_actor':user['id']},key)
+                    tasks.public_preview(p.get('id'))
+                    return self.json(200,result)
                 if route=='analyse':
                     with service.store.connect() as db:c=service.store.get(db,'case',p.get('id'))
                     if c['severity'] in {'HIGH','CRITICAL'}:raise ValueError('Safety risk requires staff handling')
-                    return self.json(202,{'started':tasks.start('ai-'+c['id'],lambda:service.analyse(c['id']))})
+                    return self.json(202,{'started':tasks.start('ai-'+c['id'],lambda:tasks.assess_and_preview(c['id']))})
                 if route=='ai-check':return self.json(202,{'started':tasks.start('ai-connection',service.check_ai)})
                 if route=='scan':return self.json(202,{'started':tasks.scan(p.get('id'))})
                 if route=='scan-all':

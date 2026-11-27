@@ -179,6 +179,8 @@ class Service:
                 from belive import public_preview
                 case['public_followups']=self.public_followups(db,case['id'])
                 case['public_preview_current']=public_preview.is_current(case,case['public_followups'])
+                from belive import public_draft_jobs
+                case['public_reply_job']=public_draft_jobs.status(self,db,case)
                 case['can_contact_customer']=bool(case['tenant_id'] or self.has_complaint_access(db,case,browser_only=True))
                 case['activity']=[dict(r) for r in db.execute('SELECT * FROM events WHERE entity=? ORDER BY id DESC LIMIT 100',(case['id'],))]
                 active=case['status'] not in {'CLOSED','SKIPPED','VERIFIED','ANSWERED'}
@@ -193,6 +195,9 @@ class Service:
             result['closure_policy']=closure.policy(self.store,db)
             for case in result['cases']:
                 case['auto_close_at']=closure.deadline(case,result['closure_policy']['days']) if closure.waiting(case) else None
+                if case.get('entrypoint')=='PUBLIC_SOURCE' and case['platform'] in {'GOOGLE','FACEBOOK','THREADS'}:
+                    from belive.public_replies import eligibility
+                    case['public_posting']=eligibility(self,case)
                 if case['platform']=='GOOGLE':
                     from belive.google_replies import readiness
                     case['google_posting']=readiness(self.store,db,case)
@@ -836,7 +841,9 @@ class Service:
                     current.update(analysis=result,category=result['category'],severity=result['severity'],review_reason='')
                     if result['relevance']=='NON_SUPPORT' and not result['uncertainty'] and result['severity'] not in {'HIGH','CRITICAL'}:current['status']='SKIPPED'
                     elif result['uncertainty'] or result['relevance']=='UNCERTAIN' or result['severity'] in {'HIGH','CRITICAL'} or result.get('requires_human',False):self.handoff(db,current,'AI requires human assessment: '+result['summary'])
-                    elif result['severity']=='MEDIUM':self.handoff(db,current,'MODERATE: AI has assessed the issue and prepared assistance for staff review. Only SIMPLE replies are automatic.')
+                    elif result['severity']=='MEDIUM':self.handoff(db,current,
+                        'MODERATE: Assessment saved. A public reply draft is prepared automatically; staff handling remains open.'
+                        if public_source else 'MODERATE: AI has assessed the issue and prepared assistance for staff review. Only SIMPLE replies are automatic.')
                     elif current.get('entrypoint')=='TENANT_WEBSITE' and not context.get('automatic'):
                         self.handoff(db,current,'Website complaint requires staff follow-up')
                     elif public_source and classify_public:

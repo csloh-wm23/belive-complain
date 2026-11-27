@@ -207,6 +207,10 @@ class SupportAI:
             'Never claim or promise a repair, refund, dispatch, appointment, escalation, notification or resolution. '
             'No URLs or signature in the reply; verified research citations are displayed separately.'
         )
+        if context.get('platform') == 'THREADS':
+            instruction += (' This reply will be posted on Threads. Keep the complete reply at or below '
+                            '500 characters, including spaces and punctuation. Preserve the essential '
+                            'acknowledgement and useful next question or safe next step within that limit.')
         if context.get('research_state') == 'NEEDS_DETAILS':
             instruction += (' The next step in this reply must ask for the missing appliance/router brand, exact '
                             'model and displayed error code (or confirmation of no code), based on research_details. '
@@ -227,7 +231,7 @@ class SupportAI:
         result = self.generate('Public Reply Preview Agent', instruction, context, [])
         if not isinstance(result,dict) or set(result) != {'reply'} or not isinstance(result['reply'],str):
             raise ValueError('AI_INVALID_PLAN')
-        reply = bounded(result['reply'], 20, 1500)
+        reply = bounded(result['reply'], 20, 500 if context.get('platform') == 'THREADS' else 1500)
         if re.search(r'https?://|www\.|\[(?:email|number) removed\]|\b(?:password|otp|guarantee)\b', reply, re.I):
             raise ValueError('AI_UNSAFE_OUTPUT')
         unsafe_claims = (
