@@ -138,6 +138,8 @@ def _eligibility(service, case, db):
               'publishing_verified': False}
     try:
         _check(platform in LABELS and case.get('entrypoint') == 'PUBLIC_SOURCE', 'Choose a collected Google, Facebook or Threads complaint.')
+        _check(not case.get('test_only') and case.get('public_source_kind')!='THREADS_OWN_REPLY_TEST',
+               'This own-account test prepares a local draft only. Public sending is disabled.')
         _check(case.get('status') not in CLOSED, 'Reopen this complaint before sending a public reply.')
         _check(_provenance(service, db, case), 'The original source evidence does not match this case. Reimport and assess the source first.')
         assessment = case.get('analysis') or {}

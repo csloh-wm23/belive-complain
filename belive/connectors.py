@@ -48,6 +48,17 @@ def validate_source(p):
     days=p.get('lookback_days',DEFAULT_LOOKBACK_DAYS)
     if type(days) is not int or not 1<=days<=365:raise ValueError('Lookback must be a whole number from 1 to 365 days')
     source['lookback_days']=days
+    if 'own_reply_test_id' in p or 'own_reply_test_expires_at' in p:
+        if platform!='THREADS':raise ValueError('Own-account test replies are supported only for Threads')
+        test_id=p.get('own_reply_test_id');expires=p.get('own_reply_test_expires_at')
+        if test_id in (None,'') and expires in (None,''):
+            source.update(own_reply_test_id='',own_reply_test_expires_at='')
+        else:
+            expiry=_source_datetime(expires);current=datetime.now(timezone.utc)
+            if (not isinstance(test_id,str) or not re.fullmatch(r'\d+',test_id)
+                    or expiry is None or not current<expiry<=current+timedelta(hours=1)):
+                raise ValueError('Select one numeric Threads test reply ID and a future expiry within one hour')
+            source.update(own_reply_test_id=test_id,own_reply_test_expires_at=expiry.isoformat())
     if platform=='THREADS' and resource.endswith('/threads') and p.get('account_name'):
         if not isinstance(p['account_name'],str) or not re.fullmatch(r'[A-Za-z0-9_.]{1,60}',p['account_name']):
             raise ValueError('Invalid Threads account name')
@@ -147,6 +158,22 @@ def _source_datetime(value):
 def _recent(value,window):
     parsed=_source_datetime(value)
     return parsed is not None and window[0]<=parsed<=window[1]
+
+
+def _threads_reply(item,source,window,parent_id=None):
+    if not isinstance(item,dict) or not item.get('text') or not _recent(item.get('timestamp'),window):return None
+    own=item.get('is_reply_owned_by_me') is True
+    if item.get('id')==source.get('own_reply_test_id') and not own:return None
+    if own:
+        expiry=_source_datetime(source.get('own_reply_test_expires_at'))
+        # One exact, visibly labelled input is allowed for a short demonstration only.
+        if (source.get('own_reply_test_used_at') or item.get('id')!=source.get('own_reply_test_id')
+                or expiry is None or not window[1]<expiry<=window[1]+timedelta(hours=1)
+                or not isinstance(item.get('text'),str) or not re.search(r'\bBELIVE TEST\b',item['text'],re.I)):
+            return None
+    row=_threads_item(item,parent_id)
+    if own:row.update(public_source_kind='THREADS_OWN_REPLY_TEST',test_only=True,source_author_type='CONNECTED_ACCOUNT')
+    return row
 
 
 def _facebook_item(item,parent_id,parent_url,page_id):
@@ -274,16 +301,13 @@ def read_source(source):
                 raise ValueError('Invalid Threads post identifier')
             if not _recent(post.get('timestamp'),window):continue
             replies=request_json(THREADS_API+post_id+'/replies?'+urlencode({'fields':'id,text,permalink,timestamp,is_reply_owned_by_me','limit':THREADS_REPLY_LIMIT}),token)
-            rows.extend(_threads_item(item,post_id) for item in _threads_data(replies)[:THREADS_REPLY_LIMIT]
-                        if item.get('text') and item.get('is_reply_owned_by_me') is not True
-                        and _recent(item.get('timestamp'),window))
+            rows.extend(row for item in _threads_data(replies)[:THREADS_REPLY_LIMIT]
+                        if (row:=_threads_reply(item,source,window,post_id)))
         return rows
     result=request_json(THREADS_API+resource+'?'+urlencode({'fields':'id,text,permalink,timestamp,is_reply_owned_by_me','limit':THREADS_REPLY_LIMIT}),token)
     # Older single-post sources retain their IDs and duplicate behaviour.
-    return [_threads_item(item)
-            for item in _threads_data(result)[:THREADS_REPLY_LIMIT]
-            if item.get('text') and item.get('is_reply_owned_by_me') is not True
-            and _recent(item.get('timestamp'),window)]
+    return [row for item in _threads_data(result)[:THREADS_REPLY_LIMIT]
+            if (row:=_threads_reply(item,source,window))]
 
 def scan_interval(store,db):
     settings=store.all(db,'source_schedule')
@@ -292,17 +316,53 @@ def scan_interval(store,db):
 
 def _source_metadata(service,db,case,item):
     evidence={k:item[k] for k in ('public_url','source_created_at','source_updated_at','parent_source_id',
-                                'parent_public_url','public_source_kind') if item.get(k)}
+                                'parent_public_url','public_source_kind','test_only','source_author_type') if item.get(k)}
     if evidence and any(case.get(k)!=v for k,v in evidence.items()):
         case.update(evidence);case['revision']+=1
         service.store.put(db,'case',case)
         service.store.event(db,case['id'],'API_SOURCE_LINKED','Original API source link and timestamp retained')
 
 
+def _claim_threads_test(service,source,item):
+    """Consume against current configuration before intake, while the caller holds its lock."""
+    from belive.store import digest,redact
+    with service.store.connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        current=service.store.get(db,'source',source['id'])
+        expiry=_source_datetime(current.get('own_reply_test_expires_at'))
+        window=_collection_window(current)
+        if (current.get('platform')!='THREADS' or current.get('resource')!=source['resource']
+                or not current.get('enabled') or current.get('authorised') is not True
+                or current.get('own_reply_test_id')!=item['id'] or current.get('own_reply_test_used_at')
+                or current.get('own_reply_test_expires_at')!=source.get('own_reply_test_expires_at')
+                or expiry is None or not window[1]<expiry<=window[1]+timedelta(hours=1)
+                or not _recent(item.get('source_created_at'),window)
+                or item.get('source_author_type')!='CONNECTED_ACCOUNT'
+                or item.get('public_source_kind')!='THREADS_OWN_REPLY_TEST'
+                or not isinstance(item.get('text'),str) or not re.search(r'\bBELIVE TEST\b',item['text'],re.I)):
+            return False
+        cases=service.store.all(db,'case')
+        receipts={c.get('public_reply',{}).get('receipt_id') for c in cases
+                  if (c.get('public_reply',{}).get('platform') or c.get('platform'))=='THREADS'
+                  and c.get('public_reply',{}).get('status')=='POSTED'}
+        receipts|={a.get('result',{}).get('receipt_id') for a in service.store.all(db,'public_reply_attempt')
+                   if a.get('result',{}).get('platform')=='THREADS' and a.get('result',{}).get('status')=='POSTED'}
+        if item['id'] in receipts:return False
+        current['own_reply_test_used_at']=now()
+        current['own_reply_test_claim_hash']=digest(redact(item['text'].strip()))
+        current['own_reply_test_claim_resource']=current['resource']
+        current['own_reply_test_claim_expires_at']=current['own_reply_test_expires_at']
+        service.store.put(db,'source',current)
+        service.store.event(db,source['id'],'THREADS_TEST_EXCEPTION_CLAIMED',
+                            'Exact labelled own-account test reply reserved once before intake')
+    return True
+
+
 def scan(service,source_id):
     from belive.service import due
     with service.store.connect() as db:source=service.store.get(db,'source',source_id)
     if not source['enabled']:raise ValueError('Resume checks for the selected source before scanning')
+    rows=[]
     try:
         with credential_scope(service.store.path):rows=read_source(source)
         from belive.store import digest,redact
@@ -321,6 +381,7 @@ def scan(service,source_id):
                 rows=[item for item in rows if item['id'] not in own_ids]
             by_version={version:case for case in cases for version in case.get('source_versions',[])}
             for item in rows:
+                if item.get('test_only'):continue
                 text=item.get('text','')
                 if not isinstance(text,str) or not 10<=len(text.strip())<=6000:continue
                 known=db.execute('SELECT id FROM sources WHERE platform=? AND source_id=? AND hash=?',
@@ -344,14 +405,25 @@ def scan(service,source_id):
                 deferred_count=max(0,len(pending)-len(rows))
         results=[]
         for item in rows:
-            p={'title':'Public tenant feedback','description':item['text'],'platform':source['platform'],'source_id':item['id']}
+            title='TEST ONLY — Public tenant feedback' if item.get('test_only') else 'Public tenant feedback'
+            p={'title':title,'description':item['text'],'platform':source['platform'],'source_id':item['id']}
             if len(p['description'].strip())<10:continue
             # Content hash distinguishes immutable edits while duplicate polls reuse results.
-            c=service.command('intake',p,'scan-'+digest(json.dumps(p,sort_keys=True)))
-            if any(item.get(k) for k in ('public_url','source_created_at','source_updated_at','parent_source_id','parent_public_url','public_source_kind')):
-                with service.lock,service.store.connect() as db:
-                    current_case=service.store.get(db,'case',c['id'])
-                    _source_metadata(service,db,current_case,item)
+            with service.lock:
+                if item.get('test_only') and not _claim_threads_test(service,source,item):continue
+                if item.get('test_only'):p['_own_reply_test_source']=source_id
+                try:
+                    c=service.command('intake',p,'scan-'+digest(json.dumps(p,sort_keys=True)))
+                except Exception:
+                    if item.get('test_only'):
+                        with service.store.connect() as db:
+                            service.store.event(db,source_id,'THREADS_TEST_INTAKE_FAILED',
+                                                'Reserved test intake failed; exception remains consumed and requires a new explicit registration')
+                    raise
+                if any(item.get(k) for k in ('public_url','source_created_at','source_updated_at','parent_source_id','parent_public_url','public_source_kind')):
+                    with service.store.connect() as db:
+                        current_case=service.store.get(db,'case',c['id'])
+                        _source_metadata(service,db,current_case,item)
             results.append(c['id'])
         source.update(status='COMPLETED',error='',last_scan=now(),last_count=len(set(results)),
                       last_seen_count=seen_count,last_new_count=len(set(results)-before_ids),last_deferred_count=deferred_count)

@@ -61,6 +61,7 @@ function renderCases(){
     });
 }
 function publicSourceName(c){
+    if(c.platform==='THREADS'&&c.public_source_kind==='THREADS_OWN_REPLY_TEST')return 'Threads · own-account test';
     if(c.platform==='THREADS'&&c.public_source_kind==='THREADS_OWN_REPLY')return /^\s*TEST(?:\s|—|:|-)/i.test(c.description)?'Threads account reply · earlier test':'Threads account reply · earlier capture';
     if(c.platform!=='FACEBOOK')return ({GOOGLE:'Google Reviews',THREADS:'Threads'})[c.platform]||c.platform;
     if(c.public_source_kind==='FACEBOOK_COMMENT')return 'Facebook comment';
@@ -68,6 +69,7 @@ function publicSourceName(c){
     return 'Facebook · source type not recorded';
 }
 function publicSourceNotice(c){
+    if(c.platform==='THREADS'&&c.public_source_kind==='THREADS_OWN_REPLY_TEST')return '<p class="verification">Test only: this labelled reply came from your connected account and was allowed by a temporary, exact-reply exception. It used the normal collection and AI workflow. It is not a real customer complaint, and its AI reply cannot be posted.</p>';
     if(c.platform==='THREADS'&&c.public_source_kind==='THREADS_OWN_REPLY')return '<p class="muted">Earlier reply from the connected Threads account. Current monitoring excludes the account’s own replies. This saved case remains as earlier evidence, even when a fresh scan finds no new customer items.</p>';
     if(c.platform!=='FACEBOOK')return '';
     const note=c.public_source_kind==='FACEBOOK_PAGE_POST'
@@ -118,10 +120,14 @@ function sourceScanSummary(source){
 }
 function sourceScope(source){
     const days=esc(source.lookback_days||30);
+    const testNotice=source.platform!=='THREADS'||!source.own_reply_test_id?'':source.own_reply_test_used_at
+        ?'<p class="verification">Own-account test exception used. Other company replies remain excluded. Open the test case to inspect its assessment and draft.</p>'
+        :Date.parse(source.own_reply_test_expires_at)>Date.now()
+            ?`<p class="verification">Own-account test enabled for one labelled reply until ${esc(new Date(source.own_reply_test_expires_at).toLocaleString())}. Other company replies stay excluded. Test drafts cannot be posted.</p>`:'';
     if(source.platform==='GOOGLE')return `<p class="muted">Reads up to 25 reviews updated within the last ${days} days from the authorised Google Business Profile API. This setting does not change individual review-link imports or the separate browser collection tool. It does not provide complete review history.</p>`;
-    if(source.platform==='THREADS')return source.resource.endsWith('/threads')
+    if(source.platform==='THREADS')return testNotice+(source.resource.endsWith('/threads')
         ?`<p class="muted">Checks up to 25 connected-account posts and 25 top-level replies per post within the last ${days} days. Imports up to 25 new or changed replies per run; remaining discovered replies wait for another check. Your account’s own replies are excluded. This does not search all Threads posts or provide complete history.</p>`
-        :`<p class="muted">Reads up to 25 top-level replies from the last ${days} days on this selected post. The parent post can be older. Your account’s own replies are excluded. This does not provide complete reply history.</p>`;
+        :`<p class="muted">Reads up to 25 top-level replies from the last ${days} days on this selected post. The parent post can be older. Your account’s own replies are excluded. This does not provide complete reply history.</p>`);
     if(source.platform!=='FACEBOOK')return '';
     return source.resource.endsWith('/feed')
         ?`<p class="muted">Checks up to 25 Page-owned posts and 25 top-level comments per post within the last ${days} days. Imports up to 25 new or changed comments per run; remaining discovered comments wait for another check. Your Page’s own posts and replies are excluded. This does not read complete comment history or verify the authors as tenants.</p>`
@@ -260,6 +266,7 @@ function assessmentPending(c,snapshot=data){
 function publicDraftPending(c){return Boolean(c&&['QUEUED','RUNNING'].includes(c.public_reply_job?.status));}
 function caseWorkState(c){return JSON.stringify([Boolean(assessmentPending(c)),c?.public_reply_job?.status,c?.public_reply_job?.current_input,c?.public_reply_job?.error]);}
 function complaintNextStep(c){
+    if(c.test_only)return 'Inspect the assessment and draft below. This is an own-account test; its AI reply cannot be posted or saved as a customer lesson.';
     if(c.entrypoint==='PUBLIC_SOURCE'&&!['CLOSED','SKIPPED','VERIFIED','ANSWERED'].includes(c.status)){
         if(assessmentPending(c))return 'Hermes is assessing this complaint, then it will prepare a public reply automatically.';
         if(publicDraftPending(c))return 'Hermes is preparing the reply automatically. It will appear below when ready.';
@@ -322,7 +329,7 @@ if(!active)actions+='<button data-act="reopen">Reopen for staff</button>';
 $('caseDetail').innerHTML=`<div class="dialog-heading"><div><span class="eyebrow">${esc(c.id)}</span><h2>${esc(c.title)}</h2></div><button data-close="caseDialog" aria-label="Close case">×</button></div>
 <div class="case-tags">${pill(c.status)}${pill(level(c))}${pill(c.category)}</div><p>${esc(urgencyReason)}</p>${c.staff_destination?`<p><strong>Assigned team</strong> ${esc(c.staff_destination)}</p>`:''}
 <section class="case-next-step"><h3>Next step</h3><p>${esc(complaintNextStep(c))}</p></section>
-${c.platform==='FACEBOOK'||c.public_source_kind==='THREADS_OWN_REPLY'?`<p><strong>${esc(publicSourceName(c))}</strong></p>${publicSourceNotice(c)}`:''}
+${c.platform==='FACEBOOK'||['THREADS_OWN_REPLY','THREADS_OWN_REPLY_TEST'].includes(c.public_source_kind)?`<p><strong>${esc(publicSourceName(c))}</strong></p>${publicSourceNotice(c)}`:''}
 ${publicSourceLink(c)}
 ${c.entrypoint==='TENANT_WEBSITE'? `<section class="case-section"><h3>Reported rental location</h3><p>${c.reported_location ? esc([c.reported_location.property,c.reported_location.unit].filter(Boolean).join(' · ')) : 'Location was not provided.'}</p>${c.reported_location?.address?`<p>${esc(c.reported_location.address)}</p>`:''}</section>` : ''}
 <section class="case-section"><h3>Conversation</h3>${chat(c.conversation)}<p class="muted">Only published messages are shown to the tenant.</p></section>
@@ -341,12 +348,12 @@ ${!checking&&active&&!['HIGH','CRITICAL'].includes(c.severity)&&!['FOLLOW_UP','V
 </details>
 <details class="case-section" id="caseSourceEvidence"><summary>Source evidence and activity</summary><p>${esc(c.description)}</p><p>Platform ${esc(c.platform)} · Saved versions ${esc(c.source_versions.join(', '))}</p>${c.platform==='GOOGLE'&&c.entrypoint==='PUBLIC_SOURCE'?`<label>Individual Google review link<input id="caseReviewLink" type="url" maxlength="2000" value="${esc(c.review_url||'')}"></label><p class="muted">In Google Maps, select Share on the review itself and copy its link.</p><button type="button" data-save-review-link>Save review link</button>`:''}${c.analysis?`<p>Exact source quote: ${esc(c.analysis.evidence)}</p>`:''}${(c.analysis?.record_refs||[]).map(r=>`<p><b>${esc(r.id)} · v${r.version}</b> ${esc(r.source)}<br>${esc(r.text)}</p>`).join('')}${(c.activity||[]).map(a=>`<p><b>${esc(caseActivityLabels[a.action] ?? a.action)}</b> · ${esc(new Date(a.created_at).toLocaleString())}<br>${esc(a.detail)}</p>`).join('')}</details>
 ${publicSource?`<section class="case-section"><h3>Public reply</h3>
-       <p class="muted">Hermes prepares the draft automatically after assessment. Read or edit it, then press Send reply to post to the original ${esc(platformName)} item.</p>
+       <p class="muted">${c.test_only?'Hermes prepares this test draft automatically after assessment. You can inspect it here; sending is disabled for own-account test cases.':`Hermes prepares the draft automatically after assessment. Read or edit it, then press Send reply to post to the original ${esc(platformName)} item.`}</p>
        ${draftPending?`<p class="verification" role="status">${draftJob.status==='RUNNING'?'Hermes is preparing your reply. It will appear here automatically.':'Your reply is queued. Hermes will prepare it automatically.'}</p>`:''}
        ${['FAILED','STALE'].includes(draftJob.status)?`<p class="error" role="status">${esc(draftJob.error||'The automatic draft did not finish. You can retry below.')}</p>`:''}
        ${preview&&!previewCurrent?`<details><summary>Earlier saved draft</summary><p>This is an earlier draft. Hermes uses the current assessment and customer details for the next version.</p><p>${esc(preview.text)}</p></details>`:''}
        ${previewCurrent?`<label>Reply to ${esc(platformName)}${c.platform==='THREADS'?' · maximum 500 characters':''}<textarea id="publicReplyText" maxlength="3000">${esc(preview.text)}</textarea></label><small>Generated by ${esc(preview.agent)}</small>`:!draftPending?'<p>The tailored reply will appear here once the complaint assessment and draft checks finish.</p>':''}
-       ${canPreview?`<div class="case-actions"><button type="button" class="primary" data-send-public="${esc(c.id)}" ${posting.ready&&previewCurrent&&!draftPending?'':'disabled'}>Send reply to ${esc(platformName)}</button>${['FAILED','STALE'].includes(draftJob.status)&&!draftPending?`<button type="button" data-public-preview="${esc(c.id)}">Retry draft</button>`:''}</div><p class="muted">Pressing Send reply approves this exact text for public posting on ${esc(platformName)}. Preparing or editing a draft does not send it.</p><p class="muted">${esc(posting.reason)}</p>`:''}
+       ${canPreview?`<div class="case-actions">${c.test_only?'':`<button type="button" class="primary" data-send-public="${esc(c.id)}" ${posting.ready&&previewCurrent&&!draftPending?'':'disabled'}>Send reply to ${esc(platformName)}</button>`}${['FAILED','STALE'].includes(draftJob.status)&&!draftPending?`<button type="button" data-public-preview="${esc(c.id)}">Retry draft</button>`:''}</div>${c.test_only?'':'<p class="muted">Pressing Send reply approves this exact text for public posting on '+esc(platformName)+'. Preparing or editing a draft does not send it.</p>'}<p class="muted">${esc(posting.reason)}</p>`:''}
        ${posted?`<p role="status"><strong>${esc(platformName)} reply: ${esc(posted.status)}</strong> · ${esc(posted.detail||'Check the original source for delivery details.')}</p>${posted.reply_url&&/^https:\/\//.test(posted.reply_url)?`<a href="${esc(posted.reply_url)}" target="_blank" rel="noopener noreferrer">Open posted reply</a>`:''}`:''}
        ${(c.public_followups||[]).length?`<details><summary>Customer follow-ups (${c.public_followups.length})</summary>${c.public_followups.map(item=>`<p>${esc(item.text)}</p>${item.source_url?`<a href="${esc(item.source_url)}" target="_blank" rel="noopener noreferrer">Open observed reply</a>`:''}`).join('')}</details>`:''}
        ${canPreview?`<details><summary>Customer answered? Add their reply</summary><label>Customer's latest reply<textarea id="publicFollowupText" maxlength="3000" placeholder="Paste the reply from the original conversation, including any brand, exact model, display code and checks already tried."></textarea></label><label>Link to that reply (optional)<input id="publicFollowupLink" type="url" maxlength="2000"></label><p class="muted">Save the observed answer on this complaint. Hermes prepares the next draft; the app does not identify a customer automatically from similar wording.</p><button type="button" data-public-preview="${esc(c.id)}" ${draftPending?'disabled':''}>Update draft with this answer</button></details><details><summary>More reply options</summary><button type="button" data-public-preview="${esc(c.id)}" ${draftPending?'disabled':''}>Rewrite reply</button>${previewCurrent?'<button type="button" data-copy-public-reply>Copy reply</button>':''}${c.platform==='GOOGLE'?'<label><input id="googleReplyReplace" type="checkbox"> Replace an existing company reply on this Google review</label>':''}</details>`:''}
@@ -369,7 +376,7 @@ ${active?`<div class="form-grid"><label>Category<select id="staffCategory">${Obj
 ${c.status==='FOLLOW_UP'?'<button data-act="reassess">Return to Needs staff</button>':''}
 ${(data.workorders||[]).filter(w=>w.case_id===c.id).map(w=>`<p>${esc(w.department)} · ${esc(w.description)} · ${esc(w.status)} ${w.status==='OPEN'?`<button data-workorder="${w.id}">Record completion</button>`:''}</p>`).join('')}
 </details>
-${c.status==='CLOSED'&&c.closure_reason!=='CUSTOMER_INACTIVE'?'<section class="case-section"><h3>Teach future replies</h3><label>Reply as the customer should see it<textarea id="correctedExample" maxlength="2000" placeholder="Write directly to the customer. For example: Please tell us when the connection drops."></textarea></label><label>General question this answers (for public reuse)<input id="publicLessonQuestion" maxlength="240"></label><label><input id="publishPublicLesson" type="checkbox"> I reviewed this as general guidance safe for any customer. It contains no private, property-specific or account information.</label><label><input id="shareExample" type="checkbox"> Allow this style example through the protected shared-memory API</label><div class="case-actions"><button data-feedback="APPROVED">Use saved wording as a lesson</button><button data-feedback="CORRECTED">Save corrected lesson</button><button data-feedback="REJECTED">Reject lesson</button></div></section>':''}
+${!c.test_only&&c.status==='CLOSED'&&c.closure_reason!=='CUSTOMER_INACTIVE'?'<section class="case-section"><h3>Teach future replies</h3><label>Reply as the customer should see it<textarea id="correctedExample" maxlength="2000" placeholder="Write directly to the customer. For example: Please tell us when the connection drops."></textarea></label><label>General question this answers (for public reuse)<input id="publicLessonQuestion" maxlength="240"></label><label><input id="publishPublicLesson" type="checkbox"> I reviewed this as general guidance safe for any customer. It contains no private, property-specific or account information.</label><label><input id="shareExample" type="checkbox"> Allow this style example through the protected shared-memory API</label><div class="case-actions"><button data-feedback="APPROVED">Use saved wording as a lesson</button><button data-feedback="CORRECTED">Save corrected lesson</button><button data-feedback="REJECTED">Reject lesson</button></div></section>':''}
 <p id="caseError" role="alert" class="error"></p>`;}
 
 

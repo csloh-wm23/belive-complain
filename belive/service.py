@@ -297,10 +297,29 @@ class Service:
         external=platform!='INTERNAL';source_id=p.get('source_id') or uid('INPUT')
         require(isinstance(source_id,str) and bool(re.fullmatch(r'[A-Za-z0-9_./:-]{1,250}',source_id)), 'Invalid stable source identifier')
         source_hash=digest(description)
+        test_flags={}
+        if '_own_reply_test_source' in p:
+            from belive.connectors import _source_datetime
+            selected=p['_own_reply_test_source']
+            require(isinstance(selected,str),'Invalid own-account test claim')
+            source=self.store.get(db,'source',selected)
+            expiry=_source_datetime(source.get('own_reply_test_expires_at'));current=datetime.now(timezone.utc)
+            require(platform=='THREADS' and not p.get('tenant_id') and source.get('platform')=='THREADS'
+                    and source.get('enabled') is True and source.get('authorised') is True
+                    and source.get('own_reply_test_id')==source_id and source.get('own_reply_test_used_at')
+                    and source.get('own_reply_test_claim_hash')==source_hash
+                    and source.get('own_reply_test_claim_resource')==source.get('resource')
+                    and source.get('own_reply_test_claim_expires_at')==source.get('own_reply_test_expires_at')
+                    and expiry is not None and current<expiry<=current+timedelta(hours=1)
+                    and title.startswith('TEST ONLY') and re.search(r'\bBELIVE TEST\b',description,re.I),
+                    'Own-account test intake requires the current exact reserved Threads source')
+            test_flags={'test_only':True,'public_source_kind':'THREADS_OWN_REPLY_TEST','source_author_type':'CONNECTED_ACCOUNT'}
         existing=db.execute('SELECT id FROM sources WHERE platform=? AND source_id=? AND hash=?',(platform,source_id,source_hash)).fetchone()
         if existing:
             for c in self.store.all(db,'case'):
-                if existing[0] in c['source_versions']:return c
+                if existing[0] in c['source_versions']:
+                    if test_flags:c.update(test_flags);self.store.put(db,'case',c)
+                    return c
         tenant_id=p.get('tenant_id','')
         if tenant_id:
             t=self.store.get(db,'tenant',tenant_id);require(t['verified'],'Tenant must be verified by staff first')
@@ -314,13 +333,14 @@ class Service:
             if platform=='INTERNAL' and p.get('entrypoint')=='TENANT_PORTAL' and old['status'] in {'ANSWERED','CLOSED','SKIPPED'}:
                 continue
             if old['description']==description and old.get('tenant_id','')==tenant_id and old['platform']==platform and (not external or old['source_id']==source_id):
-                old['source_versions'].append(version);old['revision']+=1;self.store.put(db,'case',old)
+                old['source_versions'].append(version);old['revision']+=1;old.update(test_flags);self.store.put(db,'case',old)
                 self.store.event(db,old['id'],'DUPLICATE_LINKED','Identical redacted text linked as another source version');return old
         c={'id':uid('BL'),'title':title,'description':description,'tenant_id':tenant_id,'platform':platform,
            'source_id':source_id,'source_versions':[version],'entrypoint':p.get('entrypoint','PUBLIC_SOURCE' if external else 'OPERATOR'),'category':'OTHER','severity':'UNASSESSED',
            'status':'AWAITING_CONTACT' if external and not tenant_id else 'AI_PENDING','revision':1,
            'created_at':now(),'updated_at':now(),'owner':'','draft':'','analysis':None,'verification':'',
            'ack_due':None,'followup_due':None,'escalation':0,'handoff':False,'review_reason':''}
+        c.update(test_flags)
         c['automation_requested']=bool(automation.policy(self.store,db)['enabled'] and c['entrypoint'] in {'TENANT_PORTAL','TENANT_WEBSITE'})
         if risk(title+' '+description):
             c['severity']='CRITICAL';self.handoff(db,c,'Potential immediate safety risk. Staff assessment required before routine AI troubleshooting.')
@@ -533,10 +553,14 @@ class Service:
                 require(not matching or matching['id']==selected['id'],'This API resource already has a saved source. Update that source instead.')
             previous=selected or matching
             if previous:
-                config={k:v for k,v in source.items() if k in {'platform','resource','authorised','enabled','lookback_days','account_name'}}
+                config={k:v for k,v in source.items() if k in {'platform','resource','authorised','enabled','lookback_days','account_name','own_reply_test_id','own_reply_test_expires_at'}}
                 if 'enabled' not in p:config['enabled']=previous['enabled']
                 changed=any(previous.get(k,30 if k=='lookback_days' else None)!=v for k,v in config.items())
                 source={**previous,**config,'id':previous['id']}
+                if any(k in config and config[k]!=previous.get(k) for k in ('own_reply_test_id','own_reply_test_expires_at')):
+                    source.pop('own_reply_test_used_at',None)
+                    for field in ('own_reply_test_claim_hash','own_reply_test_claim_resource','own_reply_test_claim_expires_at'):
+                        source.pop(field,None)
                 if changed:source.update(next_scan=now(),status='READY',error='')
             self.store.put(db,'source',source);self.store.event(db,source['id'],'SOURCE_CONFIGURED','Explicit operator-selected API resource');return source
         if name in {'approve_message','reject_message'}:
@@ -545,6 +569,7 @@ class Service:
             self.store.event(db,m['entity'],name.upper(),m['id']);return m
         if name=='feedback':
             c=self.store.get(db,'case',p.get('id'));require(c['status']=='CLOSED','Evaluate learning after verified closure')
+            require(not c.get('test_only'),'Own-account collection tests cannot become approved customer lessons')
             require(c.get('closure_reason')!='CUSTOMER_INACTIVE','A no-reply closure has no verified outcome; reopen and verify before teaching Hermes')
             verdict=p.get('verdict');require(verdict in {'APPROVED','CORRECTED','REJECTED'},'Invalid feedback')
             text='' if verdict=='REJECTED' else bounded(p.get('text') if verdict=='CORRECTED' else c['draft'],1,2000)
