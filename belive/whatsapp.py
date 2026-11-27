@@ -140,6 +140,7 @@ def _ingest(service,db,sender,message_id,text,kind,timestamp,*,simulated=False,i
              'kind':kind,'at':now(),'media_id':media_id,'media':media}
     quoted=next((m for m in service.store.all(db,'wa_message') if m['thread_id']==tid and m['case_id']==case['id'] and m.get('external_id')==reply_to_external_id),None) if reply_to_external_id else None
     if quoted:message['reply_to_message_id']=quoted['id']
+    if reply_to_external_id and not quoted:message['unresolved_quote']=True
     service.store.put(db,'wa_message',message);service.store.put(db,'wa_thread',thread)
     turn={'id':'WAT-'+digest(key)[:24],'thread_id':tid,'message_id':key,'case_id':case['id'],'status':'PENDING','at':now()}
     service.store.put(db,'wa_turn',turn)
@@ -178,7 +179,9 @@ def webhook(service,raw,signature):
                             rank={'ACCEPTED':1,'SENT':2,'DELIVERED':3,'READ':4,'FAILED':5}
                             new=status.get('status','').upper()
                             if new in rank and rank[new]>=rank.get(out['status'],0):
-                                out['status']=new;service.store.put(db,'wa_outgoing',out)
+                                out['status']=new
+                                if new in {'DELIVERED','READ'}:out.setdefault('delivered_at',now())
+                                service.store.put(db,'wa_outgoing',out)
                                 if new in {'DELIVERED','READ'}:proof(service,db,metadata,last_reply_delivered=now())
                 for msg in value.get('messages',[]):
                     kind=msg.get('type','unsupported')
@@ -243,6 +246,10 @@ def _staff_request(service,db,thread,question,maintenance=False,*,origin_message
     assigned=destination(service.store,db,category)
     item=existing or {'id':'WAS-'+secrets.token_hex(6),'thread_id':thread['id'],'case_id':case['id'],'status':'OPEN','at':now()}
     if photo_id:item['photo_context_message_id']=photo_id
+    item['handoff_summary']={'problem':(context.get('assessment') or {}).get('summary') or (case.get('analysis') or {}).get('summary',''),
+        'original_customer_message':origin_text[:1500],
+        'latest_customer_update':context.get('current_message',{}).get('text','')[:1500] if context.get('current_message',{}).get('role')=='CUSTOMER' else '',
+        'decision_needed':question or 'Provide a verified next step.'}
     item.update(question=question or 'Please review this customer support request and provide verified guidance.',maintenance=maintenance or item.get('maintenance',False),
                 origin_message_id=item.get('origin_message_id') or origin_message_id,status='OPEN',progress='WAITING_GUIDANCE',revision=item.get('revision',0)+1,
                 evidence_checked={'sop_titles':[s.get('title','') for s in context.get('sop',[])],
@@ -294,7 +301,14 @@ def _local_learning_stale(service,db,versions):
 def process_thread(service,tid):
     from belive.hermes_native import conversation_scope
     from belive.credentials import credential_scope
-    with conversation_scope(tid),credential_scope(service.store.path):return _process_thread(service,tid)
+    from belive.whatsapp_presence import Presence
+    with conversation_scope(tid),credential_scope(service.store.path),Presence(service,tid):return _process_thread(service,tid)
+
+def _phase(service,turn,phase):
+    with service.store.connect() as db:
+        current=service.store.get(db,'wa_turn',turn['id'])
+        if current['status']=='PROCESSING':
+            current.update(phase=phase,phase_at=now());service.store.put(db,'wa_turn',current)
 
 
 def _process_thread(service,tid):
@@ -313,7 +327,7 @@ def _process_thread(service,tid):
                 stale['status']='SUPERSEDED';service.store.put(db,'wa_turn',stale)
             thread=service.store.get(db,'wa_thread',tid);revision=thread['revision']
             previous_case=service.store.get(db,'case',thread['case_id']);case_revision=previous_case['revision']
-            turn['status']='PROCESSING';service.store.put(db,'wa_turn',turn)
+            turn.update(status='PROCESSING',started_at=now(),phase='CHECKING_CONTEXT',phase_at=now());service.store.put(db,'wa_turn',turn)
             messages=[x for x in reversed(service.store.all(db,'wa_message')) if x['thread_id']==tid and x['case_id']==thread['case_id']][-20:]
             requests=[x for x in service.store.all(db,'wa_staff') if x['thread_id']==tid and x['case_id']==thread['case_id']]
             target=next((x for x in requests if x['id']==turn.get('request_id')),None)
@@ -347,7 +361,10 @@ def _process_thread(service,tid):
             local_learning_versions=_local_learning_versions(tips,lessons) if not sharing and not urgent and not social_only else {}
             from belive.routing import settings as routing_settings
             team_routes=routing_settings(service.store,db)['departments']
+            from belive.customer_directory import facts as customer_facts
+            customer_record=customer_facts(service,db,thread) if not urgent and not social_only else None
         from belive.company_sop import retrieve,evidence
+        _phase(service,turn,'CHECKING_RULES')
         from belive import whatsapp_triage
         selected,lookup_uncertain=([],False) if urgent or social_only else retrieve(service,knowledge,[original] if original else messages)
         steps=['Greeting-only eligibility checked; no unresolved support issue'] if social_only else ['Relevant company SOP retrieved'] if selected else []
@@ -361,11 +378,12 @@ def _process_thread(service,tid):
             'legacy_staff_requests_waiting_for_binding':sum(x['id'] not in request_origins for x in requests),
             'explicit_staff_requested':bool(focused.get('direction')=='CUSTOMER' and whatsapp_ai.explicit_staff_request(focused['text'])),
             'staff_guidance':[{'id':x['id'],'question':x['question'],'verified_solution':x['guidance']} for x in instructions],
+            'staff_work_updates':[{'id':r['id'],'state':r['maintenance_progress']['state'],'note':r['maintenance_progress'].get('note',''),'updated_at':r['maintenance_progress']['updated_at'],'internal_only':True} for r in requests if r['id'] in request_origins and r['status']!='CLOSED' and r.get('maintenance_progress')],
             'waiting_for_staff':thread['state']=='WAITING_STAFF','provided_property':thread.get('property_ref'),
             'ongoing_support':bool(requests),
             'team_routes':team_routes,'team_notification_mode':'internal_queue_pending_approval',
             'research_sources':[],'research_attempted':False,'research_performed_this_turn':False,'reviewed_writing_tips':[{'id':x['id'],'tip':x['tip']} for x in tips],
-            'social_only':social_only}
+            'social_only':social_only,'customer_record':customer_record}
         from belive import wa_research
         context['research_history']=[] if urgent or social_only else wa_research.history(service,thread['case_id'])
         used_shared={('sop:'+x['id']) for x in selected}|{('document:'+x['document_id']) for x in selected if x.get('document_id')}
@@ -383,6 +401,7 @@ def _process_thread(service,tid):
                     with service.lock,service.store.connect() as db:
                         saved=service.store.get(db,'wa_message',message['id']);saved['media']=media;service.store.put(db,'wa_message',saved)
                 copy={**message,'media':media};data_url='data:'+media['mime']+';base64,'+base64.b64encode(media_path(service,copy).read_bytes()).decode()
+                _phase(service,turn,'READING_PHOTO')
                 vision=whatsapp_ai.read_photo(service,data_url);steps.append('Photo read')
                 with service.lock,service.store.connect() as db:
                     saved=service.store.get(db,'wa_message',message['id']);saved.update(media=media,vision=vision);service.store.put(db,'wa_message',saved)
@@ -402,6 +421,7 @@ def _process_thread(service,tid):
             if not urgent and context['latest_sender']=='CUSTOMER' and photos and any(risk(str(x.get('observations',''))) for x in photos):
                 urgent=True;assessment=whatsapp_triage.emergency(question)
             if assessment is None:
+                _phase(service,turn,'ASSESSING_QUESTION')
                 if context['latest_sender']=='STAFF_INTERNAL':
                     with service.store.connect() as db:assessment=service.store.get(db,'case',thread['case_id']).get('analysis')
                 if not assessment:assessment=whatsapp_triage.assess(service,context)
@@ -417,6 +437,7 @@ def _process_thread(service,tid):
             if context['research_history']:
                 wa_research.prime(context,context['research_history'][0]);steps.append('Recent official lookup available for this photo')
             def perform_research(query,kind,purpose):
+                _phase(service,turn,'CHECKING_OFFICIAL_SOURCES')
                 reused=wa_research.lookup(service,context,thread['case_id'],photo_anchor,query,kind,purpose)
                 steps.append('Recent official lookup reused for this photo' if reused else 'Official device-identification sources searched' if purpose=='IDENTIFICATION' else 'Company website checked' if kind=='COMPANY' else 'Technical sources searched')
             # The native assessor can request missing public evidence before reply drafting.
@@ -428,7 +449,8 @@ def _process_thread(service,tid):
                 decision_trace.append({'stage':'assessment_research','research':assessment['research'],'purpose':research_purpose,'search_query':assessment['search_query']})
             if urgent:
                 draft={'reply':'Please move away from the hazard and do not touch or repair the equipment. If anyone is in immediate danger, contact local emergency services now. I am alerting our team urgently; you can keep messaging here.', 'needs_staff':True,'staff_question':'Urgent safety report: review immediately and arrange the appropriate response.','needs_maintenance':True,'research':'NONE','search_query':'','sources_used':[]}
-            else:draft=whatsapp_ai.reply(service,context)
+            else:
+                _phase(service,turn,'PREPARING_REPLY');draft=whatsapp_ai.reply(service,context)
             decision_trace.append({'stage':'initial',**{k:draft.get(k) for k in ('handling','decision_reason','needs_staff','needs_maintenance','research','search_query')}})
             if social_only and (draft['needs_staff'] or draft['needs_maintenance'] or draft['research']!='NONE' or draft['sources_used'] or draft['search_query'] or draft['staff_question']):
                 raise ValueError('Greeting response proposed unsupported actions')
@@ -449,6 +471,7 @@ def _process_thread(service,tid):
             whatsapp_ai.enforce_staff_request(draft,context)
             assessment,draft,delivery_kind,staff_draft=whatsapp_triage.apply_policy(assessment,draft,context,urgent)
             review_context={**context,'acknowledgement_only':staff_draft is not None,'private_staff_draft':staff_draft,'clarification_only':delivery_kind=='CLARIFICATION'}
+            _phase(service,turn,'REVIEWING_REPLY')
             if not urgent and not whatsapp_ai.review(service,review_context,draft['reply'],draft):
                 feedback=review_context.pop('_review_feedback',{})
                 decision_trace.append({'stage':'review_rejected','safe':feedback.get('safe'),'grounded':feedback.get('grounded'),'handoff_justified':feedback.get('handoff_justified'),'next_step_useful':feedback.get('next_step_useful'),'improvement_reason':str(feedback.get('improvement_reason',''))[:500],'unsupported_claims':[str(x)[:400] for x in feedback.get('unsupported_claims',[])[:5]]})
@@ -481,7 +504,10 @@ def _process_thread(service,tid):
         with service.lock,service.store.connect() as db:
             db.execute('BEGIN IMMEDIATE');current=service.store.get(db,'wa_thread',tid);saved_turn=service.store.get(db,'wa_turn',turn['id'])
             live_shared={x['key']:x['revision'] for x in service.store.all(db,'memory_record')}
-            if current['revision']!=revision or service.store.get(db,'case',current['case_id'])['revision']!=case_revision or (not urgent and not social_only and sop(service,db,current)!=knowledge) or any(live_shared.get(k)!=v for k,v in shared_revisions.items()) or (not urgent and _local_learning_stale(service,db,local_learning_versions)):
+            record_changed=customer_record is not None and customer_facts(service,db,current)!=customer_record
+            live_requests={r['id']:r for r in service.store.all(db,'wa_staff')}
+            staff_context_changed=any(r['id'] not in live_requests or live_requests[r['id']].get('revision',0)!=r.get('revision',0) for r in requests)
+            if staff_context_changed or record_changed or current['revision']!=revision or service.store.get(db,'case',current['case_id'])['revision']!=case_revision or (not urgent and not social_only and sop(service,db,current)!=knowledge) or any(live_shared.get(k)!=v for k,v in shared_revisions.items()) or (not urgent and _local_learning_stale(service,db,local_learning_versions)):
                 saved_turn['status']='SUPERSEDED';service.store.put(db,'wa_turn',saved_turn)
                 if not any(x['thread_id']==tid and x['status']=='PENDING' and x.get('request_id')==turn.get('request_id') for x in service.store.all(db,'wa_turn')):
                     retry={**turn,'id':'WAT-'+secrets.token_hex(12),'status':'PENDING','at':now()};service.store.put(db,'wa_turn',retry)
@@ -515,6 +541,8 @@ def _process_thread(service,tid):
                  'assessment':assessment,'staff_destination':case['staff_destination'],'delivery_kind':delivery_kind,'staff_draft':staff_draft,
                  'knowledge_versions':{x['id']:x['version'] for x in selected}}
             out['processing_path']='GREETING_REVIEWED' if social_only else 'FULL_SUPPORT'
+            out['customer_record_facts']=customer_record
+            out['responds_to_message_id']=focused['id'] if focused.get('direction')=='CUSTOMER' else None
             out['handling']=draft.get('handling');out['decision_reason']=draft.get('decision_reason','');out['decision_trace']=decision_trace
             out['photo_context_message_id']=photo_anchor or None;out['research_purpose']=context.get('research_purpose');out['identification_only']=context.get('identification_only',False)
             out['request_id']=related or None
@@ -528,7 +556,7 @@ def _process_thread(service,tid):
             out['native_reply_verified']=any(x.get('role')=='WhatsApp Customer Support Agent' and x.get('engine')=='hermes-native' and x.get('mode')=='generate' and x.get('api_calls',0)>0 for x in executions)
             out['native_tools']=sorted({name for x in executions for name in x.get('executed_tools',[])})
             service.store.put(db,'wa_outgoing',out);service.store.put(db,'wa_thread',current)
-            saved_turn.update(status='COMPLETE',steps=steps);service.store.put(db,'wa_turn',saved_turn)
+            saved_turn.update(status='COMPLETE',phase='COMPLETE',phase_at=now(),steps=steps);service.store.put(db,'wa_turn',saved_turn)
         deliver(service,out['id'])
 
 
@@ -581,6 +609,9 @@ def deliver(service,out_id):
         shared_now={x['key']:x['revision'] for x in service.store.all(db,'memory_record')}
         stale=stale or (not urgent_ack and any(shared_now.get(k)!=v for k,v in out.get('shared_revisions',{}).items()))
         stale=stale or (not urgent_ack and _local_learning_stale(service,db,out.get('local_learning_versions',{})))
+        if not urgent_ack and out.get('customer_record_facts'):
+            from belive.customer_directory import facts
+            stale=stale or facts(service,db,thread)!=out['customer_record_facts']
         if terminal or case_changed or policy_changed or request_changed or quote_invalid:
             out.update(status='SUPERSEDED',error='The case changed or no longer permits this reply; staff must review the current case before another send.')
         elif out['thread_revision']!=thread['revision'] or stale:out['status']='SUPERSEDED'
@@ -715,6 +746,8 @@ def snapshot(service,db):
     result=[]
     for thread in threads:
         copy={k:v for k,v in thread.items() if k!='recipient'}
+        from belive.customer_directory import selected
+        copy['selected_customer_record']=selected(service,db,thread)
         copy['messages']=[{k:v for k,v in x.items() if k not in {'media_id','media'}}|{'has_photo':bool(x.get('media') or x.get('media_id')),'photo_ready':bool(x.get('media'))} for x in reversed(messages) if x['thread_id']==thread['id']][-40:]
         copy['outgoing']=[x for x in outputs if x['thread_id']==thread['id']][:8]
         copy['staff_requests']=[x for x in service.store.all(db,'wa_staff') if x['thread_id']==thread['id']]
@@ -722,11 +755,20 @@ def snapshot(service,db):
         copy['staff_requests']=[{**r,'notification':{k:notices.get(r.get('notification_id'),{}).get(k) for k in ('kind','target','status')}} for r in copy['staff_requests']]
         origin_ids={r.get('origin_message_id') for r in copy['staff_requests'] if r['case_id']==thread['case_id']}
         copy['request_originals']=[{k:m.get(k) for k in ('id','text','kind','at','case_id','direction')} for m in messages if m['thread_id']==thread['id'] and m['id'] in origin_ids]
+        from belive.support_progress import snapshot as progress_snapshot
+        from belive.maintenance_queue import view as maintenance_view
+        copy['support_progress']=progress_snapshot(thread,messages,service.store.all(db,'wa_turn'),outputs,copy['staff_requests'])
+        copy['staff_requests']=[{**r,'internal_work':maintenance_view(r)} if r.get('maintenance') else r for r in copy['staff_requests']]
         result.append(copy)
     c=configuration()
     from belive.whatsapp_channel import public,observed
     from belive.launch_status import current
+    from belive.customer_directory import snapshot as directory_snapshot
+    from belive.support_progress import delivery_health
+    launcher=current(observed(service,db))
+    health=delivery_health(threads,messages,outputs,service.store.all(db,'wa_turn'),launcher.get('started_at'),c['phone_number_id'])
+    launcher['live_delivery_this_start']=bool(launcher['ready'] and observed(service,db)['company_number_matches'] and health['correlated_delivery_this_start'])
     return {'configured':ready(),'webhook_path':'/webhooks/whatsapp','connection_fields':{k:bool(c[k]) for k in ('access_token','app_secret','verify_token','phone_number_id','graph_version','webhook_host')},
-            'tenant_report':public(service,db),'connection_status':observed(service,db),'launcher':current(observed(service,db)),'signup_configuration':signup_configuration(),
-            'threads':result,'knowledge':shared_memory.knowledge(service,db),'documents':[{k:v for k,v in x.items() if k!='specification'} for x in shared_memory.documents(service,db)],
+            'tenant_report':public(service,db),'connection_status':observed(service,db),'launcher':launcher,'delivery_health':health,'signup_configuration':signup_configuration(),
+            'threads':result,'customer_directory':directory_snapshot(service,db),'knowledge':shared_memory.knowledge(service,db),'documents':[{k:v for k,v in x.items() if k!='specification'} for x in shared_memory.documents(service,db)],
             'pending_turns':sum(x['status']=='PENDING' for x in service.store.all(db,'wa_turn'))}

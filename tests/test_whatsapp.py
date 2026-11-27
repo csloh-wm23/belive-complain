@@ -38,7 +38,7 @@ class GreetingTransportTests(unittest.TestCase):
             self.assertEqual(generate.call_args.kwargs['max_output_tokens'],384)
             context['conversation'][0]['text']='Hi, the socket is smoking'
             review_assessment(service,context,'Hi! How can I help?')
-            self.assertFalse(generate.call_args.kwargs['keep_warm'])
+            self.assertTrue(generate.call_args.kwargs['keep_warm'])
             self.assertEqual(generate.call_args.kwargs['max_output_tokens'],2500)
 
 

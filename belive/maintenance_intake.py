@@ -10,6 +10,9 @@ def update(service,db,item,case,context):
     severity=max(candidates,key=LEVELS.get)
     location=context.get('maintenance_location') or {}
     item.update(severity=severity,priority=LEVELS[severity],priority_label=LABELS[severity])
+    if (item.get('maintenance_progress') or {}).get('state')=='WORK_DONE' and item.get('status')=='OPEN':
+        item['maintenance_progress']={'state':'QUEUED','owner':'','updated_at':now(),'note':'Customer issue requires further review after reported work.'}
+        item.setdefault('maintenance_history',[]).append(item['maintenance_progress'])
     if location.get('property') or location.get('unit'):
         known=item.get('maintenance_location') or {}
         item['maintenance_location']={k:location.get(k) or known.get(k,'') for k in ('property','unit')}
@@ -21,7 +24,7 @@ def update(service,db,item,case,context):
     status='PENDING_APPROVAL' if item.get('location_complete') or severity in {'HIGH','CRITICAL'} else 'NEEDS_DETAILS'
     if old and old.get('kind')=='STAFF_WORK_ORDER' and old.get('text')==text and old.get('target')==item['assigned_team'] and old['status'] not in {'REJECTED','CANCELLED'}:
         return
-    if old and old['status'] in {'PENDING_APPROVAL','NEEDS_DETAILS'}:
+    if old and old['status'] in {'PENDING_APPROVAL','NEEDS_DETAILS','APPROVED'}:
         old.update(status='CANCELLED',error='Superseded by current maintenance intake');service.store.put(db,'outbox',old)
     notice=service.enqueue(db,case['id'],'STAFF_WORK_ORDER',text,item['assigned_team'])
     notice.update(status=status,support_request_id=item['id'],severity=severity,priority=item['priority'],intake_state=item['intake_state'],location=place,

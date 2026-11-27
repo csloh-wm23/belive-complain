@@ -28,6 +28,9 @@ def add(service,db,case,reply,customer,question,*,signal=True,explicit_unresolve
 def discover(service,db,case_id=None):
     for case in service.store.all(db,'case'):
         if case_id and case['id']!=case_id:continue
+        if case.get('whatsapp_thread_id'):
+            discover_whatsapp(service,db,case,inspect_reaction=case_id is not None and getattr(service.ai,'checks_feedback_reactions',False))
+            continue
         last_reply=None;question=case['description'];before_reply=question
         for message in conversation(service.store,db,case):
             if message['sender'] in {'SUPPORT','AI_SUPPORT'}:
@@ -40,6 +43,27 @@ def discover(service,db,case_id=None):
                     add(service,db,case,last_reply,message,before_reply,
                         signal=signal,explicit_unresolved=explicitly_unresolved)
                 question=message['text']
+
+def discover_whatsapp(service,db,case,inspect_reaction=False):
+    messages=[m for m in reversed(service.store.all(db,'wa_message')) if m['case_id']==case['id'] and m['thread_id']==case['whatsapp_thread_id']]
+    outputs={('WAM-'+digest(o['id'])[:24]):o for o in service.store.all(db,'wa_outgoing') if o['case_id']==case['id']}
+    seen={};latest=None
+    for message in messages:
+        if message['direction']=='AI':latest=message
+        if message['direction']=='CUSTOMER' and not message.get('unresolved_quote') and (negative(message['text']) or inspect_reaction):
+            quoted=message.get('reply_to_message_id')
+            reply=seen.get(quoted) if quoted else latest
+            if reply and reply['direction']=='AI' and reply['id'] in outputs:
+                origin=seen.get(reply.get('reply_to_message_id'))
+                published_id='CHAT-'+digest(case['id']+':wa-out-'+outputs[reply['id']]['id'])[:24]
+                feedback_id='CHAT-'+digest(case['id']+':wa-in-'+message['id'])[:24]
+                add(service,db,case,{'id':published_id,'text':reply['text']},{'id':feedback_id,'text':message['text']},
+                    origin['text'] if origin else case['description'],signal=negative(message['text']))
+                key='RLF-'+digest(case['id']+':'+published_id+':'+feedback_id)[:18]
+                item=service.store.get(db,'reply_learning',key)
+                item.update(feedback_attribution='EXPLICIT_WHATSAPP_QUOTE' if quoted else 'LATEST_WHATSAPP_REPLY',whatsapp_reply_id=reply['id'],whatsapp_feedback_id=message['id'])
+                service.store.put(db,'reply_learning',item)
+        seen[message['id']]=message
 
 
 def matching(service,db,question,condo_id=None):

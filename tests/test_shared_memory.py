@@ -17,7 +17,9 @@ class SharedMemoryTests(unittest.TestCase):
         self.a=Service(self.root/'a'/'a.db',FakeAI());self.b=Service(self.root/'b'/'b.db',FakeAI())
         self.tokens=['host-'+secrets.token_urlsafe(36),'peer-'+secrets.token_urlsafe(36)];self.wid='MEM-'+secrets.token_hex(12)
         self.hub=Hub(self.root/'hub'/'knowledge.db',self.wid,{self.tokens[0]:'Host',self.tokens[1]:'Peer'});self.server=serve(self.hub,0);self.url='http://127.0.0.1:'+str(self.server.server_port)
-    def tearDown(self):self.server.shutdown();self.server.server_close();self.tmp.cleanup()
+    def tearDown(self):
+        from belive.hermes_native import close_workers
+        close_workers();self.server.shutdown();self.server.server_close();self.tmp.cleanup()
     def cmd(self,s,name,**p):return s.command(name,p,secrets.token_hex(16))
     def rows(self,s,kind):
         with s.store.connect() as db:return s.store.all(db,kind)

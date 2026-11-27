@@ -24,6 +24,8 @@ COMMANDS.update({'wa_simulate','wa_knowledge','wa_staff_reply','wa_staff_complet
 COMMANDS.add('wa_document_action')
 COMMANDS.add('wa_channel')
 COMMANDS.add('public_followup')
+COMMANDS.update({'customer_profile_save','customer_profile_link'})
+COMMANDS.add('maintenance_progress')
 
 PROPERTY_DIRECTORY = Path(__file__).resolve().parents[1] / 'assets' / 'property-directory.json'
 
@@ -365,6 +367,12 @@ class Service:
                 self.handoff(db,case,'Customer follow-up reports a potential immediate safety risk')
             case['revision']+=1;case['updated_at']=now();self.store.put(db,'case',case)
             return {'id':case['id'],'followup_id':item['id'],'revision':case['revision']}
+        if name=='maintenance_progress':
+            from belive.maintenance_queue import command
+            return command(self,db,p)
+        if name in {'customer_profile_save','customer_profile_link'}:
+            from belive.customer_directory import command
+            return command(self,db,name,p)
         if name=='wa_document_action':
             from belive.company_sop import document_action
             return document_action(self,db,p)

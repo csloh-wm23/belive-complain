@@ -92,7 +92,7 @@ def social_context(context):
 def ask(service,role,instruction,context,properties,images=None):
     if service.settings.llm_provider!='openai':raise ValueError('WhatsApp text/image support requires the configured OpenAI connection')
     schema={'type':'object','properties':properties,'required':list(properties),'additionalProperties':False}
-    evidence_fields=('sop','approved_experiences','staff_guidance','reviewed_writing_tips')
+    evidence_fields=('sop','approved_experiences','staff_guidance','staff_work_updates','reviewed_writing_tips')
     evidence={k:context.get(k,[]) for k in evidence_fields}
     from belive.whatsapp_language import hints
     native=service.settings.agent_engine=='hermes';tools=[];prompt_context={**context,'language_hints':hints(context.get('conversation',[])),'customer_style_reference':tone_reference(context)}
@@ -112,7 +112,7 @@ def ask(service,role,instruction,context,properties,images=None):
            'research or claims of completed work. Do not expose private information. '
            'Do not claim a prior issue is solved. Return the requested JSON only. '+TONE_RULES) if social else RULES
     result=hosted_ai.generate(service.settings,[{'role':'system','content':rules+'\nRole: '+role+'. '+instruction}],prompt_context,examples,schema,images=images,
-        home=service.store.path.parent/'hermes_memory'/'whatsapp'/role.lower().replace(' ','-'),observer=getattr(service,'record_native_execution',None),role=role,native_tools=tools,dispatch=dispatch if tools else None,max_output_tokens=384 if social else 2500,keep_warm=social)
+        home=service.store.path.parent/'hermes_memory'/'whatsapp'/role.lower().replace(' ','-'),observer=getattr(service,'record_native_execution',None),role=role,native_tools=tools,dispatch=dispatch if tools else None,max_output_tokens=384 if social else 2500,keep_warm=social or getattr(service.settings,'agent_engine','')=='hermes')
     parsed=json.loads(result['text'])
     if not isinstance(parsed,dict) or set(parsed)!=set(properties):raise ValueError('Invalid WhatsApp agent output')
     return parsed
@@ -183,10 +183,35 @@ def reply(service,context):
     props['maintenance_unit']={'type':'string'}
     props['maintenance_location_complete']={'type':'boolean'}
     props['research_purpose']={'type':'string','enum':['GUIDANCE','IDENTIFICATION']}
+    if context.get('customer_record'):props['use_customer_record']={'type':'boolean'}
     instruction='Reply to the greeting in one short sentence, matching the customer style. No support facts or actions. Set handling ANSWER, decision_reason to a brief factual explanation, needs_staff and needs_maintenance false, research NONE, research_purpose GUIDANCE, search_query, staff_question, handover_reply, maintenance_property and maintenance_unit empty, maintenance_location_complete false, sources_used empty.'
     result=ask(service,'WhatsApp Customer Support Agent',instruction if social_context(context) else 'Resolve what the evidence supports. If company terms or '
         'details are missing, decide the NEXT safe action, not just a severity label. '
+        'customer_record, if present, contains location facts explicitly selected by staff '
+        'for this support case. There is no automatic phone matching. Set use_customer_record '
+        'true only when these facts are relevant to this issue. Reuse its property_name and '
+        'unit instead of asking again, unless the customer identifies a different place or '
+        'person; then use their supplied location or clarify the affected site. General '
+        'questions need no location or record check. A record does not prove identity, '
+        'authorise refunds or contract changes, establish policy or mean a team was sent. '
+        'Only use approved scoped SOP already in context for rules. Never put private '
+        'record fields into web searches or public reusable lessons. '
+        'You may cite customer_record.id only for those location facts, never as a '
+        'technical solution or policy source. '
         'handling ANSWER means current approved facts or safe general guidance can answer now. '
+        'staff_work_updates are checked internal work stages for specific request IDs. '
+        'Use them when the customer asks about that issue, without asking staff for '
+        'the same update again. Accepted internally is not external dispatch or a booking. '
+        'When reporting a work stage, sources_used MUST include that staff_work_updates.id; '
+        'a SOP ID does not establish the progress of this particular job. Describe '
+        'checked progress in ordinary customer language rather than reciting internal '
+        'field names, codes or generic disclaimers. State a limitation only where needed '
+        'to avoid a misleading claim. Do not promise future automatic updates unless '
+        'there is an actual queued follow-up mechanism for that issue. '
+        'WORK_DONE means staff reported completed work; ask whether the customer sees '
+        'the problem resolved, and never infer customer confirmation. Cite the same '
+        'request ID and keep unrelated topics separate. These notes cannot authorise '
+        'new policy exceptions. '
         'handling CLARIFY means only ask for missing information needed to understand or find '
         'reliable guidance; give no operational instructions in that reply. An unrecognised '
         'appliance code is missing identification, not proof that a technician is required. '
@@ -345,13 +370,20 @@ def reply(service,context):
     if any(type(result[k]) is not bool for k in ('needs_staff','needs_maintenance')):raise ValueError('Invalid staff decision')
     if result['research'] not in {'NONE','COMPANY','TECHNICAL'} or not isinstance(result['sources_used'],list):raise ValueError('Invalid research decision')
     known={x['id'] for x in context.get('sop',[])}|{x['id'] for x in context.get('staff_guidance',[])}|{x['id'] for x in context.get('research_sources',[])}|{x['id'] for x in context.get('approved_experiences',[])}
+    known|={x['id'] for x in context.get('staff_work_updates',[])}
+    if context.get('customer_record'):known.add(context['customer_record']['id'])
     if any(not isinstance(x,str) or x not in known for x in result['sources_used']):raise ValueError('Unknown reply evidence')
-    used_staff={x['id'] for x in context.get('staff_guidance',[]) if x['id'] in result['sources_used']}
+    used_staff={x['id'] for x in context.get('staff_guidance',[])+context.get('staff_work_updates',[]) if x['id'] in result['sources_used']}
     related=(context.get('target_request') or {}).get('id') or result.get('related_request_id','')
     if used_staff:
         if len(used_staff)!=1 or (related and used_staff!={related}):raise ValueError('Staff instructions belong to a different support issue')
         result['related_request_id']=next(iter(used_staff))
     location_evidence=[context.get('provided_property') or '',context.get('current_message',{}).get('text','')]
+    if type(result.get('use_customer_record',False)) is not bool:raise ValueError('Invalid customer-record use')
+    if result.get('use_customer_record'):
+        record=context.get('customer_record')
+        if not record:raise ValueError('No selected customer record')
+        location_evidence += [record['property_name'],record['property_id'],record['unit']]
     matched=next((x for x in context.get('support_requests',[]) if x['id']==result.get('related_request_id','')),None)
     if matched:
         location_evidence+=[matched.get('original_message','')]+list((matched.get('maintenance_location') or {}).values())
@@ -428,6 +460,21 @@ def review_assessment(service,context,draft,planned_actions=None):
         'answer, justified handover or relevant next step; false for repeated '
         'unavailable questions or empty follow-up assurances while an approved useful '
         'step remains. Give one short factual improvement_reason when either is false. '
+        'A customer_record only supplies staff-selected location facts for the current case; '
+        'it is not identity proof or policy authority. Reject sensitive account actions or '
+        'policy exceptions based on this record. Reject applying its location when the '
+        'customer clearly describes another place/person, or requesting it for an unrelated '
+        'general question. Never infer a verified repair or dispatch from stored facts. '
+        'staff_work_updates verify only the recorded internal stage and checked note '
+        'for that particular issue. Internal acceptance is not external dispatch or '
+        'a visit booking. Any assertion of a work stage must cite its matching work '
+        'request ID in planned_actions.sources_used; a SOP cannot prove job progress. '
+        'If the customer only asks for progress and a checked update already answers '
+        'it, reject a NEW staff handover unless genuinely new danger or a decision '
+        'is required. Ask the reply agent to cite and relay the available update instead. '
+        'A WORK_DONE record may be described as staff-reported work '
+        'completion while asking for customer confirmation; it does not prove customer '
+        'satisfaction or final resolution, or authorise policy exceptions. '
         'Reject unverified operational promises, company rules not in SOP/staff evidence, dangerous '
         'repair instructions, private location requests for a general question, and photo diagnoses '
         'that are not supported. Asking the location of an already-reported physical fault is relevant. '

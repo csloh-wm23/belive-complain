@@ -28,6 +28,8 @@ STATIC={'/':'index.html','/index.html':'index.html','/assets/app.js':'assets/app
 STATIC['/assets/learning-ui.js']='assets/learning-ui.js'
 STATIC['/assets/whatsapp-ui.js']='assets/whatsapp-ui.js'
 STATIC['/assets/whatsapp-staff-ui.js']='assets/whatsapp-staff-ui.js'
+STATIC['/assets/customer-records-ui.js']='assets/customer-records-ui.js'
+STATIC['/assets/support-queue-ui.js']='assets/support-queue-ui.js'
 STATIC['/assets/shared-memory-ui.js']='assets/shared-memory-ui.js'
 STATIC['/assets/credential-settings-ui.js']='assets/credential-settings-ui.js'
 STATIC['/assets/fyp.css']='assets/fyp.css'
@@ -109,6 +111,9 @@ class Tasks:
     def pending_reply_feedback(self,case_id=None):
         if not hasattr(self.service.ai,'reply_improvement'):return
         with self.service.store.connect() as db:
+            current={t['id']:t['case_id'] for t in self.service.store.all(db,'wa_thread')}
+            open_cases={c['id'] for c in self.service.store.all(db,'case') if c['status'] not in {'CLOSED','ANSWERED','VERIFIED','SKIPPED'}}
+            if any(t['status'] in {'PENDING','PROCESSING'} and t['case_id'] in open_cases and current.get(t['thread_id'])==t['case_id'] for t in self.service.store.all(db,'wa_turn')):return
             pending=[x for x in self.service.store.all(db,'reply_learning')
                      if (not case_id or x['case_id']==case_id) and (x['status'] in {'PENDING','APPROVAL_QUEUED'} or x.get('preview_status')=='QUEUED')]
         for item in pending[:1]:self.reply_feedback(item['id'])
@@ -149,7 +154,8 @@ def make_handler(service,tasks=None):
     support_routes={'scan-all','import-review','import-review-batch','public-preview','public_followup','lesson_revoke','learning_start','learning_improve','intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
     support_routes.add('google-reply')
     support_routes.update({'reply_learning_scan','reply_learning_action'})
-    support_routes.update({'wa_simulate','wa_staff_reply','wa_staff_complete','wa_property'})
+    support_routes.update({'wa_simulate','wa_staff_reply','wa_staff_complete','wa_property','customer_profile_link'})
+    support_routes.add('maintenance_progress')
     class Handler(SimpleHTTPRequestHandler):
         def handle_one_request(self):
             with credential_scope(service.store.path):return super().handle_one_request()
@@ -350,7 +356,8 @@ def make_handler(service,tasks=None):
                     if route=='shared-memory-network':return self.json(200,shared_memory.network_status())
                     if route=='shared-memory-private-serve':return self.json(200,shared_memory.enable_private_service(service))
                     raise ValueError('Unknown shared memory action')
-                if route in {'wa_simulate','wa_knowledge','wa_staff_reply','wa_staff_complete','wa_property','wa_document_action'}:
+                if route in {'wa_simulate','wa_knowledge','wa_staff_reply','wa_staff_complete','wa_property','wa_document_action','customer_profile_save','customer_profile_link','maintenance_progress'}:
+                    if route=='maintenance_progress':p['_actor_name']=user['name']
                     result=service.command(route,p,key);tasks.memory_pending();tasks.whatsapp_pending();return self.json(200,result)
                 if route=='wa-signup-start':
                     from belive.meta_signup import new_link

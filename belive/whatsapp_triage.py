@@ -162,6 +162,12 @@ def apply_policy(assessment, draft, context, urgent=False):
     related=draft.get('related_request_id')
     verified_ids={g['id'] for g in context.get('staff_guidance',[]) if g.get('verified_solution')}
     continuing_verified=any(r.get('id')==related and r.get('status')=='ANSWERED' for r in context.get('support_requests',[]))
+    checked_work={r['id'] for r in context.get('staff_work_updates',[]) if r.get('state') in {'ACCEPTED','IN_PROGRESS','BLOCKED','WORK_DONE'}}
+    active_work=any(r.get('id')==related and r.get('status') in {'OPEN','ANSWERED'} for r in context.get('support_requests',[]))
+    if (not needs_staff and not private_policy and not context.get('explicit_staff_requested')
+            and assessment['severity'] in {'LOW','MEDIUM','HIGH'} and draft.get('handling') in {'ANSWER','CLARIFY'}
+            and active_work and related in checked_work and related in draft.get('sources_used',[])):
+        return assessment,draft,'VERIFIED_STAFF_GUIDANCE',None
     if (not needs_staff and not private_policy and not context.get('explicit_staff_requested')
             and assessment['severity'] in {'LOW','MEDIUM'} and draft.get('handling') in {'ANSWER','CLARIFY'}
             and continuing_verified and related in verified_ids and related in draft.get('sources_used',[])):
