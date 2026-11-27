@@ -29,23 +29,47 @@ class _Rejected(ValueError):
     pass
 
 
-def _authentication_detail(platform, error):
+def _graph_error_numbers(error):
     if not isinstance(error, HTTPError) or not 400 <= error.code < 500:
-        return ''
+        return None, None
     try:
         # Numeric fields are enough; provider messages can contain URLs or credential data.
         body = error.read(16_385)
-        if len(body) > 16_384: return ''
+        if len(body) > 16_384: return None, None
         parsed = json.loads(body).get('error', {})
         code, subcode = parsed.get('code'), parsed.get('error_subcode')
     except (ValueError, TypeError, AttributeError, OSError):
-        return ''
+        return None, None
+    return tuple(value if type(value) is int and 0 <= value < 2 ** 31 else None
+                 for value in (code, subcode))
+
+
+def _authentication_detail(platform, error, numbers=None):
+    code, subcode = _graph_error_numbers(error) if numbers is None else numbers
     if code != 190 or platform not in {'FACEBOOK', 'THREADS'}: return ''
     label = LABELS[platform]
     replacement = 'a new Page access token' if platform == 'FACEBOOK' else 'a new Threads access token'
     if subcode == 463:
         return label + ' access token expired. Save ' + replacement + ' in Connection settings, then try again.'
     return label + ' access token is invalid or no longer authorised. Save ' + replacement + ' in Connection settings, then try again.'
+
+
+def _platform_error_detail(platform, stage, error):
+    numbers = _graph_error_numbers(error)
+    authentication = _authentication_detail(platform, error, numbers)
+    if authentication: return authentication
+    code = numbers[0]
+    if platform != 'FACEBOOK' or code is None or not (code == 10 or 200 <= code <= 299):
+        return ''
+    if stage == 'POST_COMMENT':
+        return ('Facebook did not allow this Page reply. Re-authorise the app with '
+                'pages_manage_engagement and use a Page access token from someone with '
+                'the MODERATE Page task. Read permissions alone cannot send replies.')
+    if stage == 'PREFLIGHT':
+        return ('Facebook could not read or verify the selected Page/source. Check '
+                'pages_read_engagement, pages_read_user_content, the selected Page or post, '
+                'and this Page token’s access. No reply was sent.')
+    return ''
 
 
 def _api(url, token, payload=None):
@@ -296,14 +320,14 @@ def publish(service, p, actor, key):
                         result.update(status='POSTED', stage='COMPLETE', receipt_id=receipt['id'], detail='Threads confirmed the new reply ID. Check the original source for display or pending reply approval.')
     except Exception as exc:
         rejected = isinstance(exc, _Rejected) or isinstance(exc, HTTPError) and 400 <= exc.code < 500
-        authentication_detail = _authentication_detail(platform, exc)
+        platform_detail = _platform_error_detail(platform, result['stage'], exc)
         unknown = writing and not rejected
         # A published or otherwise unexpected container state may already represent a public write.
         if not writing and result.get('container_id') and not rejected:
             unknown = True
         result.update(status='UNKNOWN' if unknown else 'FAILED', retryable_container=bool(rejected and result.get('container_id') and result['stage'] == 'PUBLISH_CONTAINER'),
                       detail=('The platform outcome is unconfirmed. Check the original source; do not retry this send.' if unknown
-                              else authentication_detail if authentication_detail
+                              else platform_detail if platform_detail
                               else str(exc) if isinstance(exc, (_Blocked, _Rejected))
                               else 'The platform rejected the request or the exact source/account could not be verified. No confirmed reply was recorded.'))
     _save(service, case['id'], attempt, result, 'PUBLIC_REPLY_' + result['status'])

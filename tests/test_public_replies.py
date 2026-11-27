@@ -361,6 +361,50 @@ class PublicRepliesTests(unittest.TestCase):
             'Synthetic authentication failure', {}, io.BytesIO(b'{"error":{"code":190}}'))
         self.assertNotIn('expired', replies._authentication_detail('THREADS', unclassified))
 
+    def test_facebook_post_permission_errors_explain_required_grant_without_retry_or_raw_secrets(self):
+        self.case = self.seed('FACEBOOK');self.source_text = self.case['description']
+        original = self.api
+        for http_code in [400, 403]:
+            with self.subTest(http_code=http_code):
+                def permission_error(url, token, payload=None, **kw):
+                    if payload is not None:
+                        self.requests.append((url, payload, 'POST'))
+                        body = json.dumps({'error': {'code': 200,
+                            'message': 'fixture-private-provider-message fixture-token-not-a-real-secret'}}).encode()
+                        raise HTTPError(url, http_code, 'Synthetic permission failure', {}, io.BytesIO(body))
+                    return original(url, token, payload=payload, **kw)
+                self.net.side_effect = permission_error
+                payload = self.payload();key = 'fixture-permission-' + str(http_code)
+                before = len(self.writes())
+                result = self.send(payload, key=key)
+                self.assertEqual(result['status'], 'FAILED')
+                self.assertEqual(result['stage'], 'POST_COMMENT')
+                self.assertIn('pages_manage_engagement', result['detail'])
+                self.assertIn('MODERATE Page task', result['detail'])
+                self.assertNotIn('fixture-private-provider-message', str(result))
+                self.assertNotIn('fixture-token-not-a-real-secret', str(result))
+                self.assertEqual(len(self.writes()), before + 1)
+                count = self.net.call_count
+                self.assertEqual(self.send(payload, key=key), result)
+                self.assertEqual(self.net.call_count, count)
+
+    def test_facebook_preflight_permission_error_names_read_access_and_never_posts(self):
+        self.case = self.seed('FACEBOOK')
+        body = json.dumps({'error': {'code': 10,
+            'message': 'fixture-private-provider-message fixture-token-not-a-real-secret'}}).encode()
+        self.net.side_effect = HTTPError('https://graph.facebook.com/v27.0/me', 403,
+            'Synthetic read permission failure', {}, io.BytesIO(body))
+        payload = self.payload();result = self.send(payload)
+        self.assertEqual(result['status'], 'FAILED');self.assertEqual(result['stage'], 'PREFLIGHT')
+        self.net.assert_called_once();self.assertEqual(self.net.call_args.kwargs['method'], 'GET')
+        self.assertIn('pages_read_engagement', result['detail'])
+        self.assertIn('pages_read_user_content', result['detail'])
+        self.assertIn('selected Page/source', result['detail'])
+        self.assertNotIn('pages_manage_engagement', result['detail'])
+        self.assertNotIn('fixture-private-provider-message', str(result))
+        self.assertNotIn('fixture-token-not-a-real-secret', str(result))
+        self.assertEqual(self.send(payload), result);self.net.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()
