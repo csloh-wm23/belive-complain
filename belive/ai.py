@@ -70,7 +70,14 @@ class SupportAI:
 
     def generate(self,role,instruction,context,examples):
         from belive.relevance import LOCATION_POLICY
-        instruction += '\n'+LOCATION_POLICY
+        if role == 'Public Reply Preview Agent':
+            instruction += ('\nFor a public technical clarification, device brand/model and the display code '
+                            'come before operational location details. A manual lookup needs no building, '
+                            'private unit or room number. Do not replace the requested diagnostic question '
+                            'with a location question or generic contact-support sentence. Ask for private '
+                            'operational details only when they are actually needed for staff follow-up.')
+        else:
+            instruction += '\n'+LOCATION_POLICY
         if not self.readiness(): raise RuntimeError('AI_NOT_CONFIGURED')
         if role == 'Complaint Analysis Agent' and decisions.enabled(self.settings):
             return decisions.triage(self.settings, context, instruction)
@@ -135,6 +142,16 @@ class SupportAI:
         if role in {'Public Reply Preview Agent', 'Learning Reply Agent'}:
             shape = {'type':'object','properties':{'reply':{'type':'string'}},
                      'required':['reply'],'additionalProperties':False}
+        if role == 'Public Diagnostic Details Agent':
+            props = {
+                'device':{'type':'string','enum':['WASHING_MACHINE','DRYER','REFRIGERATOR','AIR_CONDITIONER','ROUTER','OTHER','NONE']},
+                'brand':{'type':'string'},'model':{'type':'string'},'error_code':{'type':'string'},'ready':{'type':'boolean'},
+            }
+            shape = {'type':'object','properties':props,'required':list(props),'additionalProperties':False}
+        if role == 'Public Diagnostic Safety Agent':
+            props = {key:{'type':'boolean'} for key in ('safe','grounded','model_compatible','uncertainty')}
+            props['unsupported_claims'] = {'type':'array','items':{'type':'string'}}
+            shape = {'type':'object','properties':props,'required':list(props),'additionalProperties':False}
         if role == 'Customer Conversation Agent':
             shape={'type':'object','properties':{
                 'response':{'type':'string'},'needs_staff':{'type':'boolean'},
@@ -164,53 +181,72 @@ class SupportAI:
             examples=[{'version_id':e['id'],'approved_reply':e['text']} for e in examples],
             home=self.home,max_steps=5,response_schema=shape,observer=self.execution_observer,role=role)
     def public_reply_preview(self, context):
-        high = context.get('complaint_level') == 'HIGH'
-        if high:
-            instruction = (
-                'Draft the opening of a public reply in BeLive’s voice. Return exactly {"reply":"..."}. '
-                'In two or three short sentences, apologise and name the concrete issues in this report. Use the '
-                'assessment summary as a checklist and confirm details against the report. Name the service or '
-                'facility affected, what the tenant said went wrong, and any difficulty getting a response. '
-                'Use the actual utility or appliance names from the report when available. '
-                'For payment disputes, acknowledge the service interruption and keep account details, including '
-                'the timing or status of any payment, private. Leave the cause open for staff to check. '
-                'Good tone on a different case: “We’re sorry the washing machine broke down and you struggled '
-                'to get an update. You should be able to get clear help when something in your home stops working.” '
-                'Use that style with this case’s actual details. Leave out names of people, addresses, unit and '
-                'account details, and durations. Keep it grounded in what the reviewer reported. '
-                'The app adds the private contact step. Do not ask for information, give links or advice, '
-                'or promise or claim that work, account changes or refunds have happened.'
-            )
-        else:
-            instruction = (
-                'Draft a public reply for staff review. Return exactly {"reply":"..."}. '
-                'Write exactly one sentence thanking the reviewer for reporting their specific concerns. '
-                'Keep the wording about what was reported, without implying findings or adding durations. '
-                'The interface adds the instruction to contact support privately. '
-                'Do not request any information or give instructions, links, guarantees, timelines or promises of action.'
-            )
+        instruction = (
+            'Write the COMPLETE public reply in BeLive’s voice for staff review. Return exactly {"reply":"..."}. '
+            'Use natural, case-specific wording, usually two to four short sentences. There is no fixed opener or footer. '
+            'For a service failure, apologise briefly for the specific problem and acknowledge its impact. '
+            'Use the assessment summary as a checklist, but confirm every detail against the original report '
+            'and recorded customer follow-ups. Address the latest follow-up rather than restarting the conversation. '
+            'Acknowledge repeated reports, time spent waiting or failed checks when the customer actually mentions them. '
+            'Do not reduce the reply to thanking them and telling them to contact support. '
+            'Choose a useful next step. For an appliance or router fault without sufficient details, ask for the '
+            'exact display error (or whether there is no code), brand and model, requesting only what is still missing. '
+            'These non-private device details can be supplied in the conversation. Do not ask for a private room '
+            'number for shared equipment or repeat checks the customer has already tried. '
+            'If research_state is RESEARCH_READY, use only the supplied manufacturer evidence and confirmed device '
+            'details for simple user-level checks. Do not invent code meanings, claim an exact manual match without '
+            'evidence, open equipment, bypass locks or interlocks, or instruct electrical/internal repairs. '
+            'Otherwise ask a focused clarifying question; do not invent a technical solution from model memory. '
+            'If exact device details were supplied but no matching source was found, say that briefly and ask '
+            'about the observable symptoms or checks already tried instead of asking for the same model/code again. '
+            'For HIGH risk, acknowledge the urgent reported concern and retain staff handling; do not troubleshoot. '
+            'For account, payment or personal matters, ask to continue privately and refer to existing reports or '
+            'the earlier conversation when available. Do not invent a tenant app, channel URL or staff action. '
+            'Do not expose names, addresses, contact/account details, passwords or access codes publicly. '
+            'Acknowledge reported utility interruptions without asserting a payment cause or payment status. '
+            'Never claim or promise a repair, refund, dispatch, appointment, escalation, notification or resolution. '
+            'No URLs or signature in the reply; verified research citations are displayed separately.'
+        )
+        if context.get('research_state') == 'NEEDS_DETAILS':
+            instruction += (' The next step in this reply must ask for the missing appliance/router brand, exact '
+                            'model and displayed error code (or confirmation of no code), based on research_details. '
+                            'Request only missing values and do not substitute a location or contact-support question.')
+        if context.get('research_clarification'):
+            instruction += (' The manufacturer evidence needs clarification before advice can be used. '
+                            'Use research_clarification to ask for the actual missing '
+                            'detail, such as a full model suffix. Do not repeat the brand/code already given. '
+                            'Give no troubleshooting instructions in this clarification draft. If no device detail '
+                            'is missing, ask about the observable symptom or checks already tried instead.')
+        if context.get('diagnostic_review_feedback'):
+            instruction += (' The proposed guidance was not accepted by the evidence review. Give no technical '
+                            'instructions or code interpretation. The customer has already supplied the details '
+                            'in research_details; do not ask them to confirm the same brand, model, suffix or '
+                            'error code again. Briefly explain that reliable applicable guidance could not be '
+                            'confirmed, then ask one relevant question about the symptoms or checks already tried '
+                            'so the existing staff review can continue. Do not claim staff action occurred.')
         result = self.generate('Public Reply Preview Agent', instruction, context, [])
-        if set(result) != {'reply'}:
+        if not isinstance(result,dict) or set(result) != {'reply'} or not isinstance(result['reply'],str):
             raise ValueError('AI_INVALID_PLAN')
-        acknowledgement = bounded(result['reply'], 20, 420)
-        if not high:
-            acknowledgement = re.split(r'(?<=[.!?。！？])\s+', acknowledgement, maxsplit=1)[0]
-        if re.search(r'https?://|www\.|\[(?:email|number) removed\]|\b(?:password|otp|guarantee)\b',
-                     acknowledgement, re.I):
+        reply = bounded(result['reply'], 20, 1500)
+        if re.search(r'https?://|www\.|\[(?:email|number) removed\]|\b(?:password|otp|guarantee)\b', reply, re.I):
             raise ValueError('AI_UNSAFE_OUTPUT')
-        if high:
-            # Keep reported interruptions separate from unverified payment status or causes.
-            acknowledgement = re.sub(
-                r'\s+(?:due to|because of|for)\s+(?:(?:a|an|the|your)\s+)?'
-                r'(?:payments?\s+(?:issue|dispute|delay)|(?:late|missed|overdue)\s+payments?)\b',
-                '', acknowledgement, flags=re.I,
-            )
-            if re.search(r"\b(?:we(?: have|['’]ve) (?:already )?(?:repaired|fixed|restored|refunded)"
-                         r"|refund (?:has been|is) (?:issued|approved))\b", acknowledgement, re.I):
+        unsafe_claims = (
+            r"\b(?:we(?: have|['’]ve| already| will|['’]ll) (?:already )?(?:repaired|fixed|restored|refunded|dispatched|notified|sent|arranged|repair|fix|restore|refund|dispatch|notify|send|arrange)"
+            r"|(?:refund|repair|technician|maintenance visit) (?:has been|is|was) (?:issued|approved|completed|scheduled|dispatched))\b"
+            r'|\b(?:due to|because of|for)\s+(?:(?:a|an|the|your)\s+)?(?:payments?\s+(?:issue|dispute|delay)|(?:late|missed|overdue)\s+payments?)\b'
+            r'|已(?:经)?(?:修好|修复|退款|派人|通知)|\bsudah (?:dibaiki|dipulihkan|dihantar|dipulangkan)\b'
+        )
+        if re.search(unsafe_claims, reply, re.I):
+            raise ValueError('AI_UNSAFE_OUTPUT')
+        for sentence in re.split(r'[.!?。！？\n]',reply):
+            sensitive = re.search(r'\b(?:room|unit|account|phone|contact) (?:number|details)\b|\baddress\b|房号|电话号码|地址',sentence,re.I)
+            request = re.search(r'\b(?:post|share|provide|tell|send|give|include)\b|请|提供|告诉',sentence,re.I)
+            private = re.search(r'\bprivate(?:ly)?\b|私信|私下|secara peribadi',sentence,re.I)
+            if sensitive and request and not private:
                 raise ValueError('AI_UNSAFE_OUTPUT')
-            return (acknowledgement + '\n\nPlease share your unit details and a way to reach you privately '
-                    'through the BeLive tenant app so our team can review your case and follow up with you directly.')
-        return acknowledgement + ' Please contact BeLive tenant support privately so the team can review your report.'
+        if re.search(r'\b(?:open|remove|unscrew).{0,30}(?:panel|casing)|\b(?:bypass|bridge).{0,25}(?:lock|interlock|fuse)|\blive (?:wires?|wiring)\b',reply,re.I):
+            raise ValueError('AI_UNSAFE_OUTPUT')
+        return reply
 
     def reply_improvement(self,question,reply,customer_feedback):
         result=self.generate('Reply Feedback Learning Agent',

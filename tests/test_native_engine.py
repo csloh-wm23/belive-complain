@@ -34,4 +34,38 @@ class NativeEngineTests(unittest.TestCase):
     def test_direct_transport_requires_an_explicit_legacy_selection(self):
         settings=self.settings();settings.agent_engine='direct';self.assertTrue(hosted_ai.uses_direct_api(settings))
 
+    def test_public_preview_uses_native_role_without_examples_or_direct_transport(self):
+        settings = self.settings()
+        context = {'complaint_level': 'MODERATE', 'report': 'The shared washer will not spin.',
+                   'assessment_summary': 'Reported washer fault after an earlier request.'}
+        expected = (
+            'We’re sorry the washer is still not spinning after your earlier report. '
+            'What brand and model is it, and is an error code showing?'
+        )
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch('belive.ai.runtime_python', return_value='fixture-native-runtime'), \
+                patch('belive.ai.native_request', return_value={'text': json.dumps({'reply': expected})}) as native, \
+                patch('belive.hosted_ai.urlopen', side_effect=AssertionError('Unexpected direct transport')) as direct:
+            reply = SupportAI(settings, Path(tmp) / 'memory').public_reply_preview(context)
+        self.assertEqual(reply, expected)
+        native.assert_called_once()
+        direct.assert_not_called()
+        self.assertEqual(native.call_args.kwargs['role'], 'Public Reply Preview Agent')
+        self.assertEqual(native.call_args.kwargs['examples'], [])
+        self.assertEqual(native.call_args.kwargs['dispatch']('read_reviewed_styles', {}), {'styles': []})
+        self.assertEqual(json.loads(native.call_args.args[0][1]['content']), context)
+        self.assertNotIn(settings.llm_api_key, json.dumps(native.call_args.args[0]))
+
+    def test_public_preview_missing_native_runtime_never_returns_a_fallback_draft(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch('belive.ai.runtime_python', side_effect=RuntimeError('HERMES_NOT_INSTALLED')), \
+                patch('belive.ai.native_request') as native, \
+                patch('belive.hosted_ai.urlopen', side_effect=AssertionError('Unexpected direct fallback')) as direct:
+            with self.assertRaises(RuntimeError):
+                SupportAI(self.settings(), Path(tmp) / 'memory').public_reply_preview({
+                    'complaint_level': 'MODERATE', 'report': 'The shared washer will not spin.',
+                })
+        native.assert_not_called()
+        direct.assert_not_called()
+
 if __name__=='__main__':unittest.main()

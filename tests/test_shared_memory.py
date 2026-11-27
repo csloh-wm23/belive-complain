@@ -9,7 +9,7 @@ from belive.service import Service
 from belive import shared_memory as sm,whatsapp as wa
 from belive.memory_hub import Hub,serve
 from test_backend import FakeAI
-from test_whatsapp import plan
+from test_whatsapp import fixture_assessment,plan
 
 class SharedMemoryTests(unittest.TestCase):
     def setUp(self):
@@ -107,7 +107,18 @@ class SharedMemoryTests(unittest.TestCase):
         doc=self.shared(self.b,'document')[0];self.assertEqual(document_path(self.b,doc).read_bytes(),source.read_bytes());self.assertEqual(len(self.shared(self.b,'sop')),1)
     def test_hermes_on_peer_receives_the_common_experience_and_tip(self):
         self.seed_learning();self.pair(self.a,0);self.pair(self.b,1);r=self.cmd(self.b,'wa_simulate',customer='qa',text='My Wi-Fi disconnects, what can I check?')
-        with patch('belive.whatsapp_ai.reply',return_value=plan()) as reply,patch('belive.whatsapp_ai.review',return_value=True):wa.process_thread(self.b,r['thread_id'])
-        ctx=reply.call_args.args[1];self.assertEqual(ctx['approved_experiences'][0]['id'],'SHARED-EXP-A');self.assertEqual(ctx['reviewed_writing_tips'][0]['id'],'SHARED-TIP-A')
+        with patch('belive.whatsapp_triage.assess',side_effect=fixture_assessment) as assessment, \
+                patch('belive.whatsapp_ai.reply',return_value=plan()) as reply, \
+                patch('belive.whatsapp_ai.review',return_value=True), \
+                patch('belive.hosted_ai.generate',side_effect=AssertionError('Unexpected provider call')) as provider:
+            wa.process_thread(self.b,r['thread_id'])
+        assessment.assert_called_once()
+        reply.assert_called_once()
+        provider.assert_not_called()
+        ctx=reply.call_args.args[1]
+        self.assertEqual(ctx['approved_experiences'][0]['id'],'SHARED-EXP-A')
+        self.assertEqual(ctx['reviewed_writing_tips'][0]['id'],'SHARED-TIP-A')
+        self.assertEqual(self.rows(self.b,'wa_staff'),[])
+        self.assertEqual(self.rows(self.b,'wa_outgoing')[0]['status'],'SIMULATED')
 
 if __name__=='__main__':unittest.main()

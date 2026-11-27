@@ -47,12 +47,20 @@ The current measured public rehearsal produced MODERATE and staff handling. That
 
 ## Show the separate reply agent
 
-1. Open **Public reply preview** and generate or inspect its actual tailored wording.
+1. Open **Public reply preview** and choose **Prepare reply** (or **Rewrite reply** for an earlier saved draft).
 2. Show **Public Reply Preview Agent** separately from **Complaint Analysis Agent**. Analysis and composition are distinct jobs.
-3. Explain how the preview acknowledges the reported concern and offers private follow-up without exposing personal case details or promising unverified work.
+3. Explain how the preview acknowledges the reported concern and asks a useful next question. An appliance complaint can ask for its exact brand/model and display code instead of repeating a generic contact-support sentence. Private details stay private and the draft promises no work or resolution.
 4. Leave the public publish control disabled during testing.
 
 The measured native run used four model calls across those two roles. It saved a tailored preview and did not send a public response or customer message. Detailed source identifiers and screenshots stay private.
+
+## Continue after the customer provides details
+
+Use **Customer answered? Add their reply** on the same case. Paste the observed customer text and, when available, its original same-platform link. Choose **Rewrite reply** once; it records the follow-up and then prepares the next draft. This is a staff-recorded observation, not automatic author identification or evidence that a previous draft was posted.
+
+With an exact supported appliance brand/model and customer-typed error code (or an explicit statement that there is no code), Hermes can search the configured official manufacturer sources. The source-backed draft must pass a separate native safety and model-compatibility check. Open **Manufacturer sources used** to inspect the evidence. Missing details or unavailable matching evidence lead to a focused question rather than an invented fix. HIGH/danger bypasses routine diagnostics. MODERATE cases remain visible to staff while AI gathers details or prepares safe assistance.
+
+The collector does not yet attach an arbitrary later Google/Facebook/Threads item to a customer conversation automatically. Real private WhatsApp support uses its existing same-conversation research workflow. Keep public drafts in preview during testing. These current workflow steps do not replace or rescore the historical four-call rehearsal above.
 
 ## Demonstrate reviewed learning
 

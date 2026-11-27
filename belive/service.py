@@ -23,6 +23,7 @@ COMMANDS.update({'reply_learning_scan','reply_learning_action'})
 COMMANDS.update({'wa_simulate','wa_knowledge','wa_staff_reply','wa_staff_complete','wa_property'})
 COMMANDS.add('wa_document_action')
 COMMANDS.add('wa_channel')
+COMMANDS.add('public_followup')
 
 PROPERTY_DIRECTORY = Path(__file__).resolve().parents[1] / 'assets' / 'property-directory.json'
 
@@ -173,6 +174,9 @@ class Service:
             from belive.conversations import conversation
             for case in result['cases']:
                 case['conversation']=conversation(self.store,db,case)
+                from belive import public_preview
+                case['public_followups']=self.public_followups(db,case['id'])
+                case['public_preview_current']=public_preview.is_current(case,case['public_followups'])
                 case['can_contact_customer']=bool(case['tenant_id'] or self.has_complaint_access(db,case,browser_only=True))
                 case['activity']=[dict(r) for r in db.execute('SELECT * FROM events WHERE entity=? ORDER BY id DESC LIMIT 100',(case['id'],))]
                 active=case['status'] not in {'CLOSED','SKIPPED','VERIFIED','ANSWERED'}
@@ -338,6 +342,29 @@ class Service:
             db.execute('INSERT INTO requests VALUES(?,?)',(key,json.dumps({'fingerprint':fingerprint,'result':cached})))
             return result
     def _command(self,db,name,p):
+        if name=='public_followup':
+            from belive.connectors import public_link_platform
+            case=self.store.get(db,'case',p.get('id'))
+            require(case['revision']==p.get('revision'),'Case changed. Refresh before recording a customer reply.')
+            require(case.get('entrypoint')=='PUBLIC_SOURCE' and case['platform'] in {'GOOGLE','FACEBOOK','THREADS'},'Choose a public platform complaint')
+            require(case['status'] not in {'CLOSED','SKIPPED','VERIFIED','ANSWERED'},'Reopen this complaint before adding a customer reply')
+            text=bounded(p.get('text'),1,3000)
+            source_url=p.get('source_url') or ''
+            require(isinstance(source_url,str) and len(source_url)<=2000,'Use a valid public reply link')
+            if source_url:
+                require(public_link_platform(source_url)==case['platform'],'Use a reply link from the same platform')
+            previous=self.public_followups(db,case['id'])
+            if previous and previous[-1]['text']==text and previous[-1]['source_url']==source_url:
+                return {'id':case['id'],'followup_id':previous[-1]['id'],'revision':case['revision']}
+            item={'id':uid('PUB'),'case_id':case['id'],'text':text,'source_url':source_url,
+                  'recorded_by':p.get('_actor','operator'),'created_at':now(),'provenance':'OPERATOR_RECORDED_PUBLIC_FOLLOWUP'}
+            self.store.put(db,'public_followup',item)
+            self.store.event(db,case['id'],'PUBLIC_FOLLOWUP_RECORDED','Observed public reply recorded by '+item['recorded_by'])
+            if risk(text):
+                case['severity']='CRITICAL'
+                self.handoff(db,case,'Customer follow-up reports a potential immediate safety risk')
+            case['revision']+=1;case['updated_at']=now();self.store.put(db,'case',case)
+            return {'id':case['id'],'followup_id':item['id'],'revision':case['revision']}
         if name=='wa_document_action':
             from belive.company_sop import document_action
             return document_action(self,db,p)
@@ -666,7 +693,12 @@ class Service:
             self.store.event(db,case['id'],'BROWSER_REVIEW_IMPORTED',actor+': one visible Google Maps review, '+label)
             return case,True
 
+    def public_followups(self, db, case_id):
+        return sorted((item for item in self.store.all(db,'public_followup') if item['case_id']==case_id),
+                      key=lambda item:item['created_at'])
+
     def prepare_public_preview(self, case_id, revision, actor):
+        from belive import public_preview, public_diagnostics
         with self.lock, self.store.connect() as db:
             case = self.store.get(db, 'case', case_id)
             require(case['revision'] == revision, 'Case changed. Refresh it before preparing a preview.')
@@ -676,12 +708,23 @@ class Service:
             require(assessment.get('report_type') == 'COMPLAINT' and assessment.get('relevance') == 'SUPPORT'
                     and not assessment.get('uncertainty') and case['status'] not in {'CLOSED', 'SKIPPED', 'VERIFIED', 'ANSWERED'},
                     'A confirmed, active public complaint assessment is required')
-            context = {'title': case['title'], 'report': case['description'], 'category': case['category'],
-                       'complaint_level': complaint_level(case)}
-            if context['complaint_level'] == 'HIGH':
-                context['assessment_summary'] = assessment.get('summary', '')
+            context = public_preview.context(case,self.public_followups(db,case_id))
+            input_fingerprint = public_preview.fingerprint(context)
         try:
+            diagnostic = public_diagnostics.prepare(self,context)
+            context.update(research_state=diagnostic['state'],research_details=diagnostic['details'],
+                           research_summary=diagnostic['research_summary'],research_sources=diagnostic['sources'],
+                           research_clarification=diagnostic.get('clarification',''))
             reply = self.ai.public_reply_preview(context)
+            try:
+                public_diagnostics.validate_reply(self,context,reply)
+            except public_diagnostics.DiagnosticReviewFailure as rejected:
+                # Rejected evidence is not proof that confirmed customer details are missing.
+                diagnostic.update(state=rejected.fallback_state,research_summary='',
+                                  checked_sources=diagnostic['sources'],sources=[],review_feedback=rejected.review)
+                context.update(research_state=diagnostic['state'],research_details=diagnostic['details'],
+                               research_summary='',research_sources=[],diagnostic_review_feedback=rejected.review)
+                reply = self.ai.public_reply_preview(context)
         except Exception as exc:
             raise ValueError(FAILURE_MESSAGES[failure_code(exc)]) from exc
         with self.lock, self.store.connect() as db:
@@ -691,6 +734,12 @@ class Service:
             current['public_reply_preview'] = {
                 'text': reply, 'agent': 'Public Reply Preview Agent', 'at': now(),
                 'source_version': current['source_versions'][-1],
+                'format_version':public_preview.VERSION,'input_fingerprint':input_fingerprint,
+                'research_state':diagnostic['state'],'device_details':diagnostic['details'],
+                'sources':diagnostic['sources'],
+                'checked_sources':diagnostic.get('checked_sources',[]),
+                'research_clarification':diagnostic.get('clarification',''),
+                'diagnostic_review':diagnostic.get('review_feedback'),
             }
             current['revision'] += 1
             self.store.put(db, 'case', current)

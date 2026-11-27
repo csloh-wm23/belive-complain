@@ -4,6 +4,7 @@ import hmac
 import json
 import os
 import secrets
+import socket
 import threading
 import webbrowser
 from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
@@ -33,6 +34,16 @@ STATIC['/assets/fyp.css']='assets/fyp.css'
 STATIC['/assets/workspace-v2.css']='assets/workspace-v2.css'
 STATIC['/assets/workspace-v2.js']='assets/workspace-v2.js'
 STATIC['/assets/property-directory.json']='assets/property-directory.json'
+
+class LocalHTTPServer(ThreadingHTTPServer):
+    # Windows address reuse can leave two versions silently serving the same port.
+    allow_reuse_address = os.name != 'nt'
+    allow_reuse_port = False
+
+    def server_bind(self):
+        if os.name == 'nt' and hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 class Tasks:
     def __init__(self,service):self.service=service;self.running=set();self.lock=threading.Lock();self.stop=threading.Event()
@@ -135,7 +146,7 @@ def make_handler(service,tasks=None):
     from belive.credentials import apply as apply_credentials
     apply_credentials(service)
     tasks=tasks or Tasks(service);access=Access(service);csrf=secrets.token_urlsafe(32)
-    support_routes={'scan-all','import-review','import-review-batch','public-preview','lesson_revoke','learning_start','learning_improve','intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
+    support_routes={'scan-all','import-review','import-review-batch','public-preview','public_followup','lesson_revoke','learning_start','learning_improve','intake','case_action','feedback','approve_message','reject_message','analyse','deliver','tick'}
     support_routes.add('google-reply')
     support_routes.update({'reply_learning_scan','reply_learning_action'})
     support_routes.update({'wa_simulate','wa_staff_reply','wa_staff_complete','wa_property'})
@@ -378,6 +389,8 @@ def make_handler(service,tasks=None):
                     return self.json(200,publish(service,p,user['id'],key))
                 if route=='public-preview':
                     return self.json(200,service.prepare_public_preview(p.get('id'),p.get('revision'),user['id']))
+                if route=='public_followup':
+                    return self.json(200,service.command(route,{**p,'_actor':user['id']},key))
                 if route=='analyse':
                     with service.store.connect() as db:c=service.store.get(db,'case',p.get('id'))
                     if c['severity'] in {'HIGH','CRITICAL'}:raise ValueError('Safety risk requires staff handling')
@@ -421,7 +434,7 @@ def main():
     restore_repository_memory(service)
     from belive import shared_memory
     shared_memory.start_host(service);tasks.memory_pending()
-    with ThreadingHTTPServer(('127.0.0.1',args.port),make_handler(service,tasks)) as server:
+    with LocalHTTPServer(('127.0.0.1',args.port),make_handler(service,tasks)) as server:
         thread=threading.Thread(target=tasks.loop,daemon=True);thread.start()
         url=f'http://127.0.0.1:{args.port}';print('BeLive tenant support: '+url,flush=True)
         print('Database: '+str(service.store.path.resolve()),flush=True)

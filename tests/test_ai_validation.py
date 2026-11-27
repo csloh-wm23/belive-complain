@@ -105,36 +105,126 @@ class AIValidationTests(unittest.TestCase):
         with s.store.connect() as db:
             persisted=[s.store.all(db,'case'),s.store.all(db,'job'),s.store.audit(db)]
         self.assertNotIn(secret,json.dumps(persisted))
-    def test_high_public_preview_keeps_full_acknowledgement_and_private_next_step(self):
-        context = {'complaint_level': 'HIGH', 'report': 'We lost power and got no update.'}
-        acknowledgement = (
-            "We’re sorry about the power interruption and the lack of updates you described. "
-            "We understand how disruptive that was."
-        )
-        with patch.object(self.ai, 'generate', return_value={'reply': acknowledgement}):
-            reply = self.ai.public_reply_preview(context)
-        body, next_step = reply.split('\n\n')
-        self.assertEqual(body, acknowledgement)
-        self.assertIn('privately through the BeLive tenant app', next_step)
+    def test_public_preview_preserves_complete_case_specific_reply_at_every_level(self):
+        examples = [
+            ('SIMPLE', 'My phone cannot connect to Wi-Fi, but my laptop works.',
+             'Sorry your phone cannot connect while your laptop still works. '
+             'What phone model are you using, and is an error message shown when you try to connect?'),
+            ('MODERATE', 'The shared washing machine has not spun for five days despite my earlier report.',
+             'We’re sorry the washing machine is still unusable after your earlier report. '
+             'What brand and model is it, and is an error code showing on the display?'),
+            ('HIGH', 'We lost power and got no update.',
+             'We’re sorry about the power interruption and lack of updates you reported.\n\n'
+             'Please contact BeLive tenant support privately so staff can review the situation.'),
+        ]
+        for level, report, expected in examples:
+            with self.subTest(level=level), patch.object(self.ai, 'generate', return_value={'reply': expected}):
+                reply = self.ai.public_reply_preview({'complaint_level': level, 'report': report})
+            self.assertEqual(reply, expected)
 
-    def test_high_public_preview_leaves_payment_attribution_for_staff(self):
-        context = {'complaint_level': 'HIGH', 'report': 'My electricity was cut off.'}
-        acknowledgement = (
-            "We’re sorry your electricity was cut off due to a payment issue. "
-            "It sounds like you also had trouble reaching the team."
+    def test_public_preview_does_not_append_an_unrequested_contact_footer(self):
+        expected = (
+            'We’re sorry the washer is still not spinning and that your earlier report has not helped. '
+            'Could you share the brand, model and any error code visible on the display?'
         )
-        with patch.object(self.ai, 'generate', return_value={'reply': acknowledgement}):
-            reply = self.ai.public_reply_preview(context)
-        self.assertIn('electricity was cut off.', reply)
-        self.assertIn('trouble reaching the team', reply)
-        self.assertNotIn('payment issue', reply)
+        context = {'complaint_level': 'MODERATE', 'report': 'Our shared washer is still not spinning.'}
+        with patch.object(self.ai, 'generate', return_value={'reply': expected}):
+            self.assertEqual(self.ai.public_reply_preview(context), expected)
 
-    def test_high_public_preview_checks_the_full_acknowledgement(self):
-        context = {'complaint_level': 'HIGH', 'report': 'We lost power and got no update.'}
-        with patch.object(self.ai, 'generate',
-                          return_value={'reply': "We’re sorry about the power interruption. We've already restored it."}):
-            with self.assertRaisesRegex(ValueError, 'AI_UNSAFE_OUTPUT'):
-                self.ai.public_reply_preview(context)
+    def test_public_preview_keeps_a_complete_reply_longer_than_the_old_opening_limit(self):
+        expected = (
+            'We’re sorry the shared washer has remained unusable after your earlier report, especially '
+            'when you need it for your normal laundry and have already tried to get an update. '
+            'Could you share its brand and model, any error code on the display, and whether it starts '
+            'filling with water but stops before spinning or does not start at all? '
+            'Those details can help identify the relevant manual information without guessing which '
+            'appliance you have or assuming what caused the fault.'
+        )
+        self.assertGreater(len(expected), 420)
+        context = {'complaint_level': 'MODERATE', 'report': 'The shared washer is unusable after an earlier report.'}
+        with patch.object(self.ai, 'generate', return_value={'reply': expected}):
+            self.assertEqual(self.ai.public_reply_preview(context), expected)
+
+    def test_public_preview_rejects_invalid_reply_objects(self):
+        for result in [None, [], ['not a reply'], 'not an object', {},
+                       {'reply': 'A valid-looking reply.', 'extra': 'unexpected field'},
+                       {'reply': None}, {'reply': 123}, {'reply': ['not text']},
+                       {'reply': ''}, {'reply': ' '}, {'reply': 'x' * 1501}]:
+            with self.subTest(result=result), patch.object(self.ai, 'generate', return_value=result):
+                with self.assertRaises(ValueError):
+                    self.ai.public_reply_preview({'complaint_level': 'MODERATE', 'report': 'The washer will not spin.'})
+
+    def test_public_preview_rejects_unverified_payment_causes_at_every_level(self):
+        for level in ['SIMPLE', 'MODERATE', 'HIGH']:
+            for cause in ['due to a payment issue', 'because of overdue payments', 'for missed payments']:
+                context = {'complaint_level': level,
+                           'report': 'My electricity was cut off even though I say I already paid my bill.'}
+                reply = 'We’re sorry your electricity was cut off ' + cause + '. What happened when you contacted support?'
+                with self.subTest(level=level, cause=cause), patch.object(self.ai, 'generate', return_value={'reply': reply}):
+                    with self.assertRaisesRegex(ValueError, 'AI_UNSAFE_OUTPUT'):
+                        self.ai.public_reply_preview(context)
+
+    def test_public_preview_can_acknowledge_a_disputed_interruption_without_an_account_finding(self):
+        expected = (
+            'We’re sorry about the electricity interruption and lack of updates you described. '
+            'Please contact tenant support privately so staff can review the account details with you.'
+        )
+        context = {'complaint_level': 'HIGH', 'report': 'My electricity was cut off. I say my bill is paid, but I got no update.'}
+        with patch.object(self.ai, 'generate', return_value={'reply': expected}):
+            self.assertEqual(self.ai.public_reply_preview(context), expected)
+
+    def test_public_preview_checks_later_sentences_for_claimed_or_promised_work_at_every_level(self):
+        unsafe_endings = [
+            "We've already repaired the washing machine.",
+            'We have restored the electricity.',
+            'Your refund has been approved.',
+            'Our technician has been dispatched to fix it.',
+            'We will repair it tomorrow.',
+        ]
+        for level in ['SIMPLE', 'MODERATE', 'HIGH']:
+            for ending in unsafe_endings:
+                with self.subTest(level=level, ending=ending), patch.object(
+                        self.ai, 'generate', return_value={'reply': 'We’re sorry about the issue you reported. ' + ending}):
+                    with self.assertRaisesRegex(ValueError, 'AI_UNSAFE_OUTPUT'):
+                        self.ai.public_reply_preview({'complaint_level': level, 'report': 'The machine stopped working.'})
+
+    def test_public_preview_rejects_links_secrets_and_public_private_detail_requests_at_every_level(self):
+        unsafe_endings = [
+            'Read https://example.invalid/manual for instructions.',
+            'Please post your password or OTP here.',
+            'Please post your unit number and account number publicly.',
+            'Email fictional-user@example.invalid to arrange help.',
+            'Please call +60125551234 to arrange help.',
+        ]
+        for level in ['SIMPLE', 'MODERATE', 'HIGH']:
+            for ending in unsafe_endings:
+                with self.subTest(level=level, ending=ending), patch.object(
+                        self.ai, 'generate', return_value={'reply': 'We’re sorry about the issue you reported. ' + ending}):
+                    with self.assertRaisesRegex(ValueError, 'AI_UNSAFE_OUTPUT'):
+                        self.ai.public_reply_preview({'complaint_level': level, 'report': 'The machine stopped working.'})
+
+    def test_public_preview_can_acknowledge_a_reported_earlier_repair_without_claiming_new_work(self):
+        expected = (
+            'You reported that the washer stopped spinning again after an earlier repair. '
+            'What brand and model is it, and is an error code showing now?'
+        )
+        context = {'complaint_level': 'MODERATE', 'report': 'Someone repaired the washer before, but it stopped spinning again.'}
+        with patch.object(self.ai, 'generate', return_value={'reply': expected}):
+            self.assertEqual(self.ai.public_reply_preview(context), expected)
+
+    def test_public_preview_rejects_appliance_internal_repair_and_interlock_instructions(self):
+        unsafe_checks = [
+            'Remove the back panel and inspect the motor wiring.',
+            'Open the casing to check the internal power board.',
+            'Bypass the door interlock to see whether the washer spins.',
+            'Bridge the fuse and try running another cycle.',
+        ]
+        for level in ['SIMPLE', 'MODERATE', 'HIGH']:
+            for check in unsafe_checks:
+                with self.subTest(level=level, check=check), patch.object(
+                        self.ai, 'generate', return_value={'reply': 'We’re sorry the washer is not working. ' + check}):
+                    with self.assertRaisesRegex(ValueError, 'AI_UNSAFE_OUTPUT'):
+                        self.ai.public_reply_preview({'complaint_level': level, 'report': 'The washer will not spin.'})
 
     def test_malformed_json_has_fixed_diagnostic(self):
         exc=json.JSONDecodeError('Invalid JSON','Fictional response only',0)
